@@ -153,6 +153,8 @@ case "${1:-}" in
       pg_dump)
         if [ "${2:-}" = "--version" ]; then
           printf "pg_dump (PostgreSQL) 18.6\n"
+        elif [ "${FAKE_CONTAINER_PG_DUMP_EMPTY:-false}" = "true" ]; then
+          exit 0
         else
           printf "fake-container-custom-dump"
         fi
@@ -163,6 +165,10 @@ case "${1:-}" in
         else
           cat >/dev/null
         fi
+        ;;
+      sh)
+        [ "${2:-}" = "-c" ]
+        cat >/dev/null
         ;;
       *)
         exit 1
@@ -280,6 +286,15 @@ if [ "${container_backup_path}" = "${container_artifact_id}" ] \
     "${container_artifact_id}" >&2
   exit 1
 fi
+
+assert_rejected \
+  "容器客户端生成空归档时拒绝执行" \
+  "pg_dump 生成了空的数据库归档，拒绝继续。" \
+  env PATH="${container_fake_bin}" \
+  FAKE_CONTAINER_PG_DUMP_EMPTY=true \
+  bash "${backup_script}" \
+  preflight "${container_env_file}" "${container_deploy_path}" \
+  "${image_tag}" "${git_sha}"
 
 printf '%s\n' \
   'DATABASE_URL=postgresql://flux:secret@db:5432/flux' \
