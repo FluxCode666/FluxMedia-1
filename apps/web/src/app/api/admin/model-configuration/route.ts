@@ -355,7 +355,7 @@ function parseImagePricing(
     )?.[0];
     const required = options.isCustom
       ? resolution !== undefined && supported.has(resolution)
-      : field !== "base8Credits";
+      : field !== "base8kCredits";
     if (raw === undefined || !raw.trim()) {
       if (required) {
         throw new ModelConfigurationFormError("表单缺少必填价格字段");
@@ -502,7 +502,8 @@ async function parseImageInput(
   const supportedResolutions = data.scalars.get("supportedResolutions");
   const supportsQuality = data.scalars.get("supportsQuality");
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
-  const parsedIsCustom = isCustom !== undefined ? parseBoolean(isCustom) : false;
+  const parsedIsCustom =
+    isCustom !== undefined ? parseBoolean(isCustom) : false;
   const parsedSupportedResolutions =
     supportedResolutions !== undefined
       ? parseSupportedResolutions(supportedResolutions)
