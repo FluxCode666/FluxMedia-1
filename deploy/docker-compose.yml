@@ -19,7 +19,7 @@ services:
       TZ: UTC
       VIDEO_INPUT_ROLLBACK_MANIFEST: /app/deploy-state/video-input-rollback-${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}.ndjson
     volumes:
-      - app-storage:/app/storage
+      - /root/docker-data/fluxmedia:/app/storage
       - ./state:/app/deploy-state
 
   web:
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     init: true
     networks:
-      - flux-code
+      # 与共享 PostgreSQL/Redis 基础设施复用同一个已存在的 Docker 网络。
       - infra
     env_file:
       - .env
@@ -56,7 +56,7 @@ services:
     ports:
       - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     volumes:
-      - app-storage:/app/storage
+      - /root/docker-data/fluxmedia:/app/storage
     healthcheck:
       test:
         [
@@ -82,13 +82,7 @@ services:
         max-size: "100m"
         max-file: "5"
 
-volumes:
-  app-storage:
-
 networks:
   infra:
     external: true
     name: infra_default
-  flux-code:
-    external: true
-    name: flux-code
