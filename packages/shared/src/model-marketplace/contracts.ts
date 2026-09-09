@@ -5,12 +5,10 @@
  * 结构校验与类型收窄，不读取数据库、不构造存储 URL，也不执行价格或封面写入。
  */
 import { z } from "zod";
-import { videoModelCreditPricesSchema } from "../video-generation/video-pricing";
 import {
-  MAX_VIDEO_CREDITS_PER_SECOND,
-  videoCreditsPerSecondByResolutionSchema,
-} from "../video-generation/video-pricing";
-import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
+  IMAGE_CREDIT_PRICE_FIELDS,
+  imageCreditPricingSchema,
+} from "../image-backend/group-image-pricing";
 import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
@@ -24,6 +22,11 @@ import {
   videoBillingModeSchema,
   videoFrameInputCapabilitySchema,
 } from "../video-generation";
+import {
+  MAX_VIDEO_CREDITS_PER_SECOND,
+  videoCreditsPerSecondByResolutionSchema,
+  videoModelCreditPricesSchema,
+} from "../video-generation/video-pricing";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
@@ -44,6 +47,11 @@ const positiveSafeIntegerSchema = z
   .number()
   .int()
   .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+const nonnegativeSafeIntegerSchema = z
+  .number()
+  .int()
+  .nonnegative()
   .max(Number.MAX_SAFE_INTEGER);
 const configKeySchema = z
   .string()
@@ -110,6 +118,19 @@ export const modelMarketplaceImagePricingSchema = imageCreditPricingSchema
   .extend({
     base8kCredits: z.number().finite().positive().max(100_000).optional(),
   });
+
+/**
+ * 自定义图像模型的稀疏价格；只要求管理员为模型实际支持的分辨率填写价格。
+ *
+ * 未支持的标准档位会在保存服务中使用全局兜底值补齐，避免把不可用分辨率的价格
+ * 伪装成自定义模型的能力，同时继续满足运行时完整价格矩阵的内部契约。
+ */
+export const modelMarketplaceCustomImagePricingSchema = imageCreditPricingSchema.refine(
+  (pricing) =>
+    IMAGE_CREDIT_PRICE_FIELDS.some((field) => pricing[field] !== undefined) ||
+    pricing.base8kCredits !== undefined,
+  "自定义图像模型至少需要一个价格档位"
+);
 
 /** 模型广场支持的真实模型类别。 */
 export const modelMarketplaceConfigurationCategorySchema = z.enum([
@@ -182,8 +203,8 @@ export const modelMarketplaceCustomModelSchema = z
       modelMarketplaceVideoOutputSizesByResolutionSchema.optional(),
     /** 图像模型是否接受质量参数；缺失表示不支持。 */
     supportsQuality: z.boolean().optional(),
-    /** 图像模型是否接受 `auto` 尺寸；缺失表示不支持。 */
-    supportsAutoSize: z.boolean().optional(),
+    /** 图像模型最多接受的参考图数量；0 表示不支持参考图。 */
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((model, context) => {
@@ -196,6 +217,13 @@ export const modelMarketplaceCustomModelSchema = z
         });
       }
       return;
+    }
+    if (model.maxReferenceImages !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["maxReferenceImages"],
+        message: "参考图上限仅适用于图像模型",
+      });
     }
     if (!model.outputSizesByResolution) return;
     const supported = new Set(model.supportedResolutions);
@@ -269,8 +297,8 @@ export const modelMarketplaceEntrySchema = z
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     /** 仅图像模型使用；仅为 true 时前端和执行管线才传 quality。 */
     supportsQuality: z.boolean().optional(),
-    /** 仅图像模型使用；仅为 true 时才允许传 `auto` 尺寸。 */
-    supportsAutoSize: z.boolean().optional(),
+    /** 图像模型参考图数量上限；缺失时沿用系统媒体策略。 */
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -399,6 +427,49 @@ export function createDefaultModelMarketplaceConfig(): ModelMarketplaceConfig {
   };
 }
 
+/** 读取旧配置时丢弃已废弃的 auto 尺寸能力，不重新暴露到当前契约。 */
+function omitDeprecatedAutoSizeCapability(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { supportsAutoSize: _deprecated, ...rest } = value as Record<
+    string,
+    unknown
+  >;
+  return rest;
+}
+
+/** 仅清理历史持久化位置；其他未知字段仍由当前 strict schema 拒绝。 */
+function migrateDeprecatedAutoSizeCapability(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const config = value as Record<string, unknown>;
+  const migrateEntries = (entries: unknown): unknown => {
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+      return entries;
+    }
+    return Object.fromEntries(
+      Object.entries(entries).map(([key, entry]) => [
+        key,
+        omitDeprecatedAutoSizeCapability(entry),
+      ])
+    );
+  };
+  return {
+    ...config,
+    ...(Object.hasOwn(config, "imageByModel")
+      ? { imageByModel: migrateEntries(config.imageByModel) }
+      : {}),
+    ...(Object.hasOwn(config, "videoByFamily")
+      ? { videoByFamily: migrateEntries(config.videoByFamily) }
+      : {}),
+    ...(Array.isArray(config.customModels)
+      ? {
+          customModels: config.customModels.map(
+            omitDeprecatedAutoSizeCapability
+          ),
+        }
+      : {}),
+  };
+}
+
 /**
  * 收窄系统设置中的模型广场配置。
  *
@@ -417,10 +488,14 @@ export function parseModelMarketplaceConfig(
     !("version" in value) ||
     value.version !== 1
   ) {
-    return modelMarketplaceConfigSchema.parse(value);
+    return modelMarketplaceConfigSchema.parse(
+      migrateDeprecatedAutoSizeCapability(value)
+    );
   }
 
-  const legacy = legacyModelMarketplaceConfigSchema.parse(value);
+  const legacy = legacyModelMarketplaceConfigSchema.parse(
+    migrateDeprecatedAutoSizeCapability(value)
+  );
   const migratedReceipts = Object.fromEntries(
     Object.entries(legacy.writeReceipts).flatMap(([key, receipt]) => {
       if (
@@ -557,7 +632,7 @@ const explicitImageConfigurationEntrySchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -567,7 +642,7 @@ const unconfiguredImageConfigurationEntrySchema = z
     pricingSource: z.literal("unconfigured"),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -633,7 +708,7 @@ const publicImageItemSchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const publicVideoCommonShape = {
@@ -787,10 +862,13 @@ const updateImageConfigurationInputSchema = z
   .object({
     ...updateMarketplaceShape,
     category: z.literal("image"),
-    pricing: modelMarketplaceImagePricingSchema,
+    pricing: z.union([
+      modelMarketplaceImagePricingSchema,
+      modelMarketplaceCustomImagePricingSchema,
+    ]),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -817,7 +895,36 @@ const updateImageConfigurationInputSchema = z
           path: ["supportedResolutions"],
           message: "自定义图像模型必须声明支持的分辨率",
         });
+      } else {
+        const supported = new Set(
+          input.supportedResolutions.map((resolution) =>
+            resolution.trim().toLowerCase()
+          )
+        );
+        const priceFieldByResolution = {
+          "1k": "base1kCredits",
+          "2k": "base2kCredits",
+          "4k": "base4kCredits",
+          "8k": "base8kCredits",
+        } as const;
+        for (const [resolution, field] of Object.entries(
+          priceFieldByResolution
+        )) {
+          if (!supported.has(resolution)) continue;
+          if (input.pricing[field] !== undefined) continue;
+          context.addIssue({
+            code: "custom",
+            path: ["pricing", field],
+            message: `启用 ${resolution.toUpperCase()} 图片分辨率时必须配置对应价格`,
+          });
+        }
       }
+    } else if (!modelMarketplaceImagePricingSchema.safeParse(input.pricing).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["pricing"],
+        message: "内置图像模型必须配置完整价格",
+      });
     } else if (
       input.supportedResolutions?.includes("8k") &&
       input.pricing.base8kCredits === undefined
@@ -966,6 +1073,9 @@ export type ModelMarketplaceConfig = z.infer<
 >;
 export type ModelMarketplaceImagePricing = z.infer<
   typeof modelMarketplaceImagePricingSchema
+>;
+export type ModelMarketplaceCustomImagePricing = z.infer<
+  typeof modelMarketplaceCustomImagePricingSchema
 >;
 export type ModelConfigurationEntry = z.infer<
   typeof modelConfigurationEntrySchema

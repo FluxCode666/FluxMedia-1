@@ -37,6 +37,8 @@ const baseQuery = {
   type: null,
   cursor: null,
   branchLimit: 21,
+  offset: 0,
+  pageLimit: 21,
 };
 
 describe("history repository SQL", () => {
@@ -242,6 +244,20 @@ describe("history repository SQL", () => {
     expect(compiled.sql).toContain(
       "order by created_at asc, kind_rank asc, id asc"
     );
+  });
+
+  it("applies a bounded offset for random page access", () => {
+    const compiled = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        branchLimit: 61,
+        offset: 40,
+      })
+    );
+
+    expect(compiled.sql).toMatch(/limit \$\d+\s+offset \$\d+/);
+    expect(compiled.params.filter((value) => value === 61)).toHaveLength(2);
+    expect(compiled.params).toContain(40);
   });
 
   it("reads real distinct models scoped only by user and selected type", () => {

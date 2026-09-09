@@ -8,6 +8,7 @@ import {
   API_UPSTREAM_BUILT_IN_PATHS,
   type ApiUpstreamAdapterDraft,
   type ApiUpstreamOperations,
+  apiVideoInputFormatSchema,
   apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
@@ -22,6 +23,7 @@ export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  videoInputFormat: NonNullable<ApiUpstreamAdapterDraft["videoInputFormat"]>;
   /** 兼容旧适配版本；管理表单不再编辑账号级输入能力。 */
   videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
   videoInputCapabilitiesByModel: ApiUpstreamAdapterDraft["videoInputCapabilitiesByModel"];
@@ -71,6 +73,7 @@ export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFo
     authentication: { mode: "bearer" },
     videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
     videoProtocolMode: apiVideoProtocolModeSchema.parse("custom"),
+    videoInputFormat: apiVideoInputFormatSchema.parse("url"),
     videoInputCapabilities: {
       referenceVideos: false,
       referenceAudios: false,
@@ -117,7 +120,8 @@ function createRequestSample(
         body: {
           model: "gpt-image-2",
           prompt: "A lighthouse at sunset",
-          size: "1024x1024",
+          aspectRatio: "1:1",
+          resolution: "1k",
           client_request_id: "sample-image-request",
         },
       };

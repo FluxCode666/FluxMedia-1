@@ -16,9 +16,7 @@ import { toast } from "sonner";
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import type { ReferenceHandoffIntent } from "@/features/image-generation/reference-handoff";
 import {
-  AUTO_IMAGE_SIZE,
   DEFAULT_IMAGE_MODEL,
-  DEFAULT_IMAGE_SIZE,
   getImageCreditCost,
 } from "@/features/image-generation/resolution";
 
@@ -57,6 +55,23 @@ const RECENT_IMAGE_LIMIT = 12;
 const IMAGE_STATUS_POLL_INTERVAL_MS = 1500;
 const IMAGE_STATUS_POLL_ATTEMPTS = 240;
 const IMAGE_SUBMISSION_FEEDBACK_MS = 1000;
+const DEFAULT_IMAGE_ASPECT_RATIO = "1:1";
+const DEFAULT_IMAGE_RESOLUTION = "1k";
+
+/** 用分辨率档位估算计费基准尺寸；仅用于页面预估，不会作为请求字段发送。 */
+function getImageBillingSize(resolution: string): string {
+  switch (resolution.trim().toLowerCase()) {
+    case "1k":
+      return "1248x1248";
+    case "2k":
+      return "2048x2048";
+    case "4k":
+    case "8k":
+      return "3840x2160";
+    default:
+      return "1024x1024";
+  }
+}
 
 type ImageSubmissionState = "idle" | "submitting" | "submitted";
 
@@ -357,7 +372,7 @@ export function ImageCreatePanel({
   imageModerationPricing,
   maxFileSizeBytes,
   maxUploadBytes,
-  maxEditImages,
+  maxEditImages: configuredMaxEditImages,
   moderationEnabled,
   onCreditsConsumed,
   recent,
@@ -394,7 +409,8 @@ export function ImageCreatePanel({
       DEFAULT_IMAGE_MODEL
   );
   const [prompt, setPrompt] = useState("");
-  const [size, setSize] = useState(AUTO_IMAGE_SIZE);
+  const [aspectRatio, setAspectRatio] = useState(DEFAULT_IMAGE_ASPECT_RATIO);
+  const [resolution, setResolution] = useState(DEFAULT_IMAGE_RESOLUTION);
   const [quality, setQuality] = useState("auto");
   const [background, setBackground] = useState("auto");
   const [sourceImages, setSourceImages] = useState<File[]>([]);
@@ -481,18 +497,16 @@ export function ImageCreatePanel({
   const selectedModel = selectedGroup?.models.find(
     (item) => item.id.toLowerCase() === normalizedModel.toLowerCase()
   );
+  const maxEditImages = Math.min(
+    configuredMaxEditImages,
+    selectedModel?.maxReferenceImages ?? configuredMaxEditImages
+  );
   const supportsQuality = selectedModel?.supportsQuality === true;
-  const supportsAutoSize = selectedModel?.supportsAutoSize === true;
   useEffect(() => {
     if (selectedModel && !supportsQuality && quality !== "auto") {
       setQuality("auto");
     }
   }, [quality, selectedModel, supportsQuality]);
-  useEffect(() => {
-    if (selectedModel && !supportsAutoSize && size === AUTO_IMAGE_SIZE) {
-      setSize(DEFAULT_IMAGE_SIZE);
-    }
-  }, [selectedModel, size, supportsAutoSize]);
   const maskAvailable = catalog.groups.some((group) =>
     group.models.some((item) => item.capabilities.mask)
   );
@@ -509,7 +523,7 @@ export function ImageCreatePanel({
       ).slice(0, RECENT_IMAGE_LIMIT),
     [createdRecentImages, recent]
   );
-  const estimatedCredits = getImageCreditCost(size, {
+  const estimatedCredits = getImageCreditCost(getImageBillingSize(resolution), {
     basePricing: resolveImageCreditPricing({
       model: normalizedModel,
       global: imageModelPricing,
@@ -902,7 +916,8 @@ export function ImageCreatePanel({
       requestFields: {
         generationId: string;
         prompt: string;
-        size: string;
+        aspectRatio: string;
+        resolution: string;
         model: string;
         backendGroupId: string;
         quality?: string;
@@ -1011,6 +1026,10 @@ export function ImageCreatePanel({
       setError("图生图或蒙版编辑至少需要一张来源图片");
       return;
     }
+    if (mode !== "generate" && sourceImages.length > maxEditImages) {
+      setError(`当前模型最多支持 ${maxEditImages} 张参考图`);
+      return;
+    }
     if (mode === "mask" && !mask) {
       setError("蒙版编辑需要上传 PNG 蒙版");
       return;
@@ -1025,7 +1044,8 @@ export function ImageCreatePanel({
     const requestFields = {
       generationId: crypto.randomUUID(),
       prompt: prompt.trim(),
-      size,
+      aspectRatio,
+      resolution,
       model,
       backendGroupId: selectedGroup.id,
       ...(supportsQuality ? { quality } : {}),
@@ -1069,7 +1089,6 @@ export function ImageCreatePanel({
       mode={mode}
       model={model}
       supportsQuality={supportsQuality}
-      supportsAutoSize={supportsAutoSize}
       onBackgroundChange={setBackground}
       onMaskChange={changeMask}
       onModelSelectionChange={selectModelGroup}
@@ -1078,7 +1097,8 @@ export function ImageCreatePanel({
       onRecentReferenceSelect={selectRecentReference}
       onRemoveReference={removeReference}
       onRemoveSourceImage={removeSourceImage}
-      onSizeChange={setSize}
+      onAspectRatioChange={setAspectRatio}
+      onResolutionChange={setResolution}
       onSourceImagesChange={changeSourceImages}
       onSubmit={submit}
       prompt={prompt}
@@ -1087,7 +1107,8 @@ export function ImageCreatePanel({
       referenceLoadingId={referenceLoadingId}
       resultUrls={resultUrls}
       submissionState={submissionState}
-      size={size}
+      aspectRatio={aspectRatio}
+      resolution={resolution}
       sourceImages={sourceImages}
     />
   );

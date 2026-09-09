@@ -4,7 +4,7 @@
  * 覆盖日期范围时区边界、多币种补零、签名 cursor 的前后页语义及篡改/跨筛选拒绝。
  * 测试通过仓储端口注入数据，不连接数据库。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   AdminPaymentOrderQuery,
@@ -414,6 +414,38 @@ describe("admin payment order cursor", () => {
     expect(second.previousCursor).toBeTypeOf("string");
     expect(second.nextCursor).toBeNull();
     expect(second).toMatchObject({ page: 2, pageSize: 2, totalCount: 3 });
+  });
+
+  it("reads a displayed non-adjacent order page by bounded offset", async () => {
+    const readOrders = vi
+      .fn()
+      .mockResolvedValue([
+        makeOrder("order-12", "2026-07-22T12:00:00.000Z"),
+        makeOrder("order-11", "2026-07-22T11:00:00.000Z"),
+        makeOrder("order-10", "2026-07-22T10:00:00.000Z"),
+      ]);
+    const result = await loadAdminPaymentOrders(
+      {
+        actorUserId: "admin-1",
+        input: { page: 5, pageSize: 2 },
+        now: new Date("2026-07-22T13:00:00.000Z"),
+        timeZone: "UTC",
+      },
+      {
+        repository: makeRepository({
+          countOrders: vi.fn().mockResolvedValue(20),
+          readOrders,
+        }),
+        tokenSecret: "test-secret",
+      }
+    );
+
+    expect(readOrders).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: null, page: 5, pageSize: 2, limit: 3 })
+    );
+    expect(result).toMatchObject({ page: 5, pageSize: 2, totalCount: 20 });
+    expect(result.previousCursor).toEqual(expect.any(String));
+    expect(result.nextCursor).toEqual(expect.any(String));
   });
 
   it("rejects tampered cursors and cross-filter reuse", async () => {

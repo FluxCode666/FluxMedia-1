@@ -25,9 +25,6 @@ import {
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
-  parseImageSize,
-  resolveImageRequestSize,
-  validateImageSize,
 } from "@/features/image-generation/resolution";
 import type {
   ImageBackground,
@@ -153,12 +150,19 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   if (backendGroupId && backendGroupId.length > 128) {
     return errorResponse("backendGroupId is too long.");
   }
-  const size = getText(formData, "size") || undefined;
-  if (size) {
-    const sizeCheck = validateImageSize(size);
-    if (!sizeCheck.valid) {
-      return errorResponse(sizeCheck.message);
-    }
+  if (formData.has("size") || formData.has("displaySize")) {
+    return errorResponse("The size parameter is no longer supported.");
+  }
+  const aspectRatio =
+    getText(formData, "aspectRatio") ||
+    getText(formData, "aspect_ratio") ||
+    undefined;
+  const resolution = getText(formData, "resolution") || undefined;
+  if (aspectRatio && aspectRatio.length > 64) {
+    return errorResponse("aspectRatio is too long.");
+  }
+  if (resolution && resolution.length > 64) {
+    return errorResponse("resolution is too long.");
   }
 
   const qualityValue = getText(formData, "quality") || "auto";
@@ -222,10 +226,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse("Invalid thinking level.");
   }
   const thinking = thinkingValue as ThinkingLevel | undefined;
-  const displaySize = getText(formData, "displaySize") || undefined;
-  if (displaySize && !parseImageSize(displaySize)) {
-    return errorResponse("Invalid display size.");
-  }
   const sourceFiles = getImageFiles(formData);
   if (sourceFiles.length === 0) {
     return errorResponse("At least one source image is required.");
@@ -298,7 +298,8 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         prompt,
         apiPrompt,
         promptOptimization,
-        size: displaySize || resolveImageRequestSize(size),
+        aspectRatio,
+        resolution,
         model,
         thinking,
         quality,

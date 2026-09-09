@@ -246,7 +246,8 @@ async function readOrders(
         ? asc(paymentOrder.id)
         : desc(paymentOrder.id)
     )
-    .limit(input.limit);
+    .limit(input.limit)
+    .offset(input.cursor ? 0 : (input.page - 1) * input.pageSize);
   return rows.map((row) => orderRowSchema.parse(row));
 }
 

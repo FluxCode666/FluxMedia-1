@@ -41,16 +41,18 @@ export type ModelConfigurationImagePricingDraft = {
 export type ModelConfigurationDraft =
   | ({
       category: "image";
+      isCustom?: boolean;
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
       pricing: ModelConfigurationImagePricingDraft;
       supportedResolutions: string[];
       supportsQuality: boolean;
-      supportsAutoSize: boolean;
+      maxReferenceImages?: string;
     } & MarketplaceDraftFields)
   | ({
       category: "video";
+      isCustom?: boolean;
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
@@ -146,20 +148,23 @@ export function createModelConfigurationDraft(
       ...common,
       ...marketplace,
       category: "image",
+      ...(entry.isCustom ? { isCustom: true } : {}),
       pricing: createImagePricingDraft(
         entry.pricingSource === "explicit" ? entry.pricing : null
       ),
       supportedResolutions: [...(entry.supportedResolutions ?? [])],
       // 质量参数默认关闭；只有模型配置显式开启时才展示并传递。
       supportsQuality: entry.supportsQuality === true,
-      // auto 尺寸默认关闭；只有模型配置显式开启时才允许传递。
-      supportsAutoSize: entry.supportsAutoSize === true,
+      ...(entry.maxReferenceImages !== undefined
+        ? { maxReferenceImages: String(entry.maxReferenceImages) }
+        : {}),
     };
   }
   return {
     ...common,
     ...marketplace,
     category: "video",
+    ...(entry.isCustom ? { isCustom: true } : {}),
     billingMode: entry.billingMode,
     supportedResolutions: [...entry.supportedResolutions],
     creditsPerSecondByResolution: Object.fromEntries(
@@ -292,6 +297,21 @@ export function parseModelConfigurationPositiveSafeInteger(
   return parsed;
 }
 
+/** 解析允许 0 的参考图上限；0 明确表示模型不接受参考图。 */
+export function parseModelConfigurationNonnegativeSafeInteger(
+  value: string
+): number {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new ModelConfigurationDraftError("参考图上限必须是非负整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationDraftError("参考图上限超过安全整数范围");
+  }
+  return parsed;
+}
+
 /**
  * 把四档图像价格写入 multipart。
  *
@@ -302,32 +322,56 @@ export function parseModelConfigurationPositiveSafeInteger(
  */
 function appendImagePricing(
   formData: FormData,
-  pricing: ModelConfigurationImagePricingDraft
+  pricing: ModelConfigurationImagePricingDraft,
+  options: {
+    isCustom: boolean;
+    supportedResolutions: readonly string[];
+  }
 ): void {
-  formData.append(
-    "base1024Credits",
-    String(
-      parseModelConfigurationPrice(
-        pricing.base1024Credits.trim() || pricing.base1kCredits
-      )
+  const supported = new Set(
+    options.supportedResolutions.map((resolution) =>
+      resolution.trim().toLowerCase()
     )
   );
-  formData.append(
+  const resolutionByField = {
+    base1kCredits: "1k",
+    base2kCredits: "2k",
+    base4kCredits: "4k",
+    base8kCredits: "8k",
+  } as const;
+  let appended = 0;
+  if (!options.isCustom || pricing.base1024Credits.trim()) {
+    if (!options.isCustom || supported.has("1024")) {
+      formData.append(
+        "base1024Credits",
+        String(
+          parseModelConfigurationPrice(
+            pricing.base1024Credits.trim() || pricing.base1kCredits
+          )
+        )
+      );
+      appended += 1;
+    }
+  }
+  for (const field of [
     "base1kCredits",
-    String(parseModelConfigurationPrice(pricing.base1kCredits))
-  );
-  formData.append(
     "base2kCredits",
-    String(parseModelConfigurationPrice(pricing.base2kCredits))
-  );
-  formData.append(
     "base4kCredits",
-    String(parseModelConfigurationPrice(pricing.base4kCredits))
-  );
-  if (pricing.base8kCredits.trim()) {
+    "base8kCredits",
+  ] as const) {
+    if (options.isCustom && !supported.has(resolutionByField[field])) continue;
+    const value = pricing[field].trim();
+    if (!value) {
+      if (field === "base8kCredits" && !options.isCustom) continue;
+      throw new ModelConfigurationDraftError("请填写已支持分辨率的价格");
+    }
+    formData.append(field, String(parseModelConfigurationPrice(value)));
+    appended += 1;
+  }
+  if (options.isCustom && appended === 0 && pricing.base1024Credits.trim()) {
     formData.append(
-      "base8kCredits",
-      String(parseModelConfigurationPrice(pricing.base8kCredits))
+      "base1024Credits",
+      String(parseModelConfigurationPrice(pricing.base1024Credits))
     );
   }
 }
@@ -387,6 +431,9 @@ export function buildModelConfigurationFormData(
   formData.append("clientRequestId", draft.clientRequestId);
 
   appendMarketplaceFields(formData, draft);
+  if (draft.isCustom === true) {
+    formData.append("isCustom", "true");
+  }
   if (draft.category === "video") {
     const creditsPerSecondByResolution = Object.fromEntries(
       Object.entries(draft.creditsPerSecondByResolution)
@@ -439,7 +486,17 @@ export function buildModelConfigurationFormData(
     );
   }
   formData.append("supportsQuality", String(draft.supportsQuality));
-  formData.append("supportsAutoSize", String(draft.supportsAutoSize));
-  appendImagePricing(formData, draft.pricing);
+  if (draft.maxReferenceImages !== undefined) {
+    formData.append(
+      "maxReferenceImages",
+      String(
+        parseModelConfigurationNonnegativeSafeInteger(draft.maxReferenceImages)
+      )
+    );
+  }
+  appendImagePricing(formData, draft.pricing, {
+    isCustom: draft.isCustom === true,
+    supportedResolutions: draft.supportedResolutions,
+  });
   return formData;
 }

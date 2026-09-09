@@ -5,10 +5,6 @@
  * 传输输入交给 UOL；不直接访问数据库、存储服务或模型配置领域服务。
  */
 
-import {
-  videoCreditsPerSecondByResolutionSchema,
-  videoModelCreditPricesSchema,
-} from "@repo/shared/video-generation";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";
@@ -19,6 +15,7 @@ import {
   deleteModelConfigurationEntryInputSchema,
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplaceCoverChange,
+  type ModelMarketplaceCustomImagePricing,
   type ModelMarketplaceImagePricing,
   modelMarketplaceCustomModelSchema,
   modelMarketplaceIconKeySchema,
@@ -32,6 +29,10 @@ import {
   OperationError,
   type Principal,
 } from "@repo/shared/uol";
+import {
+  videoCreditsPerSecondByResolutionSchema,
+  videoModelCreditPricesSchema,
+} from "@repo/shared/video-generation";
 
 import {
   BoundedMultipartError,
@@ -70,7 +71,6 @@ const KNOWN_FORM_FIELDS = new Set([
   "supportedResolutions",
   "outputSizesByResolution",
   "supportsQuality",
-  "supportsAutoSize",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -276,6 +276,25 @@ function parsePositiveSafeInteger(value: string): number {
 }
 
 /**
+ * 解析允许 0 的图像参考图上限；0 明确表示模型不接受参考图。
+ *
+ * @param value - multipart 中的十进制整数文本。
+ * @returns 0 至 Number.MAX_SAFE_INTEGER 的整数。
+ * @throws ModelConfigurationFormError - 符号、小数、指数或不安全整数时失败。
+ */
+function parseNonnegativeSafeInteger(value: string): number {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new ModelConfigurationFormError("参考图上限必须是非负整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationFormError("参考图上限超过安全整数范围");
+  }
+  return parsed;
+}
+
+/**
  * 解析官网首页排序优先级。
  *
  * @param value - 只允许非负安全整数的优先级文本。
@@ -311,19 +330,46 @@ function parseBoolean(value: string): boolean {
  * @throws ModelConfigurationFormError - 字段缺失或数字格式非法时失败。
  */
 function parseImagePricing(
-  scalars: ReadonlyMap<string, string>
-): ModelMarketplaceImagePricing {
-  return {
-    base1024Credits: parseFiniteNumber(
-      requireScalar(scalars, "base1024Credits")
-    ),
-    base1kCredits: parseFiniteNumber(requireScalar(scalars, "base1kCredits")),
-    base2kCredits: parseFiniteNumber(requireScalar(scalars, "base2kCredits")),
-    base4kCredits: parseFiniteNumber(requireScalar(scalars, "base4kCredits")),
-    ...(scalars.has("base8kCredits") && scalars.get("base8kCredits")?.trim()
-      ? { base8kCredits: parseFiniteNumber(scalars.get("base8kCredits") ?? "") }
-      : {}),
-  };
+  scalars: ReadonlyMap<string, string>,
+  options: {
+    isCustom: boolean;
+    supportedResolutions?: readonly string[];
+  }
+): ModelMarketplaceImagePricing | ModelMarketplaceCustomImagePricing {
+  const supported = new Set(
+    (options.supportedResolutions ?? []).map((resolution) =>
+      resolution.trim().toLowerCase()
+    )
+  );
+  const priceFieldByResolution = {
+    "1k": "base1kCredits",
+    "2k": "base2kCredits",
+    "4k": "base4kCredits",
+    "8k": "base8kCredits",
+  } as const;
+  const pricing: Record<string, number> = {};
+  for (const field of IMAGE_PRICE_FIELDS) {
+    const raw = scalars.get(field);
+    const resolution = Object.entries(priceFieldByResolution).find(
+      ([, mappedField]) => mappedField === field
+    )?.[0];
+    const required = options.isCustom
+      ? resolution !== undefined && supported.has(resolution)
+      : field !== "base8kCredits";
+    if (raw === undefined || !raw.trim()) {
+      if (required) {
+        throw new ModelConfigurationFormError("表单缺少必填价格字段");
+      }
+      continue;
+    }
+    pricing[field] = parseFiniteNumber(raw);
+  }
+  if (options.isCustom && Object.keys(pricing).length === 0) {
+    throw new ModelConfigurationFormError("自定义图像模型至少需要一个价格档位");
+  }
+  return pricing as
+    | ModelMarketplaceImagePricing
+    | ModelMarketplaceCustomImagePricing;
 }
 
 /**
@@ -449,13 +495,19 @@ async function parseImageInput(
       ...IMAGE_PRICE_FIELDS,
       "supportedResolutions",
       "supportsQuality",
-      "supportsAutoSize",
+      "maxReferenceImages",
     ])
   );
   const isCustom = data.scalars.get("isCustom");
   const supportedResolutions = data.scalars.get("supportedResolutions");
   const supportsQuality = data.scalars.get("supportsQuality");
-  const supportsAutoSize = data.scalars.get("supportsAutoSize");
+  const maxReferenceImages = data.scalars.get("maxReferenceImages");
+  const parsedIsCustom =
+    isCustom !== undefined ? parseBoolean(isCustom) : false;
+  const parsedSupportedResolutions =
+    supportedResolutions !== undefined
+      ? parseSupportedResolutions(supportedResolutions)
+      : undefined;
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -463,7 +515,7 @@ async function parseImageInput(
       requireScalar(data.scalars, "expectedRevision")
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
-    ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
+    ...(isCustom !== undefined ? { isCustom: parsedIsCustom } : {}),
     enabled: parseBoolean(requireScalar(data.scalars, "enabled")),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
@@ -484,17 +536,18 @@ async function parseImageInput(
       requireScalar(data.scalars, "coverChange"),
       data.covers
     ),
-    pricing: parseImagePricing(data.scalars),
-    ...(supportedResolutions !== undefined
-      ? {
-          supportedResolutions: parseSupportedResolutions(supportedResolutions),
-        }
+    pricing: parseImagePricing(data.scalars, {
+      isCustom: parsedIsCustom,
+      supportedResolutions: parsedSupportedResolutions,
+    }),
+    ...(parsedSupportedResolutions !== undefined
+      ? { supportedResolutions: parsedSupportedResolutions }
       : {}),
     ...(supportsQuality !== undefined
       ? { supportsQuality: parseBoolean(supportsQuality) }
       : {}),
-    ...(supportsAutoSize !== undefined
-      ? { supportsAutoSize: parseBoolean(supportsAutoSize) }
+    ...(maxReferenceImages !== undefined
+      ? { maxReferenceImages: parseNonnegativeSafeInteger(maxReferenceImages) }
       : {}),
   });
 }

@@ -23,14 +23,14 @@ export function MemberDetailSection({
   children: ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border bg-card">
-      <header className="border-b bg-muted/20 px-5 py-4">
-        <h3 className="font-medium tracking-tight">{title}</h3>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+    <section className="space-y-5 border-b border-border/70 pb-8 last:border-b-0">
+      <header className="space-y-1">
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
           {description}
         </p>
       </header>
-      <div className="space-y-5 p-5">{children}</div>
+      <div className="space-y-5">{children}</div>
     </section>
   );
 }

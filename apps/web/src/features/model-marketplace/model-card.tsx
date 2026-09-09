@@ -224,15 +224,6 @@ export function ModelMarketplaceCard({
           <p className="mt-2 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
             {model.description || t("card.noDescription")}
           </p>
-          {model.category === "image" && model.supportsAutoSize !== true ? (
-            <div className="mt-4">
-              <Badge className="max-w-full font-normal" variant="outline">
-                <span className="truncate">
-                  {t("card.autoSizeUnsupported")}
-                </span>
-              </Badge>
-            </div>
-          ) : null}
           {model.category === "video" ? (
             <VideoCapabilitySummary model={model} />
           ) : null}

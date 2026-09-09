@@ -59,8 +59,13 @@ export {
   adminPoolGroupListOutputSchema,
   adminPoolMemberListInputSchema,
   adminPoolMemberListOutputSchema,
+  imageSizeConfigOutputSchema,
   listAdminGroups,
   listAdminMembers,
+  listImageSizeConfigs,
+  getImageSizeConfigOptions,
+  saveImageSizeConfig,
+  deleteImageSizeConfig,
 } from "./image-backend-pool";
 export {
   imageGenerate,

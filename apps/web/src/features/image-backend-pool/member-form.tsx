@@ -32,7 +32,10 @@ import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { saveImageBackendMemberAction } from "./actions";
+import {
+  listImageSizeConfigsAction,
+  saveImageBackendMemberAction,
+} from "./actions";
 import {
   type ApiUpstreamAdapterFormDraft,
   createDefaultApiUpstreamAdapterFormDraft,
@@ -97,6 +100,16 @@ export function BackendMemberFormDialog({
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
+  const [imageSizeConfigs, setImageSizeConfigs] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [imageSizeConfigId, setImageSizeConfigId] = useState("");
+  const [imageSizeConfigIdsByModel, setImageSizeConfigIdsByModel] = useState<
+    Record<string, string>
+  >({});
+  const [imageMaxReferenceImages, setImageMaxReferenceImages] = useState("");
+  const [imageMaxReferenceImagesByModel, setImageMaxReferenceImagesByModel] =
+    useState<Record<string, string>>({});
   const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
   const [apiAdapterDraft, setApiAdapterDraft] =
     useState<ApiUpstreamAdapterFormDraft>(() =>
@@ -154,6 +167,7 @@ export function BackendMemberFormDialog({
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         videoProtocolMode: member.config.videoProtocolMode ?? "custom",
+        videoInputFormat: member.config.videoInputFormat ?? "url",
         videoInputCapabilities: legacyVideoInputCapabilities,
         videoInputCapabilitiesByModel,
         operations:
@@ -165,13 +179,42 @@ export function BackendMemberFormDialog({
             }
           : {}),
       });
+      setImageMaxReferenceImages(
+        member.config.imageMaxReferenceImages !== undefined
+          ? String(member.config.imageMaxReferenceImages)
+          : ""
+      );
+      setImageMaxReferenceImagesByModel(
+        Object.fromEntries(
+          Object.entries(
+            member.config.imageMaxReferenceImagesByModel ?? {}
+          ).map(([modelId, limit]) => [
+            modelId.trim().toLowerCase(),
+            String(limit),
+          ])
+        )
+      );
     } else {
       setApiBaseUrl("");
       setApiUseStream(false);
       setModelMappings([]);
       setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
+      setImageMaxReferenceImages("");
+      setImageMaxReferenceImagesByModel({});
     }
     setApiKey("");
+    setImageSizeConfigId(
+      member?.type === "api" ? (member.config.imageSizeConfig?.id ?? "") : ""
+    );
+    setImageSizeConfigIdsByModel(
+      member?.type === "api"
+        ? Object.fromEntries(
+            Object.entries(member.config.imageSizeConfigsByModel ?? {}).map(
+              ([modelId, config]) => [modelId.trim().toLowerCase(), config.id]
+            )
+          )
+        : {}
+    );
   }, [groups, member, modelOptions, open]);
 
   const acceptsVideo = acceptsVideoBackendMemberModels(type);
@@ -211,6 +254,20 @@ export function BackendMemberFormDialog({
     }
   );
 
+  const { execute: loadImageSizeConfigs } = useAction(
+    listImageSizeConfigsAction,
+    {
+      onSuccess: ({ data }) =>
+        setImageSizeConfigs(
+          data?.configs?.map(({ id, name }) => ({ id, name })) ?? []
+        ),
+    }
+  );
+
+  useEffect(() => {
+    if (open) loadImageSizeConfigs();
+  }, [open, loadImageSizeConfigs]);
+
   /** 切换成员所属分组。 */
   function toggleGroup(groupId: string, checked: boolean): void {
     setGroupIds((current) =>
@@ -248,6 +305,14 @@ export function BackendMemberFormDialog({
           const key = modelId.toLowerCase();
           const existing = current[key];
           return existing?.length ? [[key, existing]] : [];
+        })
+      )
+    );
+    setImageMaxReferenceImagesByModel((current) =>
+      Object.fromEntries(
+        nextModelIds.flatMap((modelId) => {
+          const key = modelId.trim().toLowerCase();
+          return current[key] !== undefined ? [[key, current[key]]] : [];
         })
       )
     );
@@ -315,10 +380,29 @@ export function BackendMemberFormDialog({
             ? { apiKey: apiKey.trim() }
             : {}),
           useStream: apiUseStream,
+          imageSizeConfigId: imageSizeConfigId || null,
+          imageSizeConfigIdsByModel: Object.fromEntries(
+            Object.entries(imageSizeConfigIdsByModel).filter(
+              ([modelId, configId]) =>
+                selectedModelKeys.has(modelId) && Boolean(configId)
+            )
+          ),
+          ...(imageMaxReferenceImages.trim()
+            ? { imageMaxReferenceImages: Number(imageMaxReferenceImages) }
+            : {}),
+          imageMaxReferenceImagesByModel: Object.fromEntries(
+            Object.entries(imageMaxReferenceImagesByModel)
+              .filter(
+                ([modelId, value]) =>
+                  selectedModelKeys.has(modelId) && value.trim() !== ""
+              )
+              .map(([modelId, value]) => [modelId, Number(value)])
+          ),
           convertReferenceImagesToPublicUrl:
             apiAdapterDraft.convertReferenceImagesToPublicUrl,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           videoProtocolMode: apiAdapterDraft.videoProtocolMode,
+          videoInputFormat: apiAdapterDraft.videoInputFormat,
           // 旧账号级标签保持关闭；参考媒体能力只按平台模型 ID 声明。
           videoInputCapabilities: {
             referenceVideos: false,
@@ -348,8 +432,78 @@ export function BackendMemberFormDialog({
     }
   }
 
+  const imageSizeConfiguration = (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="image-size-config">供应商默认尺寸配置</Label>
+        <select
+          id="image-size-config"
+          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+          value={imageSizeConfigId}
+          onChange={(event) => setImageSizeConfigId(event.target.value)}
+        >
+          <option value="">不使用尺寸配置，原样透传比例和分辨率</option>
+          {imageSizeConfigs.map((config) => (
+            <option key={config.id} value={config.id}>
+              {config.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selectedModelIds.filter(
+        (modelId) =>
+          !isLegacyVideoModelId(modelId) && !normalizeVideoModelId(modelId)
+      ).length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {selectedModelIds
+            .filter(
+              (modelId) =>
+                !isLegacyVideoModelId(modelId) &&
+                !normalizeVideoModelId(modelId)
+            )
+            .map((modelId) => {
+              const key = modelId.trim().toLowerCase();
+              return (
+                <div key={key} className="space-y-2">
+                  <Label htmlFor={`image-size-config-${key}`}>
+                    {modelId} 尺寸配置
+                  </Label>
+                  <select
+                    id={`image-size-config-${key}`}
+                    className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                    value={imageSizeConfigIdsByModel[key] ?? ""}
+                    onChange={(event) =>
+                      setImageSizeConfigIdsByModel((current) => {
+                        const next = { ...current };
+                        if (event.target.value) next[key] = event.target.value;
+                        else delete next[key];
+                        return next;
+                      })
+                    }
+                  >
+                    <option value="">跟随供应商默认配置</option>
+                    {imageSizeConfigs.map((config) => (
+                      <option key={config.id} value={config.id}>
+                        {config.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    未覆盖时继承供应商默认配置
+                  </p>
+                </div>
+              );
+            })}
+        </div>
+      ) : null}
+    </div>
+  );
+
   const formContent = (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form
+      className={detailsOnly ? "space-y-10 pb-28" : "space-y-6"}
+      onSubmit={handleSubmit}
+    >
       <fieldset className="contents" disabled={readOnly}>
         {inline && detailsOnly ? null : inline ? (
           <header className="space-y-1">
@@ -560,9 +714,86 @@ export function BackendMemberFormDialog({
                 }
               />
             ) : null}
+            <div className="space-y-3 border-t pt-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="image-max-reference-images">
+                  供应商默认参考图数量上限
+                </Label>
+                <Input
+                  id="image-max-reference-images"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  value={imageMaxReferenceImages}
+                  onChange={(event) =>
+                    setImageMaxReferenceImages(event.target.value)
+                  }
+                  placeholder="跟随全局模型配置"
+                />
+                <p className="text-xs text-muted-foreground">
+                  留空时按全局模型配置；填写 0 表示该账号不接受参考图。
+                </p>
+              </div>
+              {selectedModelIds
+                .filter((modelId) =>
+                  selectableModelOptions.some(
+                    (option) =>
+                      option.category === "image" &&
+                      option.id.toLowerCase() === modelId.toLowerCase()
+                  )
+                )
+                .map((modelId) => {
+                  const key = modelId.trim().toLowerCase();
+                  const globalLimit = selectableModelOptions.find(
+                    (option) => option.id.toLowerCase() === key
+                  )?.maxReferenceImages;
+                  return (
+                    <div key={key} className="space-y-1.5">
+                      <Label htmlFor={`image-max-reference-images-${key}`}>
+                        {modelId} 参考图数量覆盖
+                      </Label>
+                      <Input
+                        id={`image-max-reference-images-${key}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        value={imageMaxReferenceImagesByModel[key] ?? ""}
+                        onChange={(event) =>
+                          setImageMaxReferenceImagesByModel((current) => ({
+                            ...current,
+                            ...(event.target.value.trim()
+                              ? { [key]: event.target.value }
+                              : (() => {
+                                  const next = { ...current };
+                                  delete next[key];
+                                  return next;
+                                })()),
+                          }))
+                        }
+                        placeholder={
+                          globalLimit !== undefined
+                            ? `跟随全局 ${globalLimit}`
+                            : "跟随供应商 / 全局"
+                        }
+                      />
+                    </div>
+                  );
+                })}
+            </div>
             <p className="text-xs text-muted-foreground">
               API 账号可选择图片和视频的真实模型 ID。
             </p>
+          </MemberDetailSection>
+        ) : null}
+
+        {detailsOnly && type === "api" ? (
+          <MemberDetailSection
+            title="图片尺寸映射"
+            description="按模型维护比例与分辨率的尺寸映射；模型未单独覆盖时继承供应商默认配置，未选择配置则原样透传。"
+          >
+            {imageSizeConfiguration}
           </MemberDetailSection>
         ) : null}
 
@@ -570,20 +801,24 @@ export function BackendMemberFormDialog({
           <section
             className={
               detailsOnly
-                ? "overflow-hidden rounded-lg border bg-card"
+                ? "space-y-5 border-b border-border/70 pb-8"
                 : "space-y-4 rounded-md border p-4"
             }
           >
-            <header
-              className={detailsOnly ? "border-b bg-muted/20 px-5 py-4" : ""}
-            >
-              <h3 className="font-medium">
+            <header className={detailsOnly ? "space-y-1" : ""}>
+              <h3
+                className={
+                  detailsOnly
+                    ? "text-base font-semibold tracking-tight"
+                    : "font-medium"
+                }
+              >
                 {detailsOnly ? "请求响应处理" : "API 配置"}
               </h3>
               <p
                 className={
                   detailsOnly
-                    ? "mt-1 max-w-3xl text-sm text-muted-foreground"
+                    ? "max-w-3xl text-sm leading-6 text-muted-foreground"
                     : "text-xs text-muted-foreground"
                 }
               >
@@ -591,7 +826,7 @@ export function BackendMemberFormDialog({
                 Responses 或 Chat。
               </p>
             </header>
-            <div className={detailsOnly ? "space-y-5 p-5" : "contents"}>
+            <div className={detailsOnly ? "space-y-6" : "contents"}>
               {!detailsOnly ? (
                 <>
                   <div className="space-y-2">
@@ -629,6 +864,7 @@ export function BackendMemberFormDialog({
                   </div>
                 </>
               ) : null}
+              {!detailsOnly ? imageSizeConfiguration : null}
               {showAdvancedConfiguration ? (
                 <>
                   <BackendBooleanSetting
@@ -657,21 +893,34 @@ export function BackendMemberFormDialog({
         <DialogFooter
           className={
             detailsOnly
-              ? "sticky bottom-4 z-10 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur"
+              ? "fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-lg backdrop-blur sm:px-6"
               : undefined
           }
         >
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
+          <div
+            className={
+              detailsOnly
+                ? "mx-auto flex w-full max-w-7xl justify-end gap-2"
+                : "contents"
+            }
           >
-            取消
-          </Button>
-          <Button type="submit" disabled={isPending || groups.length === 0}>
-            {isPending && <Loader2 className="size-4 animate-spin" />}
-            保存成员
-          </Button>
+            <Button
+              className={detailsOnly ? "w-full sm:w-auto" : undefined}
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button
+              className={detailsOnly ? "w-full sm:w-auto" : undefined}
+              type="submit"
+              disabled={isPending || groups.length === 0}
+            >
+              {isPending && <Loader2 className="size-4 animate-spin" />}
+              保存成员
+            </Button>
+          </div>
         </DialogFooter>
       </fieldset>
     </form>

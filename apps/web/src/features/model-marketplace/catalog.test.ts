@@ -85,6 +85,35 @@ describe("buildModelMarketplaceCatalog", () => {
     ]);
   });
 
+  it("透传图像模型显式配置的参考图上限，并保留 0", () => {
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel["gpt-image-2"] = { ...EXPLICIT_IMAGE_PRICING };
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    marketplaceConfig.imageByModel["gpt-image-2"] = {
+      revision: 1,
+      visible: true,
+      description: "GPT Image 2",
+      cover: null,
+      maxReferenceImages: 0,
+    };
+
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        imagePricing,
+        marketplaceConfig,
+        runtimeCatalog: {
+          image: [{ id: "firefly-gpt-image-2" }],
+          video: [],
+        },
+      })
+    );
+
+    expect(items.find((item) => item.category === "image")).toMatchObject({
+      configKey: "gpt-image-2",
+      maxReferenceImages: 0,
+    });
+  });
+
   it("稳定选择真实图像 ID，且不把 configKey 伪装成运行时完整 ID", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({

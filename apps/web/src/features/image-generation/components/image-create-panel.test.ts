@@ -28,7 +28,8 @@ type CapturedSimplePanelProps = {
   }>;
   referenceLoadingId?: string | null;
   resultUrls?: readonly string[];
-  size?: string;
+  aspectRatio?: string;
+  resolution?: string;
   sourceImages?: readonly File[];
   submissionState?: "idle" | "submitting" | "submitted";
 };
@@ -69,7 +70,6 @@ const catalog: ImageGenerationModelCatalog = {
         {
           id: "gpt-image-2",
           capabilities: { generate: true, edit: true, mask: false },
-          supportsAutoSize: true,
         },
       ],
     },
@@ -375,10 +375,11 @@ describe("ImageCreatePanel", () => {
     expect(testHarness.panelProps?.resultUrls).toEqual([imageUrl]);
   });
 
-  it("首屏默认使用 auto 尺寸", () => {
+  it("首屏默认使用 1:1 比例和 1K 分辨率", () => {
     mountImageCreatePanel(vi.fn(), {}, null);
 
-    expect(testHarness.panelProps?.size).toBe("auto");
+    expect(testHarness.panelProps?.aspectRatio).toBe("1:1");
+    expect(testHarness.panelProps?.resolution).toBe("1k");
   });
 
   it("只下载一次图库图片并将其设为图生图来源", async () => {

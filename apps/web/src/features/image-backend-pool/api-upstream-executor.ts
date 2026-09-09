@@ -243,11 +243,29 @@ export async function executeApiUpstreamOperation(input: {
    * 视频创建用它原子预留尝试账本；回调失败时不得发送请求。
    */
   onBeforeSend?: () => Promise<void> | void;
+  /**
+   * 请求执行前的可选回调。视频创建用它预留尝试账本，使请求脚本、响应脚本
+   * 许可或正文编码等发送前失败也会消耗有限的账号级重试额度。
+   */
+  onBeforeRequestScript?: () => Promise<void> | void;
   /** 调用方已持久化的服务端请求标识；省略时由执行器生成。 */
   requestId?: string;
 }): Promise<ApiUpstreamExecutionResult> {
   const requestId = input.requestId ?? createApiUpstreamRequestId();
   const operationConfig = input.adapter.operations[input.operation];
+  if (operationConfig.requestScript) {
+    try {
+      await input.onBeforeRequestScript?.();
+    } catch (error) {
+      throw new ApiUpstreamExecutionError(
+        "invalid_configuration",
+        "before_send",
+        error,
+        undefined,
+        requestId
+      );
+    }
+  }
   let envelope: Awaited<ReturnType<typeof resolveApiUpstreamRequestEnvelope>>;
   try {
     const requestContext: ApiUpstreamScriptContext = {

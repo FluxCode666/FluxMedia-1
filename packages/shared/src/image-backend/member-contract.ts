@@ -14,6 +14,7 @@ import {
   apiUpstreamOperationsSchema,
   apiVideoInputCapabilitiesByModelSchema,
   apiVideoInputCapabilitiesSchema,
+  apiVideoInputFormatSchema,
   apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   videoSubmissionRetryCountSchema,
@@ -22,6 +23,55 @@ import {
   isLegacyVideoModelId,
   supportedModelIdsSchema,
 } from "./supported-models";
+
+export const imageSizeConfigIdSchema = z.string().trim().min(1).max(128);
+const imageReferenceImageLimitSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+export const imageReferenceImageLimitsByModelSchema = z
+  .record(z.string().trim().min(1).max(240), imageReferenceImageLimitSchema)
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, limit]) => [
+        modelId.trim().toLowerCase(),
+        limit,
+      ])
+    )
+  )
+  .optional();
+
+/** 供应商按平台生图模型选择尺寸配置集；模型键大小写不敏感。 */
+export const imageSizeConfigIdsByModelSchema = z
+  .record(z.string().trim().min(1).max(240), imageSizeConfigIdSchema)
+  .superRefine((value, context) => {
+    const seen = new Set<string>();
+    for (const modelId of Object.keys(value)) {
+      const key = modelId.trim().toLowerCase();
+      if (seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: [modelId],
+          message: "模型尺寸配置不能重复",
+        });
+      }
+      seen.add(key);
+    }
+  })
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, configId]) => [
+        modelId.trim().toLowerCase(),
+        configId.trim(),
+      ])
+    )
+  )
+  .optional();
+
+export type ImageSizeConfigIdsByModel = z.infer<
+  typeof imageSizeConfigIdsByModelSchema
+>;
 
 /** 供应商账号按模型声明的输出分辨率覆盖；缺失模型键表示继承全局模型能力。 */
 export const backendModelResolutionCapabilitiesSchema = z
@@ -113,12 +163,22 @@ export const apiBackendMemberConfigSchema = z
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
+    /** 管理员选择的尺寸配置集；实际映射由服务端读取并写入适配版本快照。 */
+    imageSizeConfigId: imageSizeConfigIdSchema.nullable().optional(),
+    /** 按平台生图模型选择尺寸配置集；未声明模型时回退供应商默认配置。 */
+    imageSizeConfigIdsByModel: imageSizeConfigIdsByModelSchema,
+    /** 供应商账号级图像参考图数量覆盖；缺失时继承全局模型配置。 */
+    imageMaxReferenceImages: imageReferenceImageLimitSchema.optional(),
+    /** 供应商账号下模型级图像参考图数量覆盖。 */
+    imageMaxReferenceImagesByModel: imageReferenceImageLimitsByModelSchema,
     /** 图生图参考图是否先转存并转换为绝对公网 URL；缺失时按关闭解析。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** custom 视频请求参考图的输入格式；旧成员缺失时安全沿用 URL。 */
+    videoInputFormat: apiVideoInputFormatSchema.optional(),
     /** 旧适配版本的账号级能力；新保存始终保持关闭。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     /** 按平台模型 ID 声明的参考视频和参考音频输入能力。 */
@@ -208,6 +268,26 @@ export const backendMemberInputSchema = z
         code: "custom",
         path: ["config", "videoInputCapabilitiesByModel", modelId],
         message: "Video input capability model must be supported",
+      });
+    }
+    for (const modelId of Object.keys(
+      member.config.imageSizeConfigIdsByModel ?? {}
+    )) {
+      if (supportedModelIds.has(modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "imageSizeConfigIdsByModel", modelId],
+        message: "模型尺寸配置必须对应供应商支持的模型 ID",
+      });
+    }
+    for (const modelId of Object.keys(
+      member.config.imageMaxReferenceImagesByModel ?? {}
+    )) {
+      if (supportedModelIds.has(modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "imageMaxReferenceImagesByModel", modelId],
+        message: "模型参考图上限必须对应供应商支持的模型 ID",
       });
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {

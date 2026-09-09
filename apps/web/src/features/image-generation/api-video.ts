@@ -83,7 +83,9 @@ export type ApiVideoStageError = {
       | "response_read"
       | "response_parse"
       | "missing_task_id"
+      | "script"
       | "unknown";
+    scriptStage?: "request" | "response";
     statusCode?: number;
     scriptedCategory?: Extract<
       ApiUpstreamResponseResult,
@@ -257,6 +259,11 @@ async function createSignedApiVideoInputUrl(
   return parsed.toString();
 }
 
+/** 将已验证的图片媒体编码为供应商可直接消费的 data URL。 */
+function createApiVideoInputDataUrl(image: ApiVideoSourceImage): string {
+  return `data:${image.type};base64,${image.data.toString("base64")}`;
+}
+
 /** 将执行器阶段错误转换为视频提交状态机的安全分类。 */
 function toApiVideoStageError(
   error: unknown,
@@ -266,14 +273,24 @@ function toApiVideoStageError(
     const kind =
       signal?.aborted || error.cause instanceof DOMException
         ? "timeout"
-        : error.code === "response_read_failed"
-          ? "response_read"
-          : error.code === "transport_failed"
-            ? "network"
-            : "unknown";
+        : error.code === "request_script_failed" ||
+            error.code === "response_script_failed"
+          ? "script"
+          : error.code === "response_read_failed"
+            ? "response_read"
+            : error.code === "transport_failed"
+              ? "network"
+              : "unknown";
     return {
       error: error.message,
-      failure: { kind },
+      failure: {
+        kind,
+        ...(error.code === "request_script_failed"
+          ? { scriptStage: "request" as const }
+          : error.code === "response_script_failed"
+            ? { scriptStage: "response" as const }
+            : {}),
+      },
       ...(error.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: error.retryAfterSeconds }
         : {}),
@@ -656,39 +673,58 @@ export async function submitApiVideoRequest(
   let referenceVideoValues: string[] | undefined;
   let referenceAudioValues: string[] | undefined;
   try {
+    const useBase64ImageInputs = adapter.videoInputFormat === "base64";
     const hasSourceInputs = Boolean(
-      params.firstFrame || params.lastFrame || params.referenceImages?.length
-        || params.referenceVideos?.length || params.referenceAudios?.length
+      params.firstFrame ||
+        params.lastFrame ||
+        params.referenceImages?.length ||
+        params.referenceVideos?.length ||
+        params.referenceAudios?.length
     );
-    const storage = hasSourceInputs
-      ? await import("@repo/shared/storage/providers").then((module) =>
-          module.getStorageRuntimeSnapshot()
-        )
-      : undefined;
-    const resolveInputValue = async (
+    const needsSignedUrlInputs = Boolean(
+      params.referenceVideos?.length ||
+        params.referenceAudios?.length ||
+        (!useBase64ImageInputs &&
+          (params.firstFrame ||
+            params.lastFrame ||
+            params.referenceImages?.length))
+    );
+    const storage =
+      hasSourceInputs && needsSignedUrlInputs
+        ? await import("@repo/shared/storage/providers").then((module) =>
+            module.getStorageRuntimeSnapshot()
+          )
+        : undefined;
+    const resolveSignedInputValue = async (
       image: ApiVideoSourceImage
     ): Promise<string> => {
       if (!storage) throw new Error("API 视频输入缺少对象存储快照");
       return createSignedApiVideoInputUrl(image, storage);
     };
+    const resolveImageInputValue = async (
+      image: ApiVideoSourceImage
+    ): Promise<string> =>
+      useBase64ImageInputs
+        ? createApiVideoInputDataUrl(image)
+        : resolveSignedInputValue(image);
     firstFrameValue = params.firstFrame
-      ? await resolveInputValue(params.firstFrame)
+      ? await resolveImageInputValue(params.firstFrame)
       : undefined;
     lastFrameValue = params.lastFrame
-      ? await resolveInputValue(params.lastFrame)
+      ? await resolveImageInputValue(params.lastFrame)
       : undefined;
     referenceImageValues = params.referenceImages?.length
-      ? await Promise.all(params.referenceImages.map(resolveInputValue))
+      ? await Promise.all(params.referenceImages.map(resolveImageInputValue))
       : undefined;
     referenceVideoValues = params.referenceVideos?.length
-      ? await Promise.all(params.referenceVideos.map(resolveInputValue))
+      ? await Promise.all(params.referenceVideos.map(resolveSignedInputValue))
       : undefined;
     referenceAudioValues = params.referenceAudios?.length
-      ? await Promise.all(params.referenceAudios.map(resolveInputValue))
+      ? await Promise.all(params.referenceAudios.map(resolveSignedInputValue))
       : undefined;
   } catch {
     return {
-      error: "API 视频参考素材 URL 签发失败，请稍后重试",
+      error: "API 视频参考素材准备失败，请稍后重试",
       failure: { kind: "unknown" },
       backendHealthNeutral: true,
     };
@@ -740,7 +776,9 @@ export async function submitApiVideoRequest(
       body: standardBody,
       opaqueValues,
       onRequestSnapshot: params.onRequestSnapshot,
-      onBeforeSend: params.onBeforeSend,
+      ...(adapter.operations["videos.generate"].requestScript
+        ? { onBeforeRequestScript: params.onBeforeSend }
+        : { onBeforeSend: params.onBeforeSend }),
       signal: params.signal,
       requestId: params.requestId,
       observability: {

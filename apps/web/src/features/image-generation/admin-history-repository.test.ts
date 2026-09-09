@@ -39,6 +39,8 @@ const baseQuery = {
   userEmail: "member@example.com",
   cursor: null,
   branchLimit: 21,
+  offset: 0,
+  pageLimit: 21,
 };
 
 describe("admin history repository SQL", () => {
@@ -251,6 +253,20 @@ describe("admin history repository SQL", () => {
     expect(compiled.sql).toContain(
       "order by created_at asc, kind_rank asc, id asc"
     );
+  });
+
+  it("applies a bounded offset for random global page access", () => {
+    const compiled = new PgDialect().sqlToQuery(
+      buildAdminHistoryListSql({
+        ...baseQuery,
+        branchLimit: 61,
+        offset: 40,
+      })
+    );
+
+    expect(compiled.sql).toMatch(/limit \$\d+\s+offset \$\d+/);
+    expect(compiled.params.filter((value) => value === 61)).toHaveLength(2);
+    expect(compiled.params).toContain(40);
   });
 
   it("scopes model options by email and returns only users with matching history types", () => {

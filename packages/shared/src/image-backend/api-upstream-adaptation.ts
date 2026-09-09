@@ -6,7 +6,6 @@
  * 本模块只处理非密钥配置与模型 ID，不执行脚本，也不接触网络。
  */
 import { z } from "zod";
-
 import {
   API_UPSTREAM_ADAPTER_OPERATION_IDS,
   API_UPSTREAM_MAX_SCRIPT_CHARACTERS,
@@ -15,6 +14,7 @@ import {
   isApiUpstreamQueryOperation,
   isBlockedApiUpstreamHeaderName,
 } from "./api-upstream-script-contract";
+import { imageSizeConfigSnapshotSchema } from "./image-size-config";
 
 /** 单个 API 账号允许保存的最大模型映射数量。 */
 export const MAX_API_MODEL_MAPPINGS = 1_000;
@@ -40,6 +40,15 @@ export const apiVideoProtocolModeSchema = z
   .default("custom");
 
 export type ApiVideoProtocolMode = z.infer<typeof apiVideoProtocolModeSchema>;
+
+/** custom 视频适配器发送参考媒体的格式。 */
+export const API_VIDEO_INPUT_FORMATS = ["url", "base64"] as const;
+
+export const apiVideoInputFormatSchema = z
+  .enum(API_VIDEO_INPUT_FORMATS)
+  .default("url");
+
+export type ApiVideoInputFormat = z.infer<typeof apiVideoInputFormatSchema>;
 
 /** API 视频创建额外重试次数；实际请求上限始终为该值加一。 */
 export const videoSubmissionRetryCountSchema = z
@@ -348,11 +357,49 @@ export const apiUpstreamAdapterDraftSchema = z
         }
       ),
     useStream: z.boolean(),
+    /** 供应商可选的分辨率/比例到 size 映射快照。 */
+    imageSizeConfig: imageSizeConfigSnapshotSchema.nullable().optional(),
+    /** 按平台生图模型覆盖的尺寸配置快照；键统一为小写模型 ID。 */
+    imageSizeConfigsByModel: z
+      .record(z.string().trim().min(1).max(240), imageSizeConfigSnapshotSchema)
+      .transform((value) =>
+        Object.fromEntries(
+          Object.entries(value).map(([modelId, snapshot]) => [
+            modelId.trim().toLowerCase(),
+            snapshot,
+          ])
+        )
+      )
+      .optional(),
+    /** 账号级图像参考图数量覆盖；缺失时继承全局模型能力。 */
+    imageMaxReferenceImages: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    /** 账号下模型级图像参考图数量覆盖；键统一为小写模型 ID。 */
+    imageMaxReferenceImagesByModel: z
+      .record(
+        z.string().trim().min(1).max(240),
+        z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+      )
+      .transform((value) =>
+        Object.fromEntries(
+          Object.entries(value).map(([modelId, limit]) => [
+            modelId.trim().toLowerCase(),
+            limit,
+          ])
+        )
+      )
+      .optional(),
     /** 旧适配版本缺失此字段时必须继续使用 multipart。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** custom 视频请求的参考媒体格式；缺失时保持历史 URL 行为。 */
+    videoInputFormat: apiVideoInputFormatSchema.optional(),
     /** 兼容旧适配版本；新配置只写入按模型能力。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     videoInputCapabilitiesByModel: apiVideoInputCapabilitiesByModelSchema,

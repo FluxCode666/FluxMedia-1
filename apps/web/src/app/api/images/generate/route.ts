@@ -15,8 +15,6 @@ import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/req
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
-  resolveImageRequestSize,
-  validateImageSize,
 } from "@/features/image-generation/resolution";
 import { invokeImageEnqueueAsyncOperation } from "@/features/image-generation/uol-client";
 
@@ -33,12 +31,9 @@ const generateImageSchema = z
     generation_id: z.string().min(1).max(128).optional(),
     apiPrompt: z.string().min(1).max(8000).optional(),
     promptOptimization: z.boolean().optional(),
-    size: z
-      .string()
-      .optional()
-      .refine((value) => !value || validateImageSize(value).valid, {
-        message: "Invalid image size",
-      }),
+    aspectRatio: z.string().trim().min(1).max(64).optional(),
+    aspect_ratio: z.string().trim().min(1).max(64).optional(),
+    resolution: z.string().trim().min(1).max(64).optional(),
     model: imageModelIdSchema,
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     backend_group_id: z.string().trim().min(1).max(128).optional(),
@@ -120,7 +115,8 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     prompt: parsed.data.prompt,
     apiPrompt: parsed.data.apiPrompt,
     promptOptimization: parsed.data.promptOptimization,
-    size: resolveImageRequestSize(parsed.data.size),
+    aspectRatio: parsed.data.aspectRatio ?? parsed.data.aspect_ratio,
+    resolution: parsed.data.resolution,
     model: parsed.data.model,
     backendGroupId: parsed.data.backendGroupId ?? parsed.data.backend_group_id,
     thinking: parsed.data.thinking,

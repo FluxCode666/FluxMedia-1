@@ -4,7 +4,8 @@
  * 响应式游标分页控件。
  *
  * 使用方：历史、支付订单等稳定 keyset 列表。移动端展示紧凑页数，桌面端展示
- * 数字页码窗口；仅相邻页可通过已签发 cursor 导航，避免伪造随机深页访问。
+ * 数字页码窗口；所有展示出的数字页码均可导航，具体的 cursor 或随机访问策略由
+ * 使用方决定。
  */
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -33,6 +34,7 @@ export type CursorPaginationControlsProps = {
   nextLabel: string;
   onPrevious: () => void;
   onNext: () => void;
+  onPageChange: (page: number) => void;
   hasPrevious: boolean;
   hasNext: boolean;
   disabled?: boolean;
@@ -57,6 +59,7 @@ export function CursorPaginationControls({
   nextLabel,
   onPrevious,
   onNext,
+  onPageChange,
   hasPrevious,
   hasNext,
   disabled = false,
@@ -91,11 +94,8 @@ export function CursorPaginationControls({
         {renderDesktopCursorItems({
           currentPageLabelTemplate,
           disabled,
-          hasNext,
-          hasPrevious,
           items,
-          onNext,
-          onPrevious,
+          onPageChange,
           page,
           pageLabelTemplate,
         })}
@@ -117,25 +117,19 @@ export function CursorPaginationControls({
   );
 }
 
-/** 生成桌面数字页码；只有具备已签发 cursor 的相邻页可交互。 */
+/** 生成桌面数字页码；当前页外的所有可见数字均可交互。 */
 function renderDesktopCursorItems({
   currentPageLabelTemplate,
   disabled,
-  hasNext,
-  hasPrevious,
   items,
-  onNext,
-  onPrevious,
+  onPageChange,
   page,
   pageLabelTemplate,
 }: {
   currentPageLabelTemplate: string;
   disabled: boolean;
-  hasNext: boolean;
-  hasPrevious: boolean;
   items: readonly PaginationControlsItem[];
-  onNext: () => void;
-  onPrevious: () => void;
+  onPageChange: (page: number) => void;
   page: number;
   pageLabelTemplate: string;
 }): ReactNode[] {
@@ -149,8 +143,6 @@ function renderDesktopCursorItems({
     }
 
     const isCurrent = item === page;
-    const isPrevious = item === page - 1 && hasPrevious;
-    const isNext = item === page + 1 && hasNext;
     if (isCurrent) {
       return (
         <PaginationItem className="hidden sm:block" key={item}>
@@ -168,31 +160,17 @@ function renderDesktopCursorItems({
       );
     }
 
-    if (isPrevious || isNext) {
-      return (
-        <PaginationItem className="hidden sm:block" key={item}>
-          <PaginationLink asChild>
-            <button
-              aria-label={formatPaginationPageLabel(pageLabelTemplate, item)}
-              disabled={disabled}
-              onClick={isPrevious ? onPrevious : onNext}
-              type="button"
-            >
-              {item}
-            </button>
-          </PaginationLink>
-        </PaginationItem>
-      );
-    }
-
     return (
       <PaginationItem className="hidden sm:block" key={item}>
-        <PaginationLink
-          aria-disabled="true"
-          aria-label={formatPaginationPageLabel(pageLabelTemplate, item)}
-          asChild
-        >
-          <span>{item}</span>
+        <PaginationLink asChild>
+          <button
+            aria-label={formatPaginationPageLabel(pageLabelTemplate, item)}
+            disabled={disabled}
+            onClick={() => onPageChange(item)}
+            type="button"
+          >
+            {item}
+          </button>
         </PaginationLink>
       </PaginationItem>
     );

@@ -71,6 +71,7 @@ vi.mock("lucide-react", () => ({
   LogOut: () => null,
   Megaphone: () => null,
   ReceiptText: () => null,
+  Ruler: () => null,
   Server: () => null,
   Settings: () => null,
   Shield: () => null,
@@ -100,13 +101,13 @@ vi.mock("next/link", () => ({
   useLinkStatus: () => ({ pending: false }),
 }));
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/zh/dashboard/admin/supplier-groups",
+  usePathname: () => "/zh/dashboard/admin/image-size-configs",
   useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock("next-intl", () => ({
   useLocale: () => "zh",
   useTranslations: () => (key: string) =>
-    key === "nav.groupManagement" ? "分组管理" : key,
+    key === "nav.imageSizeConfigurations" ? "图片尺寸配置" : key,
 }));
 vi.mock("next-safe-action/hooks", () => ({
   useAction: () => ({ execute: vi.fn(), result: { data: { count: 0 } } }),
@@ -157,22 +158,24 @@ afterEach(() => {
 });
 
 describe("DashboardSidebar", () => {
-  it("为中文 observer_admin 渲染分组管理并在移动端点击后关闭 Sheet", () => {
+  it("为中文 observer_admin 渲染尺寸配置并在移动端点击后关闭 Sheet", () => {
     act(() => root?.render(createElement(DashboardSidebar)));
 
-    const groupLinks = Array.from(
+    const imageSizeConfigLinks = Array.from(
       container?.querySelectorAll<HTMLAnchorElement>(
-        'a[href="/zh/dashboard/admin/supplier-groups"]'
+        'a[href="/zh/dashboard/admin/image-size-configs"]'
       ) ?? []
     );
 
-    expect(groupLinks).toHaveLength(2);
+    expect(imageSizeConfigLinks).toHaveLength(2);
     expect(
-      groupLinks.every((link) => link.textContent?.includes("分组管理"))
+      imageSizeConfigLinks.every((link) =>
+        link.textContent?.includes("图片尺寸配置")
+      )
     ).toBe(true);
-    expect(container?.textContent).not.toContain("Group Management");
+    expect(container?.textContent).not.toContain("Image Size Configurations");
 
-    act(() => groupLinks.at(-1)?.click());
+    act(() => imageSizeConfigLinks.at(-1)?.click());
 
     expect(mocks.setMobileOpen).toHaveBeenCalledWith(false);
   });

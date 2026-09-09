@@ -230,7 +230,7 @@ describe("API integration docs data", () => {
     expect(taskText).not.toContain("30 分钟");
   });
 
-  it.each(["zh", "en"])("%s 公开图片质量限制和尺寸枚举表", (locale) => {
+  it.each(["zh", "en"])("%s 公开图片质量限制和比例/分辨率参数", (locale) => {
     const content = getApiIntegrationDocs(locale);
     const generation = content.endpoints.find(
       (endpoint) => endpoint.id === "image-generations"
@@ -243,19 +243,18 @@ describe("API integration docs data", () => {
         endpoint?.parameters.find((parameter) => parameter.name === "quality")
           ?.description ?? ""
     );
-    const sizeDescriptions = [generation, edit].map(
+    const shapeDescriptions = [generation, edit].map(
       (endpoint) =>
-        endpoint?.parameters.find((parameter) => parameter.name === "size")
-          ?.description ?? ""
+        endpoint?.parameters.find(
+          (parameter) => parameter.name === "aspectRatio / aspect_ratio"
+        )?.description ?? ""
     );
 
     for (const description of qualityDescriptions) {
       expect(description).toMatch(/gpt-image-2/iu);
     }
-    for (const description of sizeDescriptions) {
-      expect(description).toContain("1024x1024");
-      expect(description).toContain("3840x2160");
-      expect(description).toMatch(/图片尺寸表|Image Size Table/u);
+    for (const description of shapeDescriptions) {
+      expect(description).toMatch(/1:1|16:9/u);
     }
 
     expect(content.imageSizeTable.title).toMatch(
@@ -401,7 +400,8 @@ describe("API integration docs data", () => {
         .map((parameter) => [parameter.name, parameter.defaultValue])
     );
     const commonDefaults = {
-      size: "1024x1024",
+      "aspectRatio / aspect_ratio": "未指定（上游决定）",
+      resolution: "未指定（上游决定）",
       quality: "auto",
       response_format: "b64_json",
       output_format: "未指定（上游决定）",
@@ -412,6 +412,8 @@ describe("API integration docs data", () => {
 
     expect(generationDefaults).toEqual(commonDefaults);
     expect(editDefaults).toEqual({ mask: "无", ...commonDefaults });
+    expect(generation?.requestExample).not.toContain('"size"');
+    expect(edit?.requestExample).not.toContain("size=");
     expect(generation?.requestExample).not.toContain('"n"');
     expect(
       generation?.parameters.map((parameter) => parameter.name)

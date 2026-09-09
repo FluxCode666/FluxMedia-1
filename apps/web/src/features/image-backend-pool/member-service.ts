@@ -15,6 +15,7 @@ import {
   API_UPSTREAM_ADAPTER_OPERATION_IDS,
   type ApiUpstreamAdapterOperationId,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
+import type { ImageSizeConfigSnapshot } from "@repo/shared/image-backend/image-size-config";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import {
   backendMemberInputSchema,
@@ -26,6 +27,10 @@ import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
 import { validateApiUpstreamScript } from "./api-upstream-script-runtime";
+import {
+  canonicalizeImageSizeConfigSnapshot,
+  IMAGE_SIZE_CONFIG_BINDING_LOCK_QUERY,
+} from "./image-size-config-binding";
 import { parseMediaUpstreamUrl } from "./media-upstream-url";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
@@ -61,6 +66,7 @@ export interface RedactedApiMemberConfig {
   convertReferenceImagesToPublicUrl?: boolean;
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  videoInputFormat?: ApiUpstreamAdapterDraft["videoInputFormat"];
   /** 旧适配版本的账号级能力，仅用于兼容读取。 */
   videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
   videoInputCapabilitiesByModel: ApiUpstreamAdapterDraft["videoInputCapabilitiesByModel"];
@@ -68,6 +74,10 @@ export interface RedactedApiMemberConfig {
   authentication?: ApiUpstreamAdapterDraft["authentication"];
   credentialScope?: string;
   operations?: ApiUpstreamAdapterDraft["operations"];
+  imageSizeConfig?: ApiUpstreamAdapterDraft["imageSizeConfig"];
+  imageSizeConfigsByModel?: ApiUpstreamAdapterDraft["imageSizeConfigsByModel"];
+  imageMaxReferenceImages?: number;
+  imageMaxReferenceImagesByModel?: Record<string, number>;
   currentAdapterVersion?: {
     id: string;
     revision: number;
@@ -100,8 +110,10 @@ interface BackendMemberAdminSummaryBase {
 }
 
 /** 管理后台统一成员列表项；类型与专属配置保持可判别关联。 */
-export type BackendMemberAdminSummary = BackendMemberAdminSummaryBase &
-  { type: "api"; config: RedactedApiMemberConfig };
+export type BackendMemberAdminSummary = BackendMemberAdminSummaryBase & {
+  type: "api";
+  config: RedactedApiMemberConfig;
+};
 
 /** 原子保存仓储返回的稳定结果。 */
 export type SaveBackendMemberRepositoryResult =
@@ -116,7 +128,8 @@ export type SaveBackendMemberRepositoryResult =
   | { status: "version_conflict" }
   | { status: "credential_scope_conflict" }
   | { status: "missing_secret" }
-  | { status: "unknown_group" };
+  | { status: "unknown_group" }
+  | { status: "unknown_image_size_config" };
 
 /** 安全删除仓储返回的稳定结果。 */
 export type DeleteBackendMemberRepositoryResult =
@@ -163,6 +176,7 @@ export interface BackendMemberServiceDependencies {
     operation: ApiUpstreamAdapterOperationId,
     stage: "request" | "response"
   ) => Promise<void>;
+  loadImageSizeConfig?: (id: string) => Promise<ImageSizeConfigSnapshot | null>;
 }
 
 /** 统一成员服务公开接口。 */
@@ -202,16 +216,24 @@ function createApiCredentialScope(
 
 /** 从 API 成员保存输入构造不含密钥的不可变适配版本草稿。 */
 export function createApiAdapterDraft(
-  input: Extract<BackendMemberInput, { type: "api" }>
+  input: Extract<BackendMemberInput, { type: "api" }>,
+  imageSizeConfig?: ImageSizeConfigSnapshot | null,
+  imageSizeConfigsByModel?: ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
 ): ApiUpstreamAdapterDraft {
   const operations = structuredClone(input.config.operations);
   return apiUpstreamAdapterDraftSchema.parse({
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
+    imageSizeConfig: imageSizeConfig ?? null,
+    imageSizeConfigsByModel: imageSizeConfigsByModel ?? {},
+    imageMaxReferenceImages: input.config.imageMaxReferenceImages,
+    imageMaxReferenceImagesByModel:
+      input.config.imageMaxReferenceImagesByModel ?? {},
     convertReferenceImagesToPublicUrl:
       input.config.convertReferenceImagesToPublicUrl ?? false,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
     videoProtocolMode: input.config.videoProtocolMode,
+    videoInputFormat: input.config.videoInputFormat ?? "url",
     videoInputCapabilities: input.config.videoInputCapabilities,
     videoInputCapabilitiesByModel: input.config.videoInputCapabilitiesByModel,
     modelMappings: input.config.modelMappings,
@@ -283,6 +305,11 @@ function assertMemberSaved(
         "validation_error",
         "选择的媒体后端分组不存在"
       );
+    case "unknown_image_size_config":
+      throw new BackendMemberServiceError(
+        "validation_error",
+        "尺寸配置集不存在"
+      );
   }
 }
 
@@ -304,6 +331,10 @@ export function createBackendMemberService(
   return {
     async saveMember(rawInput) {
       let input = backendMemberInputSchema.parse(rawInput);
+      let imageSizeConfigSnapshot: ImageSizeConfigSnapshot | null = null;
+      const imageSizeConfigsByModel: NonNullable<
+        ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
+      > = {};
       assertUniqueGroupIds(input.groupIds);
       try {
         await validateUpstreamUrl(input.config.baseUrl);
@@ -315,7 +346,42 @@ export function createBackendMemberService(
       }
 
       if (input.type === "api") {
-        const adapterDraft = createApiAdapterDraft(input);
+        imageSizeConfigSnapshot = input.config.imageSizeConfigId
+          ? await (dependencies.loadImageSizeConfig?.(
+              input.config.imageSizeConfigId
+            ) ?? Promise.resolve(null))
+          : null;
+        if (input.config.imageSizeConfigId && !imageSizeConfigSnapshot) {
+          throw new BackendMemberServiceError(
+            "validation_error",
+            "尺寸配置集不存在"
+          );
+        }
+        const modelConfigIds = input.config.imageSizeConfigIdsByModel ?? {};
+        const modelConfigEntries = await Promise.all(
+          Object.entries(modelConfigIds).map(
+            async ([modelId, configId]) =>
+              [
+                modelId,
+                await (dependencies.loadImageSizeConfig?.(configId) ??
+                  Promise.resolve(null)),
+              ] as const
+          )
+        );
+        for (const [modelId, snapshot] of modelConfigEntries) {
+          if (!snapshot) {
+            throw new BackendMemberServiceError(
+              "validation_error",
+              "尺寸配置集不存在"
+            );
+          }
+          imageSizeConfigsByModel[modelId.trim().toLowerCase()] = snapshot;
+        }
+        const adapterDraft = createApiAdapterDraft(
+          input,
+          imageSizeConfigSnapshot,
+          imageSizeConfigsByModel
+        );
         for (const operation of API_UPSTREAM_ADAPTER_OPERATION_IDS) {
           for (const stage of ["request", "response"] as const) {
             const script =
@@ -503,12 +569,18 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
           adapter.convertReferenceImagesToPublicUrl ?? false,
         videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
         videoProtocolMode: adapter.videoProtocolMode,
+        videoInputFormat: adapter.videoInputFormat ?? "url",
         videoInputCapabilities: adapter.videoInputCapabilities,
         videoInputCapabilitiesByModel: adapter.videoInputCapabilitiesByModel,
         modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
         authentication: adapter.authentication,
         credentialScope: adapter.credentialScope,
         operations: adapter.operations,
+        imageSizeConfig: adapter.imageSizeConfig ?? null,
+        imageSizeConfigsByModel: adapter.imageSizeConfigsByModel ?? {},
+        imageMaxReferenceImages: adapter.imageMaxReferenceImages,
+        imageMaxReferenceImagesByModel:
+          adapter.imageMaxReferenceImagesByModel ?? {},
         currentAdapterVersion: {
           id: row.api_adapter_version_id,
           revision: row.api_adapter_revision,
@@ -535,8 +607,11 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       imageBackendMemberApiAdapterVersion,
       imageBackendMemberApiConfig,
       imageBackendMemberGroup,
+      imageSizeConfig,
+      imageSizeConfigMapping,
     } = await import("@repo/database");
     return db.transaction(async (transaction) => {
+      await transaction.execute(IMAGE_SIZE_CONFIG_BINDING_LOCK_QUERY);
       const existingRows = extractExecuteRows(
         await transaction.execute(sql`
           select id, type, is_enabled
@@ -626,7 +701,57 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
         credentialScope: string;
       } | null = null;
       if (input.type === "api") {
-        const draft = createApiAdapterDraft(input);
+        let authoritativeImageSizeConfig: ImageSizeConfigSnapshot | null = null;
+        const authoritativeImageSizeConfigsByModel: NonNullable<
+          ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
+        > = {};
+        if (input.config.imageSizeConfigId) {
+          const [config] = await transaction
+            .select({ id: imageSizeConfig.id, name: imageSizeConfig.name })
+            .from(imageSizeConfig)
+            .where(eq(imageSizeConfig.id, input.config.imageSizeConfigId))
+            .limit(1);
+          if (!config) {
+            return { status: "unknown_image_size_config" } as const;
+          }
+          const mappings = await transaction
+            .select({
+              resolution: imageSizeConfigMapping.resolution,
+              aspectRatio: imageSizeConfigMapping.aspectRatio,
+              size: imageSizeConfigMapping.size,
+            })
+            .from(imageSizeConfigMapping)
+            .where(eq(imageSizeConfigMapping.configId, config.id));
+          authoritativeImageSizeConfig = canonicalizeImageSizeConfigSnapshot({
+            ...config,
+            mappings,
+          });
+        }
+        for (const [modelId, configId] of Object.entries(
+          input.config.imageSizeConfigIdsByModel ?? {}
+        )) {
+          const [config] = await transaction
+            .select({ id: imageSizeConfig.id, name: imageSizeConfig.name })
+            .from(imageSizeConfig)
+            .where(eq(imageSizeConfig.id, configId))
+            .limit(1);
+          if (!config) return { status: "unknown_image_size_config" } as const;
+          const mappings = await transaction
+            .select({
+              resolution: imageSizeConfigMapping.resolution,
+              aspectRatio: imageSizeConfigMapping.aspectRatio,
+              size: imageSizeConfigMapping.size,
+            })
+            .from(imageSizeConfigMapping)
+            .where(eq(imageSizeConfigMapping.configId, config.id));
+          authoritativeImageSizeConfigsByModel[modelId.trim().toLowerCase()] =
+            canonicalizeImageSizeConfigSnapshot({ ...config, mappings });
+        }
+        const draft = createApiAdapterDraft(
+          input,
+          authoritativeImageSizeConfig,
+          authoritativeImageSizeConfigsByModel
+        );
         if (
           input.config.expectedCurrentVersionId !== undefined &&
           input.config.expectedCurrentVersionId !==
@@ -912,4 +1037,10 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
 /** 默认生产成员服务。 */
 export const backendMemberService = createBackendMemberService({
   repository: defaultBackendMemberRepository,
+  async loadImageSizeConfig(id) {
+    const { getImageSizeConfigSnapshot } = await import(
+      "./image-size-config-service"
+    );
+    return getImageSizeConfigSnapshot(id);
+  },
 });

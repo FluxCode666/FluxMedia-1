@@ -28,6 +28,7 @@ import {
   type HistoryReferenceImage,
   type HistoryVideoInputSummary,
 } from "@repo/shared/image-generation/history-contract";
+import { calculateTotalPages } from "@repo/shared/pagination/state";
 import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { z } from "zod";
 
@@ -80,12 +81,14 @@ export interface AdminHistoryListQuery {
     direction: "next" | "previous";
   } | null;
   branchLimit: number;
+  offset: number;
+  pageLimit: number;
 }
 
 /** 管理员历史计数使用与列表完全相同的全局筛选和快照口径。 */
 export type AdminHistoryCountQuery = Omit<
   AdminHistoryListQuery,
-  "branchLimit" | "cursor"
+  "branchLimit" | "cursor" | "offset" | "pageLimit"
 >;
 
 interface AdminHistoryRowCommon {
@@ -376,7 +379,6 @@ export async function loadAdminHistoryRecords(
   let asOf = serverNow;
   let cursor: AdminHistoryListQuery["cursor"] = null;
   let page = parsed.page;
-  if (!parsed.cursor && parsed.page !== 1) throw new AdminHistoryServiceError();
   if (parsed.cursor) {
     const decoded = decodeAdminHistoryCursor(
       parsed.cursor,
@@ -414,11 +416,20 @@ export async function loadAdminHistoryRecords(
   const { rows, rawModelOptions, rawUserOptions, totalCount } =
     await dependencies.repository.withReadOnlySnapshot(async (reader) => {
       const totalCount = await reader.countRecords(countQuery);
+      if (!cursor) {
+        page = Math.min(
+          parsed.page,
+          calculateTotalPages(totalCount, parsed.pageSize)
+        );
+      }
+      const offset = cursor ? 0 : (page - 1) * parsed.pageSize;
       const [rows, rawModelOptions, rawUserOptions] = await Promise.all([
         reader.readRecords({
           ...countQuery,
           cursor,
-          branchLimit: parsed.pageSize + 1,
+          branchLimit: offset + parsed.pageSize + 1,
+          offset,
+          pageLimit: parsed.pageSize + 1,
         }),
         reader.readModelOptions({
           userEmail: parsed.userEmail,
@@ -441,7 +452,8 @@ export async function loadAdminHistoryRecords(
   const first = pageRows[0] ?? null;
   const last = pageRows.at(-1) ?? null;
   const canReadNext = direction === "previous" ? Boolean(cursor) : hasExtra;
-  const canReadPrevious = direction === "previous" ? hasExtra : Boolean(cursor);
+  const canReadPrevious =
+    direction === "previous" ? hasExtra : Boolean(cursor) || page > 1;
   const createCursor = (
     row: AdminHistoryListRow,
     cursorDirection: "next" | "previous"

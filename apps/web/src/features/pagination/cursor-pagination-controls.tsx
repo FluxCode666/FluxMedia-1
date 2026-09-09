@@ -1,13 +1,13 @@
-"use client";
-
 /**
  * URL 驱动的 keyset 分页控件适配器。
  *
- * 使用方：历史与支付订单列表。每次导航原子更新可见页序号和不透明 cursor，
- * 不提供任意页码跳转。
+ * 使用方：历史与支付订单列表。相邻页导航原子更新页序号和不透明 cursor；
+ * 非相邻页清除旧 cursor，交由服务端的受控随机页读取处理。
  */
-import { CursorPaginationControls } from "@repo/ui/components/cursor-pagination-controls";
+"use client";
+
 import { getPaginationWindow } from "@repo/shared/pagination/state";
+import { CursorPaginationControls } from "@repo/ui/components/cursor-pagination-controls";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
@@ -68,7 +68,7 @@ export function UrlCursorPaginationControls({
     document.getElementById(focusTargetId)?.focus({ preventScroll: true });
   }, [focusTargetId, page]);
 
-  const navigate = (targetPage: number, cursor: string) => {
+  const navigate = (targetPage: number, cursor: string | null) => {
     const href = buildPaginationHref(
       pathname,
       new URLSearchParams(searchParams.toString()),
@@ -95,6 +95,15 @@ export function UrlCursorPaginationControls({
       nextLabel={nextLabel}
       onNext={() => {
         if (nextCursor) navigate(page + 1, nextCursor);
+      }}
+      onPageChange={(targetPage) => {
+        const cursor =
+          targetPage === page - 1
+            ? previousCursor
+            : targetPage === page + 1
+              ? nextCursor
+              : null;
+        navigate(targetPage, cursor);
       }}
       onPrevious={() => {
         if (previousCursor) navigate(Math.max(1, page - 1), previousCursor);

@@ -38,6 +38,7 @@ import { toast } from "sonner";
 
 import {
   ModelConfigurationDraftError,
+  parseModelConfigurationNonnegativeSafeInteger,
   parseModelConfigurationPrice,
 } from "./model-configuration-draft";
 import { getModelConfigurationSaveErrorMessage } from "./model-configuration-view-model";
@@ -159,7 +160,7 @@ export function CustomModelConfigurationDialog({
     base8kCredits: "20",
   });
   const [supportsQuality, setSupportsQuality] = useState(false);
-  const [supportsAutoSize, setSupportsAutoSize] = useState(false);
+  const [maxReferenceImages, setMaxReferenceImages] = useState("");
   const [videoBillingMode, setVideoBillingMode] = useState<
     "per_second" | "per_item"
   >("per_second");
@@ -181,7 +182,7 @@ export function CustomModelConfigurationDialog({
       base8kCredits: "20",
     });
     setSupportsQuality(false);
-    setSupportsAutoSize(false);
+    setMaxReferenceImages("");
     setVideoBillingMode("per_second");
     setVideoPricePerSecond("30");
     setVideoPricePerItem("3");
@@ -251,7 +252,14 @@ export function CustomModelConfigurationDialog({
           JSON.stringify(supportedResolutions)
         );
         formData.append("supportsQuality", String(supportsQuality));
-        formData.append("supportsAutoSize", String(supportsAutoSize));
+        if (maxReferenceImages.trim()) {
+          formData.append(
+            "maxReferenceImages",
+            String(
+              parseModelConfigurationNonnegativeSafeInteger(maxReferenceImages)
+            )
+          );
+        }
         for (const [field, value] of Object.entries(imagePrices)) {
           formData.append(field, String(parseModelConfigurationPrice(value)));
         }
@@ -503,21 +511,21 @@ export function CustomModelConfigurationDialog({
                   onCheckedChange={setSupportsQuality}
                 />
               </div>
-              <div className="flex items-center justify-between gap-4 border-t pt-3">
-                <div>
-                  <Label htmlFor="custom-model-supports-auto-size">
-                    支持 auto 尺寸
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    关闭后站内生图必须选择明确尺寸，模型广场会标注不支持传
-                    auto。
-                  </p>
-                </div>
-                <Switch
-                  id="custom-model-supports-auto-size"
-                  checked={supportsAutoSize}
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-model-max-reference-images">
+                  参考图数量上限
+                </Label>
+                <Input
+                  id="custom-model-max-reference-images"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={maxReferenceImages}
                   disabled={isSaving}
-                  onCheckedChange={setSupportsAutoSize}
+                  onChange={(event) =>
+                    setMaxReferenceImages(event.target.value)
+                  }
+                  placeholder="不覆盖系统默认值"
                 />
               </div>
             </div>

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listGroups: vi.fn(),
   listMembers: vi.fn(),
   getRuntimeSettingJson: vi.fn(),
+  getMediaLimitDefaults: vi.fn(),
 }));
 
 vi.mock("./group-service", () => ({
@@ -24,6 +25,9 @@ vi.mock("./member-service", () => ({
 }));
 vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingJson: mocks.getRuntimeSettingJson,
+}));
+vi.mock("@repo/shared/image-generation/media-limit-service", () => ({
+  getMediaLimitDefaults: mocks.getMediaLimitDefaults,
 }));
 
 import {
@@ -81,8 +85,12 @@ describe("image backend catalog group semantics", () => {
     mocks.listGroups.mockReset();
     mocks.listMembers.mockReset();
     mocks.getRuntimeSettingJson.mockReset();
+    mocks.getMediaLimitDefaults.mockReset();
     mocks.listMembers.mockResolvedValue([member]);
     mocks.getRuntimeSettingJson.mockResolvedValue(null);
+    mocks.getMediaLimitDefaults.mockResolvedValue({
+      maxEditReferenceImages: 16,
+    });
   });
 
   it("可选分组只由启用和 isUserSelectable 决定", async () => {
@@ -161,6 +169,7 @@ describe("image backend catalog group semantics", () => {
             {
               id: "vendor-image",
               capabilities: { generate: true, edit: true, mask: true },
+              maxReferenceImages: 16,
             },
           ],
         }),

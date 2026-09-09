@@ -26,6 +26,11 @@ custom 模式保留原有行为：请求脚本输入是标准化 snake_case body
 和脱敏 context；没有脚本时继续采用原有内置 `/videos/generations` 与
 `/videos/{task_id}` 路径及解析器。
 
+custom 成员还可选择参考图片输入格式：默认 `url` 会把首尾帧和参考图作为短期签名
+HTTPS URL 发送；选择 `base64` 时，宿主会在脚本执行后恢复为对应 MIME 的
+`data:<mime>;base64,...`，用于 Leonardo 等只接受内联图片的供应商。真实媒体不会进入
+QuickJS；参考视频和音频始终使用签名 URL。
+
 `seedance` 模式使用火山方舟内容生成任务协议，不读取 `videos.generate` 和
 `videos.query` 的自定义路径：创建请求发送到成员 `baseUrl` 下的
 `/api/v3/contents/generations/tasks`，查询发送到同一路径加固定任务 ID。请求体使用

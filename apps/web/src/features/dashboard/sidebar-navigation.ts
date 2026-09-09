@@ -14,6 +14,7 @@ import {
   History,
   Megaphone,
   ReceiptText,
+  Ruler,
   Server,
   Settings,
   Shield,
@@ -58,6 +59,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
         title: "Supplier Management",
         href: "/dashboard/admin/suppliers",
         icon: Server,
+      },
+      {
+        title: "Image Size Configurations",
+        href: "/dashboard/admin/image-size-configs",
+        icon: Ruler,
       },
       {
         title: "Group Management",
@@ -126,6 +132,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
       title: "Supplier Management",
       href: "/dashboard/admin/suppliers",
       icon: Server,
+    },
+    {
+      title: "Image Size Configurations",
+      href: "/dashboard/admin/image-size-configs",
+      icon: Ruler,
     },
     {
       title: "Group Management",

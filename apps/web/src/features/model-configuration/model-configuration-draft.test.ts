@@ -43,7 +43,6 @@ const IMAGE_ENTRY: Extract<
     base4kCredits: 10,
   },
   supportsQuality: true,
-  supportsAutoSize: true,
 };
 
 const UNCONFIGURED_IMAGE_ENTRY: Extract<
@@ -198,7 +197,6 @@ describe("模型配置草稿", () => {
       description: "精细图像生成",
       coverChange: "keep",
       supportsQuality: "true",
-      supportsAutoSize: "true",
       base1024Credits: "1.27",
       base1kCredits: "1.27",
       base2kCredits: "5.07",

@@ -59,16 +59,80 @@ export function ApiUpstreamAdapterForm({
 
   return (
     <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label>视频上游协议模式</Label>
+          <Select
+            value={value.videoProtocolMode}
+            disabled={disabled}
+            onValueChange={(mode) =>
+              onChange({
+                ...value,
+                videoProtocolMode:
+                  mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
+              })
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gemini">Gemini</SelectItem>
+              <SelectItem value="seedance">Seedance</SelectItem>
+              <SelectItem value="custom">
+                Custom（当前脚本/内置路径）
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用
+            custom。
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label>认证模式</Label>
+          <Select
+            value={value.authentication.mode}
+            disabled={disabled}
+            onValueChange={(mode) =>
+              onChange({
+                ...value,
+                authentication:
+                  mode === "custom_header"
+                    ? { mode, headerName: "X-API-Key" }
+                    : {
+                        mode: mode as "bearer" | "raw_authorization" | "none",
+                      },
+              })
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bearer">Bearer</SelectItem>
+              <SelectItem value="raw_authorization">
+                Raw Authorization
+              </SelectItem>
+              <SelectItem value="custom_header">自定义认证 Header</SelectItem>
+              <SelectItem value="none">无认证</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            六个操作共享认证模式；脚本不可读取或覆盖认证值。
+          </p>
+        </div>
+      </div>
       <div className="space-y-2">
-        <Label>视频上游协议模式</Label>
+        <Label>视频参考图片输入格式</Label>
         <Select
-          value={value.videoProtocolMode}
+          value={value.videoInputFormat}
           disabled={disabled}
-          onValueChange={(mode) =>
+          onValueChange={(format) =>
             onChange({
               ...value,
-              videoProtocolMode:
-                mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
+              videoInputFormat:
+                format as ApiUpstreamAdapterFormDraft["videoInputFormat"],
             })
           }
         >
@@ -76,48 +140,17 @@ export function ApiUpstreamAdapterForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="gemini">Gemini</SelectItem>
-            <SelectItem value="seedance">Seedance</SelectItem>
-            <SelectItem value="custom">Custom（当前脚本/内置路径）</SelectItem>
+            <SelectItem value="url">URL（默认）</SelectItem>
+            <SelectItem value="base64">Base64 data URL</SelectItem>
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用
-          custom。
+          仅影响 custom 视频适配器的首尾帧和参考图；选择 Base64
+          可兼容要求内联图片的供应商（如 Leonardo）。 参考视频和音频仍使用签名
+          URL。
         </p>
       </div>
-      <div className="space-y-2">
-        <Label>认证模式</Label>
-        <Select
-          value={value.authentication.mode}
-          disabled={disabled}
-          onValueChange={(mode) =>
-            onChange({
-              ...value,
-              authentication:
-                mode === "custom_header"
-                  ? { mode, headerName: "X-API-Key" }
-                  : {
-                      mode: mode as "bearer" | "raw_authorization" | "none",
-                    },
-            })
-          }
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="bearer">Bearer</SelectItem>
-            <SelectItem value="raw_authorization">Raw Authorization</SelectItem>
-            <SelectItem value="custom_header">自定义认证 Header</SelectItem>
-            <SelectItem value="none">无认证</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          六个操作共享认证模式；脚本不可读取或覆盖认证值。
-        </p>
-      </div>
-      <div className="space-y-2 rounded-md border p-3">
+      <div className="space-y-2 border-l-2 border-primary/30 bg-muted/20 px-3 py-2">
         <label
           htmlFor="api-convert-reference-images-to-public-url"
           className="flex items-center gap-2 text-sm"

@@ -141,7 +141,7 @@ describe("Images API service", () => {
         apiKey: "test-key",
         useStream: true,
       },
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" }
+      { prompt: "make an icon", model: "gpt-image-2" }
     );
 
     expect(result.imageBase64).toBe(imageBase64);
@@ -181,7 +181,7 @@ describe("Images API service", () => {
         apiKey: "test-key",
         useStream: true,
       },
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      { prompt: "make an icon", model: "gpt-image-2" },
       {
         onPartialImage: (image) => {
           if (image.imageBase64) partials.push(image.imageBase64);
@@ -239,7 +239,7 @@ describe("Images API service", () => {
     expect(result.error).toBe("提示词未通过内容安全审核，请修改提示词后重试。");
   });
 
-  it("文生图未传尺寸时向上游发送 auto", async () => {
+  it("文生图未传比例和分辨率时不向上游发送 size", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
     mocks.fetchMediaUpstream.mockResolvedValue(successfulImageResponse());
@@ -251,9 +251,7 @@ describe("Images API service", () => {
 
     expect(result.error).toBeUndefined();
     const requestInit = mocks.fetchMediaUpstream.mock.calls[0]?.[1];
-    expect(JSON.parse(String(requestInit?.body))).toMatchObject({
-      size: "auto",
-    });
+    expect(JSON.parse(String(requestInit?.body))).not.toHaveProperty("size");
   });
 
   it("普通平台文生图在外呼前暴露脱敏后的实际请求 JSON", async () => {
@@ -264,7 +262,7 @@ describe("Images API service", () => {
 
     const result = await generateImage(
       { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      { prompt: "make an icon", model: "gpt-image-2" },
       { onApiUpstreamRequestSnapshot }
     );
 
@@ -274,7 +272,6 @@ describe("Images API service", () => {
       contentType: "application/json",
       body: expect.objectContaining({
         model: "gpt-image-2",
-        size: "1024x1024",
         response_format: "b64_json",
       }),
     });
@@ -288,12 +285,15 @@ describe("Images API service", () => {
 
     const result = await generateImage(
       createPoolApiConfig(`
-request.vendor_size = request.size;
 request.adaptation = context.platformModelId + "->" + context.upstreamModelId;
-delete request.size;
 return request;
 `),
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      {
+        prompt: "make an icon",
+        model: "gpt-image-2",
+        aspectRatio: "16:9",
+        resolution: "2k",
+      },
       { onApiUpstreamRequestSnapshot }
     );
 
@@ -306,7 +306,6 @@ return request;
     >;
     expect(body).toMatchObject({
       model: "vendor-image-id",
-      vendor_size: "1024x1024",
       adaptation: "gpt-image-2->vendor-image-id",
     });
     expect(body).not.toHaveProperty("size");
@@ -316,7 +315,6 @@ return request;
         contentType: "application/json",
         body: expect.objectContaining({
           model: "vendor-image-id",
-          vendor_size: "1024x1024",
           adaptation: "gpt-image-2->vendor-image-id",
         }),
       })
@@ -867,7 +865,7 @@ return request;
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 
-  it("图生图未传尺寸时向上游发送 auto", async () => {
+  it("图生图未传比例和分辨率时不向上游发送 size", async () => {
     prepareTestEnvironment();
     const { editImage } = await import("./service");
     mocks.fetchMediaUpstream.mockImplementation(
@@ -877,7 +875,7 @@ return request;
         if (!(formData instanceof FormData)) {
           throw new Error("missing FormData");
         }
-        expect(formData.get("size")).toBe("auto");
+        expect(formData.get("size")).toBeNull();
         return successfulImageResponse();
       }
     );
@@ -978,7 +976,8 @@ return request;
         }
         expect(formData.get("count")).toBe("1");
         expect(JSON.parse(String(formData.get("options")))).toEqual({
-          width: 1024,
+          aspectRatio: "16:9",
+          resolution: "2k",
           compression: 80,
           streaming: true,
         });
@@ -994,7 +993,8 @@ return request;
       ...createPoolApiConfig(`
 if (
   typeof request.n !== "string" ||
-  typeof request.width !== "string" ||
+  typeof request.aspectRatio !== "string" ||
+  typeof request.resolution !== "string" ||
   typeof request.output_compression !== "string" ||
   request.stream !== "true"
 ) {
@@ -1002,12 +1002,14 @@ if (
 }
 request.count = Number(request.n);
 request.options = {
-  width: Number(request.width),
+  aspectRatio: request.aspectRatio,
+  resolution: request.resolution,
   compression: Number(request.output_compression),
   streaming: request.stream === "true",
 };
 delete request.n;
-delete request.width;
+  delete request.aspectRatio;
+  delete request.resolution;
 delete request.output_compression;
 delete request.stream;
 return request;
@@ -1018,7 +1020,8 @@ return request;
     const result = await editImage(config, {
       prompt: "adjust colors",
       model: "gpt-image-2",
-      size: "1024x1024",
+      aspectRatio: "16:9",
+      resolution: "2k",
       outputCompression: 80,
       images: [
         {

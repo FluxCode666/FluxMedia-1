@@ -205,6 +205,31 @@ describe("backend pool PostgreSQL repository", () => {
     );
   });
 
+  it("图生图按账号下模型、账号和全局默认顺序过滤参考图上限", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "priority" }] },
+      { rowCount: 0 },
+      [],
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({
+        requestedModel: "gpt-image-2",
+        requiredImageReferenceImages: 3,
+        defaultImageMaxReferenceImages: 2,
+      })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery?.sql).toContain("imageMaxReferenceImagesByModel");
+    expect(candidateQuery?.sql).toContain("imageMaxReferenceImages");
+    expect(candidateQuery?.sql).toContain("coalesce");
+    expect(candidateQuery?.params).toEqual(
+      expect.arrayContaining(["gpt-image-2", 2, 3])
+    );
+  });
+
   it("同账号重试把固定 API 适配版本编入权威获租 SQL", async () => {
     const { database, queries } = createDatabase([
       { rows: [{ value: "least_load" }] },

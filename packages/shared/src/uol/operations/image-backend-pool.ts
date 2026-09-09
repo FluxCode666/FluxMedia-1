@@ -12,6 +12,7 @@ import {
   apiUpstreamOperationsSchema,
   apiVideoInputCapabilitiesByModelSchema,
   apiVideoInputCapabilitiesSchema,
+  apiVideoInputFormatSchema,
   apiVideoProtocolModeSchema,
 } from "../../image-backend/api-upstream-adaptation";
 import {
@@ -23,6 +24,11 @@ import {
   backendGroupOptionSchema,
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
+import {
+  imageSizeConfigInputSchema,
+  imageSizeConfigOptionSchema,
+  imageSizeConfigSnapshotSchema,
+} from "../../image-backend/image-size-config";
 import {
   backendMemberInputSchema,
   backendModelResolutionCapabilitiesSchema,
@@ -44,10 +50,19 @@ const redactedApiConfigSchema = z
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
+    imageSizeConfig: imageSizeConfigSnapshotSchema.nullable().optional(),
+    imageSizeConfigsByModel: z
+      .record(z.string(), imageSizeConfigSnapshotSchema)
+      .optional(),
+    imageMaxReferenceImages: z.number().int().nonnegative().optional(),
+    imageMaxReferenceImagesByModel: z
+      .record(z.string(), z.number().int().nonnegative())
+      .optional(),
     /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
     convertReferenceImagesToPublicUrl: z.boolean().optional(),
     videoSubmissionRetryCount: z.number().int().min(0).max(10),
     videoProtocolMode: apiVideoProtocolModeSchema,
+    videoInputFormat: apiVideoInputFormatSchema.optional(),
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     videoInputCapabilitiesByModel: apiVideoInputCapabilitiesByModelSchema,
     modelMappings: apiModelMappingsSchema,
@@ -149,6 +164,13 @@ export const adminPoolMemberListOutputSchema =
 export const adminPoolGroupListOutputSchema =
   createOffsetPaginationOutputSchema(backendGroupSummarySchema);
 
+export const imageSizeConfigOutputSchema = imageSizeConfigSnapshotSchema.extend(
+  {
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  }
+);
+
 export type AdminPoolMemberListInput = z.output<
   typeof adminPoolMemberListInputSchema
 >;
@@ -160,6 +182,10 @@ export type AdminPoolMemberListOutput = z.output<
 >;
 export type AdminPoolGroupListOutput = z.output<
   typeof adminPoolGroupListOutputSchema
+>;
+
+export type ImageSizeConfigOutput = z.output<
+  typeof imageSizeConfigOutputSchema
 >;
 
 /** 获取用户或表单可选择的统一后端分组。 */
@@ -179,6 +205,77 @@ export const getGroupOptions = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: pool.getGroupOptions");
+  },
+});
+
+export const listImageSizeConfigs = defineOperation({
+  name: "pool.listImageSizeConfigs",
+  domain: "image-backend-pool",
+  title: "读取图片尺寸配置",
+  description: "读取供应商可选择的图片尺寸配置集。",
+  input: z.object({}).strict(),
+  output: z.object({ configs: z.array(imageSizeConfigOutputSchema) }).strict(),
+  access: { kind: "imageBackendPoolViewer" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listImageSizeConfigs");
+  },
+});
+
+export const getImageSizeConfigOptions = defineOperation({
+  name: "pool.getImageSizeConfigOptions",
+  domain: "image-backend-pool",
+  title: "获取图片尺寸配置选项",
+  description: "获取供应商表单可选择的图片尺寸配置集。",
+  input: z.object({}).strict(),
+  output: z.object({ options: z.array(imageSizeConfigOptionSchema) }).strict(),
+  access: { kind: "imageBackendPoolViewer" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.getImageSizeConfigOptions");
+  },
+});
+
+export const saveImageSizeConfig = defineOperation({
+  name: "pool.saveImageSizeConfig",
+  domain: "image-backend-pool",
+  title: "保存图片尺寸配置",
+  description: "新增或更新图片尺寸配置集及其映射。",
+  input: imageSizeConfigInputSchema,
+  output: z.object({ id: z.string() }).strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "none" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.saveImageSizeConfig");
+  },
+});
+
+export const deleteImageSizeConfig = defineOperation({
+  name: "pool.deleteImageSizeConfig",
+  domain: "image-backend-pool",
+  title: "删除图片尺寸配置",
+  description: "删除图片尺寸配置集。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.deleteImageSizeConfig");
   },
 });
 

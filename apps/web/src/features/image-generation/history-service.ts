@@ -23,6 +23,7 @@ import {
   historyListOutputSchema,
   historyRecordSchema,
 } from "@repo/shared/image-generation/history-contract";
+import { calculateTotalPages } from "@repo/shared/pagination/state";
 import { parseDateInputInTimeZone } from "@repo/shared/time-zone";
 import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { z } from "zod";
@@ -69,12 +70,14 @@ export interface HistoryListQuery {
     direction: "next" | "previous";
   } | null;
   branchLimit: number;
+  offset: number;
+  pageLimit: number;
 }
 
 /** 本人历史计数使用与列表完全相同的身份、筛选和快照口径。 */
 export type HistoryCountQuery = Omit<
   HistoryListQuery,
-  "branchLimit" | "cursor"
+  "branchLimit" | "cursor" | "offset" | "pageLimit"
 >;
 
 interface HistoryRowCommon {
@@ -402,7 +405,6 @@ export async function loadHistoryRecords(
   let asOf = serverNow;
   let cursor: HistoryListQuery["cursor"] = null;
   let page = parsed.page;
-  if (!parsed.cursor && parsed.page !== 1) throw new HistoryServiceError();
   if (parsed.cursor) {
     const decoded = decodeHistoryCursor(
       parsed.cursor,
@@ -436,11 +438,20 @@ export async function loadHistoryRecords(
   const { rows, rawModelOptions, totalCount } =
     await dependencies.repository.withReadOnlySnapshot(async (reader) => {
       const totalCount = await reader.countRecords(countQuery);
+      if (!cursor) {
+        page = Math.min(
+          parsed.page,
+          calculateTotalPages(totalCount, parsed.pageSize)
+        );
+      }
+      const offset = cursor ? 0 : (page - 1) * parsed.pageSize;
       const [rows, rawModelOptions] = await Promise.all([
         reader.readRecords({
           ...countQuery,
           cursor,
-          branchLimit: parsed.pageSize + 1,
+          branchLimit: offset + parsed.pageSize + 1,
+          offset,
+          pageLimit: parsed.pageSize + 1,
         }),
         reader.readModelOptions({
           userId: request.userId,
@@ -459,7 +470,8 @@ export async function loadHistoryRecords(
   const first = pageRows[0] ?? null;
   const last = pageRows.at(-1) ?? null;
   const canReadNext = direction === "previous" ? Boolean(cursor) : hasExtra;
-  const canReadPrevious = direction === "previous" ? hasExtra : Boolean(cursor);
+  const canReadPrevious =
+    direction === "previous" ? hasExtra : Boolean(cursor) || page > 1;
   const createCursor = (
     row: HistoryListRow,
     cursorDirection: "next" | "previous"

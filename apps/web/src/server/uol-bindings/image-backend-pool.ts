@@ -24,6 +24,11 @@ import type {
   AdminPoolMemberListInput,
 } from "@repo/shared/uol/operations/image-backend-pool";
 import {
+  deleteImageSizeConfig,
+  listImageSizeConfigs,
+  saveImageSizeConfig,
+} from "@/features/image-backend-pool/image-size-config-service";
+import {
   filterBackendGroups,
   filterBackendMembers,
 } from "@/features/image-backend-pool/admin-pool-view-model";
@@ -291,6 +296,20 @@ async function assertBackendMemberModelsComeFromConfiguration(
           .join("、")}`
       );
     }
+    const invalidImageReferenceLimitModels = Object.keys(
+      input.config.imageMaxReferenceImagesByModel ?? {}
+    ).filter(
+      (modelId) =>
+        optionByModelId.get(modelId.toLowerCase())?.category !== "image"
+    );
+    if (invalidImageReferenceLimitModels.length > 0) {
+      throw new OperationError(
+        "validation_error",
+        `参考图数量上限只能配置到生图模型：${invalidImageReferenceLimitModels
+          .slice(0, 3)
+          .join("、")}`
+      );
+    }
   }
   if (unavailableModelIds.length === 0) return;
 
@@ -432,17 +451,16 @@ bindExecute("pool.getAdminPool", async () => {
 bindExecute(
   "pool.listAdminMembers",
   async (input: AdminPoolMemberListInput, principal) => {
-    const [members, modelConfigurationResult] =
-      await Promise.all([
-        defaultDependencies.memberService.listMembers(),
-        defaultDependencies
-          .readModelConfiguration(principal)
-          .then((configuration) => ({
-            status: "ready" as const,
-            configuration,
-          }))
-          .catch(() => ({ status: "unavailable" as const })),
-      ]);
+    const [members, modelConfigurationResult] = await Promise.all([
+      defaultDependencies.memberService.listMembers(),
+      defaultDependencies
+        .readModelConfiguration(principal)
+        .then((configuration) => ({
+          status: "ready" as const,
+          configuration,
+        }))
+        .catch(() => ({ status: "unavailable" as const })),
+    ]);
     const pageMembers = members.map((member) => ({
       ...member,
       credentialHealthStatus: null,
@@ -506,6 +524,30 @@ bindExecute("pool.listAdminGroups", async (input: AdminPoolGroupListInput) => {
     input.page,
     input.pageSize
   );
+});
+
+bindExecute("pool.listImageSizeConfigs", async () => ({
+  configs: await listImageSizeConfigs(),
+}));
+
+bindExecute("pool.getImageSizeConfigOptions", async () => ({
+  options: (await listImageSizeConfigs()).map(({ id, name }) => ({ id, name })),
+}));
+
+bindExecute("pool.saveImageSizeConfig", async (input: unknown) => {
+  try {
+    return await saveImageSizeConfig(input);
+  } catch (error) {
+    throwBackendPoolOperationError(error);
+  }
+});
+
+bindExecute("pool.deleteImageSizeConfig", async (input: { id: string }) => {
+  try {
+    return await deleteImageSizeConfig(input.id);
+  } catch (error) {
+    throwBackendPoolOperationError(error);
+  }
 });
 
 /** 保存统一分组。 */

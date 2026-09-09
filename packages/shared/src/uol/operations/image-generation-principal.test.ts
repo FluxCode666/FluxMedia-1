@@ -85,6 +85,18 @@ describe("image.generate principal-bound contract", () => {
     ).toBe(false);
   });
 
+  it("拒绝已废弃的 size 请求参数", () => {
+    expect(
+      imageGenerateInputSchema.safeParse({
+        operation: "generate",
+        prompt: "a test image",
+        model: "gpt-image-2",
+        generationId: "generation-1",
+        size: "1024x1024",
+      }).success
+    ).toBe(false);
+  });
+
   it("registers the strict schema on image.generate", () => {
     expect(getOperation("image.generate")?.input).toBe(
       imageGenerateInputSchema

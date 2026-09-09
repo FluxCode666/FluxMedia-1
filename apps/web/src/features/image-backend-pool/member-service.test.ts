@@ -106,6 +106,78 @@ describe("backend member service", () => {
     );
   });
 
+  it("供应商保存只传配置 ID，仓储在事务内重新读取权威尺寸快照", async () => {
+    const loadImageSizeConfig = vi.fn(async () => ({
+      id: "size-config-a",
+      name: "标准尺寸",
+      mappings: [{ resolution: "1K", aspectRatio: "1:1", size: "1024x1024" }],
+    }));
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-sized",
+      now: () => NOW,
+      validateUpstreamUrl,
+      loadImageSizeConfig,
+    });
+
+    await service.saveMember(
+      apiInput({
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          apiKey: "secret-api-key",
+          useStream: false,
+          modelMappings: [],
+          imageSizeConfigId: "size-config-a",
+        },
+      })
+    );
+
+    expect(loadImageSizeConfig).toHaveBeenCalledWith("size-config-a");
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          imageSizeConfigId: "size-config-a",
+        }),
+      }),
+      NOW
+    );
+    expect(repository.saveMember.mock.calls[0]?.[0]).not.toHaveProperty(
+      "imageSizeConfigSnapshot"
+    );
+  });
+
+  it("尺寸配置在预校验后被并发删除时返回稳定校验错误", async () => {
+    repository.saveMember.mockResolvedValue({
+      status: "unknown_image_size_config",
+    });
+    const service = createBackendMemberService({
+      repository,
+      validateUpstreamUrl,
+      loadImageSizeConfig: async () => ({
+        id: "size-config-a",
+        name: "标准尺寸",
+        mappings: [{ resolution: "1K", aspectRatio: "1:1", size: "1024x1024" }],
+      }),
+    });
+
+    await expect(
+      service.saveMember(
+        apiInput({
+          config: {
+            baseUrl: "https://images.example.com/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            modelMappings: [],
+            imageSizeConfigId: "size-config-a",
+          },
+        })
+      )
+    ).rejects.toMatchObject({
+      code: "validation_error",
+      message: "尺寸配置集不存在",
+    });
+  });
+
   it("校验并持久化账号模型映射与操作级请求脚本", async () => {
     const validateAdapterScript = vi.fn(async () => {});
     const service = createBackendMemberService({

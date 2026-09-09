@@ -90,7 +90,8 @@ function createGenerationRequest(
     body: JSON.stringify({
       prompt: "synthetic prompt",
       model: "gpt-image-2",
-      size: "1024x1024",
+      aspectRatio: "1:1",
+      resolution: "1k",
       response_format: "b64_json",
       ...(useAsync ? { async: true } : {}),
       ...overrides,
@@ -99,13 +100,19 @@ function createGenerationRequest(
 }
 
 /** 构造同时包含源图与 mask 的图生图 multipart 请求。 */
-function createEditRequest(useAsync = false, n?: number): NextRequest {
+function createEditRequest(
+  useAsync = false,
+  n?: number,
+  deprecatedSize?: string
+): NextRequest {
   const formData = new FormData();
   formData.set("prompt", "synthetic edit");
   formData.set("model", "gpt-image-2");
-  formData.set("size", "1024x1024");
+  formData.set("aspectRatio", "1:1");
+  formData.set("resolution", "1k");
   if (useAsync) formData.set("async", "true");
   if (n !== undefined) formData.set("n", String(n));
+  if (deprecatedSize !== undefined) formData.set("size", deprecatedSize);
   formData.set(
     "image",
     new File(["source"], "source.png", { type: "image/png" })
@@ -190,7 +197,8 @@ describe("external image generation transport contract", () => {
         generationId: expect.any(String),
         prompt: "synthetic prompt",
         model: "gpt-image-2",
-        size: "1024x1024",
+        aspectRatio: "1:1",
+        resolution: "1k",
       }),
       {
         type: "apiKey",
@@ -218,6 +226,24 @@ describe("external image generation transport contract", () => {
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 
+  it("文生图拒绝已废弃的 size 参数", async () => {
+    const response = await postExternalImageGenerations(
+      createGenerationRequest(false, { size: "1024x1024" })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it("图生图拒绝已废弃的 multipart size 参数", async () => {
+    const response = await postExternalImageEdits(
+      createEditRequest(false, undefined, "1024x1024")
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
   it("图生图把源图和 mask 规范为媒体引用后进入同一 UOL", async () => {
     const response = await postExternalImageEdits(createEditRequest());
 
@@ -229,7 +255,8 @@ describe("external image generation transport contract", () => {
         generationId: expect.any(String),
         prompt: "synthetic edit",
         model: "gpt-image-2",
-        size: "1024x1024",
+        aspectRatio: "1:1",
+        resolution: "1k",
         images: [
           expect.objectContaining({
             storageKey: "source.png",

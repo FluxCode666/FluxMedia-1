@@ -43,10 +43,16 @@ export default async function DashboardAdminSuppliersPage() {
 
   return (
     <main className="container mx-auto space-y-6 px-4 py-6 md:px-6">
-      <header>
+      <header className="flex items-center justify-between gap-4">
         <h1 className="font-serif text-2xl font-medium tracking-tight">
           {t("supplierManagement")}
         </h1>
+        <a
+          className="text-sm underline underline-offset-4"
+          href="/dashboard/admin/image-size-configs"
+        >
+          图片尺寸配置
+        </a>
       </header>
       <ImageBackendPoolAdminPanel
         paginationConfig={paginationConfig}
