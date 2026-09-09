@@ -17,7 +17,9 @@ type CapturedSimplePanelProps = {
   error?: string | null;
   mode?: string;
   model?: string;
+  onModelSelectionChange?: (groupId: string, modelId: string) => void;
   onPromptChange?: (value: string) => void;
+  onResolutionChange?: (value: string) => void;
   onRemoveSourceImage?: (index: number) => void;
   onSourceImagesChange?: (files: FileList | null) => void;
   onSubmit?: () => Promise<void>;
@@ -163,6 +165,12 @@ function mountImageCreatePanel(
                 base2kCredits: 2,
                 base4kCredits: 4,
               },
+              "nano-banana-pro": {
+                base1024Credits: 1,
+                base1kCredits: 1,
+                base2kCredits: 2,
+                base4kCredits: 4,
+              },
             },
           },
           imageModerationPricing: {
@@ -240,6 +248,41 @@ describe("ImageCreatePanel", () => {
     };
     mountImageCreatePanel(() => {}, { catalog: multiModelCatalog }, null);
     expect(testHarness.panelProps?.model).toBe("gpt-image-2");
+  });
+
+  it("切换到不支持当前分辨率的模型时自动回退到该模型首个分辨率", () => {
+    const multiModelCatalog: ImageGenerationModelCatalog = {
+      groups: [
+        {
+          id: "group-1",
+          name: "默认分组",
+          isDefault: true,
+          models: [
+            {
+              id: "gpt-image-2",
+              capabilities: { generate: true, edit: true, mask: false },
+              supportedResolutions: ["1k", "2k", "4k"],
+            },
+            {
+              id: "nano-banana-pro",
+              capabilities: { generate: true, edit: true, mask: false },
+              supportedResolutions: ["1k", "2k"],
+            },
+          ],
+        },
+      ],
+    };
+    mountImageCreatePanel(() => {}, { catalog: multiModelCatalog }, null);
+
+    act(() => testHarness.panelProps?.onResolutionChange?.("4k"));
+    expect(testHarness.panelProps?.resolution).toBe("4k");
+    act(() =>
+      testHarness.panelProps?.onModelSelectionChange?.(
+        "group-1",
+        "nano-banana-pro"
+      )
+    );
+    expect(testHarness.panelProps?.resolution).toBe("1k");
   });
 
   it("生成成功后立即把新图片加入最近图片首位", async () => {

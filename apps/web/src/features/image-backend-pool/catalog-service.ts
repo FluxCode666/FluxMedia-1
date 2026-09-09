@@ -6,12 +6,12 @@
  */
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import {
   isModelMarketplaceModelEnabled,
   parseModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
-import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { backendGroupService } from "./group-service";
@@ -113,6 +113,19 @@ export async function getImageGenerationModelCatalog(): Promise<ImageGenerationM
         .map(([modelId, model]) => [
           modelId,
           model.maxReferenceImages as number,
+        ])
+    ),
+    supportedResolutionsByModel: Object.fromEntries(
+      [
+        ...Object.entries(marketplaceConfig.imageByModel),
+        ...marketplaceConfig.customModels
+          .filter((model) => model.category === "image")
+          .map((model) => [model.modelId, model] as const),
+      ]
+        .filter(([, model]) => model.supportedResolutions !== undefined)
+        .map(([modelId, model]) => [
+          modelId,
+          [...(model.supportedResolutions ?? [])],
         ])
     ),
     fallbackMaxReferenceImages: mediaLimits.maxEditReferenceImages,

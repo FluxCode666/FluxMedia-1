@@ -108,6 +108,26 @@ describe("buildImageGenerationModelCatalog", () => {
     });
   });
 
+  it("传播模型配置中的分辨率能力", () => {
+    const result = buildImageGenerationModelCatalog({
+      groups: [group],
+      members: [
+        { groupId: group.id, type: "api", supportedModelIds: ["gpt-image-2"] },
+      ],
+      supportedResolutionsByModel: {
+        "gpt-image-2": ["1k", "2k", "4k"],
+      },
+    });
+
+    expect(result.groups[0]?.models[0]).toMatchObject({
+      id: "gpt-image-2",
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    expect(result.groups[0]?.models[0]?.supportedResolutions).not.toContain(
+      "8k"
+    );
+  });
+
   it("传播模型配置中的参考图数量上限且保留显式 0", () => {
     const result = buildImageGenerationModelCatalog({
       groups: [group],

@@ -14,6 +14,8 @@ import {
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const LEGACY_IMAGE_MODEL = "gpt-image-1";
 export const IMAGE_MODEL_PREFIX = "gpt-image-";
+/** 未声明模型能力时允许的安全分辨率；更高档位必须由模型配置显式开启。 */
+export const DEFAULT_IMAGE_RESOLUTIONS = ["1k", "2k", "4k"] as const;
 export const IMAGE_PROMPT_MAX_CHARACTERS = 32_000;
 export const IMAGE_PROMPT_TOO_LONG_MESSAGE = `Prompt exceeds the ${IMAGE_PROMPT_MAX_CHARACTERS} character limit.`;
 export const AUTO_IMAGE_SIZE = "auto";
@@ -30,6 +32,23 @@ export const IMAGE_1024_BASE_PIXELS = 1024 * 1024;
 export const IMAGE_2K_BASE_EDGE = 2048;
 export const IMAGE_4K_BASE_EDGE = 3840;
 export const IMAGE_8K_BASE_EDGE = 7680;
+
+/** 规范模型配置和创作页使用的分辨率标签，避免大小写或空白造成能力漂移。 */
+export function normalizeImageModelResolutions(
+  values?: readonly string[] | null
+): string[] {
+  const source =
+    values && values.length > 0 ? values : DEFAULT_IMAGE_RESOLUTIONS;
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of source) {
+    const resolution = value.trim().toLowerCase();
+    if (!resolution || seen.has(resolution)) continue;
+    seen.add(resolution);
+    normalized.push(resolution);
+  }
+  return normalized.length > 0 ? normalized : [...DEFAULT_IMAGE_RESOLUTIONS];
+}
 export const DEFAULT_IMAGE_1024_BASE_CREDIT_COST =
   DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits;
 export const DEFAULT_IMAGE_1K_BASE_CREDIT_COST =
@@ -64,9 +83,7 @@ export function normalizeImageModel(model?: string | null) {
 
 export function isImageModel(model?: string | null) {
   const normalizedModel = normalizeImageModel(model)?.toLowerCase();
-  return Boolean(
-    normalizedModel?.startsWith(IMAGE_MODEL_PREFIX)
-  );
+  return Boolean(normalizedModel?.startsWith(IMAGE_MODEL_PREFIX));
 }
 
 export function getImageModel(model?: string | null, fallback?: string | null) {
@@ -215,7 +232,12 @@ export function getImageBaseCreditPricing(
       DEFAULT_IMAGE_4K_BASE_CREDIT_COST
     ),
     ...(pricing?.base8kCredits !== undefined
-      ? { base8kCredits: normalizeBaseCreditPrice(pricing.base8kCredits, DEFAULT_IMAGE_4K_BASE_CREDIT_COST) }
+      ? {
+          base8kCredits: normalizeBaseCreditPrice(
+            pricing.base8kCredits,
+            DEFAULT_IMAGE_4K_BASE_CREDIT_COST
+          ),
+        }
       : {}),
   };
 }
@@ -256,8 +278,13 @@ export function getImageBaseCredits(
     dimensions?.width ?? Number.NaN,
     dimensions?.height ?? Number.NaN
   );
-  const { base1024Credits, base1kCredits, base2kCredits, base4kCredits, base8kCredits } =
-    getImageBaseCreditPricing(pricing);
+  const {
+    base1024Credits,
+    base1kCredits,
+    base2kCredits,
+    base4kCredits,
+    base8kCredits,
+  } = getImageBaseCreditPricing(pricing);
 
   // WHY: 分辨率等级由最长边定义，才能让 2048x1152 和 2048x2048 等同属 2K
   // 的输出获得相同价格；按总像素会让相同分辨率档因宽高比不同而出现不同价格。

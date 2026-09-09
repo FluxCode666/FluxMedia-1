@@ -60,6 +60,34 @@ describe("assertImageModelEnabled", () => {
     ).resolves.toEqual({ supportsQuality: true });
   });
 
+  it("未声明模型分辨率时拒绝 8K，而不是使用过宽的默认能力", async () => {
+    const loadMarketplaceConfig = vi.fn(async () => null);
+
+    await expect(
+      assertImageModelEnabled("gpt-image-2", loadMarketplaceConfig, "8K")
+    ).rejects.toMatchObject({
+      code: "validation_error",
+      details: { field: "resolution", reason: "unsupported_resolution" },
+    } satisfies Partial<OperationError>);
+  });
+
+  it("模型显式声明 8K 时允许请求 8K", async () => {
+    const config = createDefaultModelMarketplaceConfig();
+    config.imageByModel["gpt-image-2"] = {
+      revision: 1,
+      enabled: true,
+      visible: true,
+      homepageVisible: true,
+      description: "",
+      cover: null,
+      supportedResolutions: ["1k", "2k", "4k", "8k"],
+    };
+
+    await expect(
+      assertImageModelEnabled("gpt-image-2", async () => config, "8k")
+    ).resolves.toEqual({ supportsQuality: false });
+  });
+
   it("按模型账号 > 账号 > 全局模型 > 系统策略解析参考图上限，并保留 0", () => {
     expect(
       resolveImageReferenceImageLimit({
