@@ -193,7 +193,9 @@ stdin 会吞掉后续 Web 启动和健康检查命令。
 Web 与代理。迁移开始后失败则保持维护状态，停止新 Web，**不自动启动旧 schema 镜像**。
 恢复迁移前数据库备份后，必须执行资产回滚并通过 `db:release-gate -- legacy-startup`。
 
-备份默认写入 `${DEPLOY_PATH}/backups/<version>/`，权限为 `0600`。配置
+备份默认写入 `${DEPLOY_PATH}/backups/<version>/`，权限为 `0600`。宿主机没有 PostgreSQL
+客户端时，在服务器 `.env` 配置 `DEPLOY_BACKUP_POSTGRES_CONTAINER` 指向运行中的共享
+PostgreSQL 容器；备份脚本会在该容器内执行 `pg_dump/pg_restore`，不会停止或重建容器。配置
 `DEPLOY_BACKUP_S3_BUCKET` 后，必须同时配置 age recipient、目标机的 age/AWS CLI 和最小
 权限 AWS 身份；S3 预检或上传失败会阻止迁移，不会静默降级为本地备份。
 

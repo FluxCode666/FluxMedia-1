@@ -9,8 +9,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 backup_script="${script_dir}/create-database-backup.sh"
 test_dir="$(mktemp -d)"
 fake_bin="${test_dir}/bin"
+container_fake_bin="${test_dir}/container-bin"
 deploy_path="${test_dir}/deploy"
+container_deploy_path="${test_dir}/container-deploy"
 env_file="${deploy_path}/.env"
+container_env_file="${container_deploy_path}/.env"
 git_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 image_tag="v0.10.1"
 age_recipient="age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
@@ -23,7 +26,8 @@ cleanup_test_files() {
 }
 trap cleanup_test_files EXIT
 
-mkdir -p "${fake_bin}" "${deploy_path}"
+mkdir -p "${fake_bin}" "${container_fake_bin}" "${deploy_path}" \
+  "${container_deploy_path}"
 
 # 写入可执行命令替身。
 # 参数为文件名与完整脚本文本，失败时由调用方直接终止测试。
@@ -32,6 +36,15 @@ write_fake_command() {
   local content="$2"
   printf '%s\n' "${content}" >"${fake_bin}/${name}"
   chmod 700 "${fake_bin}/${name}"
+}
+
+# 写入容器客户端回归测试使用的命令替身。
+# 该目录故意不包含 pg_dump/pg_restore，模拟生产宿主机缺少 PostgreSQL 客户端。
+write_container_fake_command() {
+  local name="$1"
+  local content="$2"
+  printf '%s\n' "${content}" >"${container_fake_bin}/${name}"
+  chmod 700 "${container_fake_bin}/${name}"
 }
 
 # 断言文件包含指定固定文本。
@@ -118,6 +131,67 @@ archive="${2:-}"
 [ "${1:-}" = "--list" ]
 [ -s "${archive}" ]'
 
+write_container_fake_command "docker" '#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  inspect)
+    if [ "${2:-}" = "--type" ]; then
+      [ "${3:-}" = "container" ] && [ "${4:-}" = "fluxcode-postgres" ]
+      exit 0
+    fi
+    [ "${2:-}" = "--format" ] && [ "${4:-}" = "fluxcode-postgres" ]
+    printf "true\n"
+    ;;
+  exec)
+    shift
+    if [ "${1:-}" = "-i" ]; then
+      shift
+    fi
+    [ "${1:-}" = "fluxcode-postgres" ]
+    shift
+    case "${1:-}" in
+      pg_dump)
+        if [ "${2:-}" = "--version" ]; then
+          printf "pg_dump (PostgreSQL) 18.6\n"
+        else
+          printf "fake-container-custom-dump"
+        fi
+        ;;
+      pg_restore)
+        if [ "${2:-}" = "--version" ]; then
+          printf "pg_restore (PostgreSQL) 18.6\n"
+        else
+          cat >/dev/null
+        fi
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac'
+
+write_container_fake_command "date" '#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "-u" ] && [ "${2:-}" = "-d" ]; then
+  printf "2026-08-01T00:00:00Z\n"
+else
+  printf "20260725T000000Z\n"
+fi'
+
+write_container_fake_command "sha256sum" '#!/usr/bin/env bash
+set -euo pipefail
+printf "0000000000000000000000000000000000000000000000000000000000000000  %s\\n" "${1:-stdin}"'
+
+# 容器客户端用例的 PATH 不包含系统目录，确保不会误用 CI runner 自带的
+# pg_dump/pg_restore；只链接脚本需要的基础命令。
+for utility in bash chmod dirname install mktemp mv rm awk cat; do
+  ln -s "$(command -v "${utility}")" "${container_fake_bin}/${utility}"
+done
+
 write_fake_command "date" '#!/usr/bin/env bash
 set -euo pipefail
 if [ "${1:-}" = "-u" ] && [ "${2:-}" = "-d" ]; then
@@ -180,6 +254,32 @@ assert_file_contains \
   "本地备份摘要匹配" \
   "${test_dir}/local.out" \
   "backup_artifact_sha256=${expected_local_sha}"
+
+printf '%s\n' \
+  'DATABASE_URL=postgresql://flux:secret@db:5432/flux' \
+  'DEPLOY_BACKUP_POSTGRES_CONTAINER=fluxcode-postgres' \
+  >"${container_env_file}"
+PATH="${container_fake_bin}" bash "${backup_script}" \
+  preflight "${container_env_file}" "${container_deploy_path}" \
+  "${image_tag}" "${git_sha}"
+PATH="${container_fake_bin}" bash "${backup_script}" \
+  create "${container_env_file}" "${container_deploy_path}" \
+  "${image_tag}" "${git_sha}" \
+  >"${test_dir}/container.out"
+assert_file_contains \
+  "宿主机缺少客户端时使用 PostgreSQL 容器" \
+  "${test_dir}/container.out" \
+  "backup_storage=local"
+container_artifact_id="$(
+  sed -n 's/^backup_artifact_id=//p' "${test_dir}/container.out" | tail -n 1
+)"
+container_backup_path="${container_artifact_id#file://}"
+if [ "${container_backup_path}" = "${container_artifact_id}" ] \
+  || [ ! -s "${container_backup_path}" ]; then
+  printf '用例失败：容器客户端备份 artifact 不存在：%s\n' \
+    "${container_artifact_id}" >&2
+  exit 1
+fi
 
 printf '%s\n' \
   'DATABASE_URL=postgresql://flux:secret@db:5432/flux' \

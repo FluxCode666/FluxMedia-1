@@ -67,8 +67,12 @@ load_backup_config() {
   backup_aws_profile="$(
     read_env_value "${env_file}" DEPLOY_BACKUP_AWS_PROFILE
   )"
+  backup_postgres_container="$(
+    read_env_value "${env_file}" DEPLOY_BACKUP_POSTGRES_CONTAINER
+  )"
   backup_prefix="${backup_prefix:-fluxmedia-production}"
   backup_retention_days="${backup_retention_days:-7}"
+  backup_postgres_container="${backup_postgres_container:-fluxcode-postgres}"
 
   : "${database_url:?DATABASE_URL 必填}"
   if [[ ! "${backup_prefix}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
@@ -83,6 +87,10 @@ load_backup_config() {
   if [ -n "${backup_aws_profile}" ] \
     && [[ ! "${backup_aws_profile}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     printf 'DEPLOY_BACKUP_AWS_PROFILE 不是安全的 profile 名称。\n' >&2
+    return 1
+  fi
+  if [[ ! "${backup_postgres_container}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+    printf 'DEPLOY_BACKUP_POSTGRES_CONTAINER 不是安全的容器名称。\n' >&2
     return 1
   fi
 
@@ -114,11 +122,71 @@ load_backup_config() {
   fi
 }
 
+# 选择 PostgreSQL 客户端执行位置。
+# 优先使用宿主机客户端；宿主机缺少客户端时，通过指定的共享 PostgreSQL 容器执行。
+select_postgres_client() {
+  if command -v pg_dump >/dev/null 2>&1 \
+    && command -v pg_restore >/dev/null 2>&1; then
+    postgres_client_mode="host"
+    return
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    printf '目标服务器缺少 pg_dump/pg_restore，且未安装 Docker 客户端。\n' >&2
+    return 1
+  fi
+  if ! docker inspect --type container "${backup_postgres_container}" \
+    >/dev/null 2>&1; then
+    printf '未找到生产备份 PostgreSQL 容器：%s。\n' \
+      "${backup_postgres_container}" >&2
+    return 1
+  fi
+  if [ "$(docker inspect --format '{{.State.Running}}' \
+    "${backup_postgres_container}")" != "true" ]; then
+    printf '生产备份 PostgreSQL 容器未运行：%s。\n' \
+      "${backup_postgres_container}" >&2
+    return 1
+  fi
+  if ! docker exec "${backup_postgres_container}" pg_dump --version \
+    >/dev/null 2>&1 \
+    || ! docker exec "${backup_postgres_container}" pg_restore --version \
+      >/dev/null 2>&1; then
+    printf '生产备份 PostgreSQL 容器缺少 pg_dump/pg_restore：%s。\n' \
+      "${backup_postgres_container}" >&2
+    return 1
+  fi
+  postgres_client_mode="docker"
+}
+
+# 将 custom-format dump 写入宿主机路径。
+# 容器模式通过 stdout 导出，避免把宿主机路径误当作容器内路径。
+postgres_dump_to_file() {
+  local output_path="$1"
+  shift
+  if [ "${postgres_client_mode}" = "host" ]; then
+    pg_dump "$@" --file "${output_path}"
+  else
+    docker exec "${backup_postgres_container}" pg_dump "$@" --file=- \
+      >"${output_path}"
+  fi
+}
+
+# 在宿主机或 PostgreSQL 容器内读取 custom-format archive manifest。
+postgres_restore_list() {
+  local archive_path="$1"
+  if [ "${postgres_client_mode}" = "host" ]; then
+    pg_restore --list "${archive_path}"
+  else
+    docker exec -i "${backup_postgres_container}" pg_restore --list - \
+      <"${archive_path}"
+  fi
+}
+
 # 断言备份模式需要的目标机工具全部存在。
 # 本地模式不依赖 age/AWS CLI；S3 模式额外要求两者。
 require_backup_commands() {
   local command_name
-  local required_commands=(date install mktemp mv pg_dump pg_restore sha256sum)
+  local required_commands=(date install mktemp mv sha256sum)
   if [ "${backup_storage}" = "s3" ]; then
     required_commands+=(age aws)
   fi
@@ -128,6 +196,7 @@ require_backup_commands() {
       return 1
     fi
   done
+  select_postgres_client
 }
 
 # 用真实只读 schema-only dump 验证客户端版本、数据库权限与 archive 读取链路。
@@ -143,14 +212,13 @@ probe_backup_toolchain() (
   trap cleanup_probe_archive EXIT
 
   chmod 600 "${probe_archive}"
-  pg_dump \
+  postgres_dump_to_file "${probe_archive}" \
     --dbname="${database_url}" \
     --format=custom \
     --schema-only \
     --no-acl \
-    --no-owner \
-    --file "${probe_archive}"
-  pg_restore --list "${probe_archive}" >/dev/null
+    --no-owner
+  postgres_restore_list "${probe_archive}" >/dev/null
 )
 
 # 准备本地备份目录并拒绝符号链接边界。
@@ -252,13 +320,12 @@ create_local_backup() (
   chmod 600 "${backup_plain}"
   # PGDATABASE 只按数据库名解释 URI，可能退回本机 socket；显式 --dbname
   # 才会让 libpq 按连接串解析服务器、凭据与 SSL 参数。
-  pg_dump \
+  postgres_dump_to_file "${backup_plain}" \
     --dbname="${database_url}" \
     --format=custom \
     --no-acl \
-    --no-owner \
-    --file "${backup_plain}"
-  pg_restore --list "${backup_plain}" >/dev/null
+    --no-owner
+  postgres_restore_list "${backup_plain}" >/dev/null
   artifact_sha256="$(sha256sum "${backup_plain}" | awk '{print $1}')"
   mv "${backup_plain}" "${backup_final}"
   persisted_sha256="$(sha256sum "${backup_final}" | awk '{print $1}')"
@@ -308,13 +375,12 @@ create_s3_backup() (
   umask 077
   # 与本地备份保持同一连接方式，避免远端模式因 URI 被当作数据库名而误连
   # 本机 PostgreSQL socket。
-  pg_dump \
+  postgres_dump_to_file "${backup_plain}" \
     --dbname="${database_url}" \
     --format=custom \
     --no-acl \
-    --no-owner \
-    --file "${backup_plain}"
-  pg_restore --list "${backup_plain}" >/dev/null
+    --no-owner
+  postgres_restore_list "${backup_plain}" >/dev/null
   age --recipient "${backup_age_recipient}" \
     --output "${backup_cipher}" "${backup_plain}"
   rm -f "${backup_plain}"

@@ -15,9 +15,11 @@
 
 ## 首次配置服务器
 
-目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot，以及不低于数据库主版本的
-PostgreSQL `pg_dump`/`pg_restore` 客户端。生产 Workflow 会在停止旧 Web 前执行真实的
-schema-only archive 探测，在停止旧 Web 后用 `pg_dump` 创建一致性备份；配置了
+目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot。生产 Workflow 会在停止旧 Web
+前执行真实的 schema-only archive 探测，在停止旧 Web 后创建一致性备份。备份脚本优先使用
+宿主机上不低于数据库主版本的 PostgreSQL `pg_dump`/`pg_restore` 客户端；宿主机没有客户端时，
+通过 `DEPLOY_BACKUP_POSTGRES_CONTAINER` 指定的运行中 PostgreSQL 容器执行，例如共享容器
+`fluxcode-postgres`。配置了
 S3 bucket 时使用 age 公钥加密并上传到启用版本控制的 bucket，未配置时持久化到部署目录的
 `backups/`。先准备部署目录和真实环境变量：
 
