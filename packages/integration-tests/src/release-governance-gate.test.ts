@@ -352,6 +352,8 @@ function createStoredImageInput(
     model: "gpt-image-2",
     operation,
     prompt: "release governance fixture",
+    aspectRatio: "1:1",
+    resolution: "1k",
   };
   if (operation === "generate") return common;
   const reference = {

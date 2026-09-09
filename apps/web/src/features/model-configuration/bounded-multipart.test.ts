@@ -14,6 +14,8 @@ import {
   readBoundedRequestBody,
 } from "./bounded-multipart";
 
+const TEST_MAX_BYTES = 16;
+
 /** 为测试构造可观察取消行为的分块请求正文。 */
 function createStreamRequest(
   chunks: readonly Uint8Array[],
@@ -90,7 +92,7 @@ describe("parseBoundedContentLength", () => {
     );
   });
 
-  it("拒绝超过 6 MiB 的声明长度", () => {
+  it("拒绝超过配置正文上限的声明长度", () => {
     expect(() =>
       parseBoundedContentLength(
         String(MAX_MODEL_CONFIGURATION_MULTIPART_BYTES + 1)
@@ -124,39 +126,42 @@ describe("readBoundedRequestBody", () => {
     );
   });
 
-  it("接受刚好 6 MiB 的真实正文", async () => {
-    const request = createStreamRequest([
-      new Uint8Array(MAX_MODEL_CONFIGURATION_MULTIPART_BYTES),
-    ]);
+  it("接受刚好达到指定上限的真实正文", async () => {
+    const request = createStreamRequest([new Uint8Array(TEST_MAX_BYTES)], {
+      contentLength: String(TEST_MAX_BYTES),
+    });
 
-    const body = await readBoundedRequestBody(request);
+    const body = await readBoundedRequestBody(request, TEST_MAX_BYTES);
 
-    expect(body.byteLength).toBe(MAX_MODEL_CONFIGURATION_MULTIPART_BYTES);
+    expect(body.byteLength).toBe(TEST_MAX_BYTES);
   });
 
   it("真实正文超出 1 字节时立即取消 reader", async () => {
     const onCancel = vi.fn();
     const request = createStreamRequest(
-      [
-        new Uint8Array(MAX_MODEL_CONFIGURATION_MULTIPART_BYTES),
-        new Uint8Array([1]),
-      ],
+      [new Uint8Array(TEST_MAX_BYTES), new Uint8Array([1])],
       { onCancel }
     );
 
-    await expectBoundedError(readBoundedRequestBody(request), "body_too_large");
+    await expectBoundedError(
+      readBoundedRequestBody(request, TEST_MAX_BYTES),
+      "body_too_large"
+    );
 
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it("伪造偏小的声明长度仍由真实流上限拦截", async () => {
     const onCancel = vi.fn();
-    const request = createStreamRequest(
-      [new Uint8Array(MAX_MODEL_CONFIGURATION_MULTIPART_BYTES + 1)],
-      { contentLength: "1", onCancel }
-    );
+    const request = createStreamRequest([new Uint8Array(TEST_MAX_BYTES + 1)], {
+      contentLength: "1",
+      onCancel,
+    });
 
-    await expectBoundedError(readBoundedRequestBody(request), "body_too_large");
+    await expectBoundedError(
+      readBoundedRequestBody(request, TEST_MAX_BYTES),
+      "body_too_large"
+    );
 
     expect(onCancel).toHaveBeenCalledTimes(1);
   });

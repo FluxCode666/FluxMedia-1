@@ -205,7 +205,7 @@ describe("模型配置草稿", () => {
   });
 
   it("视频 replace 引用唯一文件", () => {
-    const file = new File([new Uint8Array([1, 2])], "cover.png", {
+    const file = new File([new Uint8Array(5 * 1024 * 1024 + 1)], "cover.png", {
       type: "image/png",
     });
     const video = createModelConfigurationDraft(VIDEO_ENTRY, () => "video-id");

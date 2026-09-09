@@ -4,10 +4,7 @@
  * 测试以真实 Request/FormData 驱动薄适配器，并隔离 Better Auth、Origin 与 UOL，验证拒绝
  * 顺序、严格字段语义、封面字节转换、Principal 以及稳定错误响应。
  */
-import {
-  MAX_MODEL_MARKETPLACE_COVER_BYTES,
-  type UpdateModelConfigurationEntryInput,
-} from "@repo/shared/model-marketplace";
+import type { UpdateModelConfigurationEntryInput } from "@repo/shared/model-marketplace";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -272,7 +269,7 @@ describe("POST /api/admin/model-configuration", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
-  it("replace 要求且只允许一个不超过 5 MiB 的封面", async () => {
+  it("replace 要求且只允许一个封面", async () => {
     const missing = createFormData({
       ...explicitImageFields(),
       coverChange: "replace",
@@ -282,19 +279,15 @@ describe("POST /api/admin/model-configuration", () => {
       new File(["a"], "a.webp")
     );
     duplicated.append("cover", new File(["b"], "b.webp"));
-    const oversized = createFormData(
+    const large = createFormData(
       { ...explicitImageFields(), coverChange: "replace" },
-      new File(
-        [new Uint8Array(MAX_MODEL_MARKETPLACE_COVER_BYTES + 1)],
-        "large.webp"
-      )
+      new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.webp")
     );
 
-    for (const formData of [missing, duplicated, oversized]) {
-      const response = await POST(createMultipartRequest(formData));
-      expect(response.status).toBe(400);
-    }
-    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+    expect((await POST(createMultipartRequest(missing))).status).toBe(400);
+    expect((await POST(createMultipartRequest(duplicated))).status).toBe(400);
+    expect((await POST(createMultipartRequest(large))).status).toBe(200);
+    expect(mocks.invokeOperation).toHaveBeenCalledTimes(1);
   });
 
   it("replace 把唯一封面转换为 Uint8Array", async () => {

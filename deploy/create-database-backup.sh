@@ -166,7 +166,10 @@ postgres_dump_to_file() {
   if [ "${postgres_client_mode}" = "host" ]; then
     pg_dump "$@" --file "${output_path}"
   else
-    docker exec "${backup_postgres_container}" pg_dump "$@" --file=- \
+    # pg_dump treats --file=- as a literal filename when invoked through
+    # docker exec on the production PostgreSQL image. Omit --file so the
+    # archive is written to stdout and captured on the host.
+    docker exec "${backup_postgres_container}" pg_dump "$@" \
       >"${output_path}"
   fi
 }
@@ -177,8 +180,19 @@ postgres_restore_list() {
   if [ "${postgres_client_mode}" = "host" ]; then
     pg_restore --list "${archive_path}"
   else
-    docker exec -i "${backup_postgres_container}" pg_restore --list - \
-      <"${archive_path}"
+    # Custom-format archives require a seekable file. Stream the host file
+    # into a temporary path inside the PostgreSQL container before listing it.
+    docker exec -i "${backup_postgres_container}" sh -c '
+      archive_path="$(mktemp /tmp/fluxmedia-restore.XXXXXX)"
+      if ! cat >"${archive_path}"; then
+        rm -f "${archive_path}"
+        exit 1
+      fi
+      status=0
+      pg_restore --list "${archive_path}" || status=$?
+      rm -f "${archive_path}"
+      exit "${status}"
+    ' <"${archive_path}"
   fi
 }
 
@@ -218,6 +232,10 @@ probe_backup_toolchain() (
     --schema-only \
     --no-acl \
     --no-owner
+  if [ ! -s "${probe_archive}" ]; then
+    printf '%s\n' 'pg_dump 生成了空的数据库归档，拒绝继续。' >&2
+    return 1
+  fi
   postgres_restore_list "${probe_archive}" >/dev/null
 )
 
@@ -325,6 +343,10 @@ create_local_backup() (
     --format=custom \
     --no-acl \
     --no-owner
+  if [ ! -s "${backup_plain}" ]; then
+    printf '%s\n' 'pg_dump 生成了空的数据库归档，拒绝继续。' >&2
+    return 1
+  fi
   postgres_restore_list "${backup_plain}" >/dev/null
   artifact_sha256="$(sha256sum "${backup_plain}" | awk '{print $1}')"
   mv "${backup_plain}" "${backup_final}"
@@ -380,6 +402,10 @@ create_s3_backup() (
     --format=custom \
     --no-acl \
     --no-owner
+  if [ ! -s "${backup_plain}" ]; then
+    printf '%s\n' 'pg_dump 生成了空的数据库归档，拒绝继续。' >&2
+    return 1
+  fi
   postgres_restore_list "${backup_plain}" >/dev/null
   age --recipient "${backup_age_recipient}" \
     --output "${backup_cipher}" "${backup_plain}"

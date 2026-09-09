@@ -11,6 +11,11 @@ import {
 } from "@repo/shared/model-marketplace";
 import { OperationError } from "@repo/shared/uol";
 
+import {
+  DEFAULT_IMAGE_RESOLUTIONS,
+  normalizeImageModelResolutions,
+} from "./resolution";
+
 /**
  * 在准入、扣费或上游调用前校验图片模型运行时开关。
  *
@@ -61,8 +66,10 @@ export async function assertImageModelEnabled(
     if (requestedResolution) {
       const configured = configuredEntry?.supportedResolutions;
       const custom = customEntry?.supportedResolutions;
-      const supported = configured ?? custom ?? ["1k", "2k", "4k", "8k"];
-      if (!supported.includes(requestedResolution)) {
+      const supported = normalizeImageModelResolutions(
+        configured ?? custom ?? DEFAULT_IMAGE_RESOLUTIONS
+      );
+      if (!supported.includes(requestedResolution.trim().toLowerCase())) {
         throw new OperationError(
           "validation_error",
           "图片模型不支持所请求的分辨率",

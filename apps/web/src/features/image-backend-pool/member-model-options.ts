@@ -16,6 +16,8 @@ import {
 import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
+import { DEFAULT_IMAGE_RESOLUTIONS } from "@/features/image-generation/resolution";
+
 /** 成员表单可选择的一条真实模型能力。 */
 export interface BackendMemberModelOption {
   id: string;
@@ -27,7 +29,7 @@ export interface BackendMemberModelOption {
 }
 
 /** 图像模型统一的账号能力预设；请求尺寸会映射到这些标准档位。 */
-export const IMAGE_MODEL_RESOLUTION_PRESETS = ["1k", "2k", "4k", "8k"] as const;
+export const IMAGE_MODEL_RESOLUTION_PRESETS = DEFAULT_IMAGE_RESOLUTIONS;
 
 /**
  * 判断当前账号形态是否允许声明视频模型。

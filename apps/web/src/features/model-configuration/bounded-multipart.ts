@@ -5,7 +5,13 @@
  * 有界副本交给平台 FormData 解析器；不负责鉴权、字段语义或封面文件内容校验。
  */
 
-export const MAX_MODEL_CONFIGURATION_MULTIPART_BYTES = 6 * 1024 * 1024;
+/**
+ * 管理端模型配置请求的通用正文上限。
+ *
+ * 封面不再有独立文件大小限制；此上限只用于保护 FormData 解析的内存占用，并与部署
+ * Nginx 的 100 MB client_max_body_size 保持一致。
+ */
+export const MAX_MODEL_CONFIGURATION_MULTIPART_BYTES = 100 * 1024 * 1024;
 
 export type BoundedMultipartErrorCode =
   | "invalid_content_length"

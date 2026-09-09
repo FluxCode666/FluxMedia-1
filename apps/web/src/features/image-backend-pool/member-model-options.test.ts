@@ -113,7 +113,7 @@ describe("buildBackendMemberModelOptions", () => {
       label: "GPT Image 2",
       category: "image",
       source: "model_configuration",
-      supportedResolutions: ["1k", "2k", "4k", "8k"],
+      supportedResolutions: ["1k", "2k", "4k"],
     });
     expect(options).toContainEqual({
       id: "veo31",

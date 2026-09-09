@@ -34,7 +34,6 @@ export const MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH = 120;
 export const MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS = 256;
 export const MAX_MODEL_MARKETPLACE_CUSTOM_MODELS = 200;
 export const MAX_MODEL_MARKETPLACE_SUPPORTED_RESOLUTIONS = 20;
-export const MAX_MODEL_MARKETPLACE_COVER_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 5;
 export const MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 10_000;
 
@@ -830,11 +829,7 @@ export const modelMarketplaceCoverChangeSchema = z.discriminatedUnion(
         action: z.literal("replace"),
         bytes: z
           .instanceof(Uint8Array)
-          .refine((bytes) => bytes.byteLength > 0, "封面文件不能为空")
-          .refine(
-            (bytes) => bytes.byteLength <= MAX_MODEL_MARKETPLACE_COVER_BYTES,
-            "封面原文件不能超过 5 MB"
-          ),
+          .refine((bytes) => bytes.byteLength > 0, "封面文件不能为空"),
       })
       .strict(),
   ]

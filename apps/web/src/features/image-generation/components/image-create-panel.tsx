@@ -18,6 +18,7 @@ import type { ReferenceHandoffIntent } from "@/features/image-generation/referen
 import {
   DEFAULT_IMAGE_MODEL,
   getImageCreditCost,
+  normalizeImageModelResolutions,
 } from "@/features/image-generation/resolution";
 
 import {
@@ -502,6 +503,15 @@ export function ImageCreatePanel({
     selectedModel?.maxReferenceImages ?? configuredMaxEditImages
   );
   const supportsQuality = selectedModel?.supportsQuality === true;
+  const supportedResolutions = useMemo(
+    () => normalizeImageModelResolutions(selectedModel?.supportedResolutions),
+    [selectedModel?.supportedResolutions]
+  );
+  useEffect(() => {
+    if (!supportedResolutions.includes(resolution.trim().toLowerCase())) {
+      setResolution(supportedResolutions[0] ?? "1k");
+    }
+  }, [resolution, supportedResolutions]);
   useEffect(() => {
     if (selectedModel && !supportsQuality && quality !== "auto") {
       setQuality("auto");

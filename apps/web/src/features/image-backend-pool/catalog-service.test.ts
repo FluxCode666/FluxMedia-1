@@ -176,4 +176,39 @@ describe("image backend catalog group semantics", () => {
       ],
     });
   });
+
+  it("创作页图片目录透传全局模型的分辨率能力", async () => {
+    mocks.listGroups.mockResolvedValue([group()]);
+    mocks.getRuntimeSettingJson.mockResolvedValue({
+      version: 2,
+      imageByModel: {
+        "gpt-image-2": {
+          revision: 1,
+          enabled: true,
+          visible: true,
+          homepageVisible: true,
+          homepagePriority: 5,
+          description: "",
+          cover: null,
+          supportedResolutions: ["1k", "2k", "4k"],
+        },
+      },
+      videoByFamily: {},
+      customModels: [],
+      writeReceipts: {},
+    });
+
+    await expect(getImageGenerationModelCatalog()).resolves.toEqual({
+      groups: [
+        expect.objectContaining({
+          models: [
+            expect.objectContaining({
+              id: "gpt-image-2",
+              supportedResolutions: ["1k", "2k", "4k"],
+            }),
+          ],
+        }),
+      ],
+    });
+  });
 });

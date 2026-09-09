@@ -82,9 +82,6 @@ services:
         max-size: "100m"
         max-file: "5"
 
-volumes:
-  app-storage:
-
 networks:
   infra:
     external: true

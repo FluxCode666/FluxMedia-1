@@ -129,6 +129,9 @@ const IMAGE_GENERATION_INPUT_COMMON_FIELDS = new Set([
   "promptOptimization",
   "model",
   "size",
+  "aspectRatio",
+  "aspect_ratio",
+  "resolution",
   "quality",
   "style",
   "thinking",
@@ -2409,6 +2412,18 @@ function isPersistedImageGenerationInputValid(
       (typeof value.size !== "string" ||
         value.size.trim().length < 1 ||
         value.size.trim().length > 40)) ||
+    (value.aspectRatio !== undefined &&
+      (typeof value.aspectRatio !== "string" ||
+        value.aspectRatio.trim().length < 1 ||
+        value.aspectRatio.trim().length > 64)) ||
+    (value.aspect_ratio !== undefined &&
+      (typeof value.aspect_ratio !== "string" ||
+        value.aspect_ratio.trim().length < 1 ||
+        value.aspect_ratio.trim().length > 64)) ||
+    (value.resolution !== undefined &&
+      (typeof value.resolution !== "string" ||
+        value.resolution.trim().length < 1 ||
+        value.resolution.trim().length > 64)) ||
     (value.quality !== undefined &&
       (typeof value.quality !== "string" ||
         value.quality.trim().length < 1 ||

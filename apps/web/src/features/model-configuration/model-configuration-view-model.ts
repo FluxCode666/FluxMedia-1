@@ -32,7 +32,7 @@ export function getModelConfigurationSaveErrorMessage(
   code: string | null
 ): string {
   if (code === "invalid_cover") {
-    return "封面图片无法处理，请确认文件是有效的静态 JPEG、PNG 或 WebP，且不超过 5 MB";
+    return "封面图片无法处理，请确认文件是有效的静态 JPEG、PNG 或 WebP";
   }
   if (code === "idempotency_conflict") {
     return "当前保存标识已用于其他内容，请修改草稿后重试";
