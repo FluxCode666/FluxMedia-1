@@ -6,13 +6,6 @@
  */
 
 import {
-  DEFAULT_VIDEO_MODEL_BILLING_MODES,
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-  getVideoPricingResolutionKey,
-  getVideoPricingResolutions,
-} from "@repo/shared/video-generation";
-import {
   createDefaultGlobalImageCreditOverrides,
   type GlobalImageCreditOverrides,
 } from "@repo/shared/image-backend/group-image-pricing";
@@ -24,6 +17,11 @@ import {
 } from "@repo/shared/model-marketplace";
 import {
   createDefaultVideoModelCapabilityOverrides,
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
+  getVideoPricingResolutions,
   type VideoModelCapabilityOverrides,
 } from "@repo/shared/video-generation";
 import { describe, expect, it, vi } from "vitest";
@@ -261,7 +259,10 @@ function createMemoryStorage() {
  * @param initial - 可选的内存仓储初始状态。
  * @returns 保存服务及存储、缓存、审计、日志、处理器和哈希 spy。
  */
-function createHarness(initial?: Partial<MemoryState>) {
+function createHarness(
+  initial?: Partial<MemoryState>,
+  catalog: ModelConfigurationSnapshot = createCatalogSnapshot()
+) {
   const memoryRepository = createMemoryRepository(initial);
   const memoryStorage = createMemoryStorage();
   const invalidate = vi.fn(async () => undefined);
@@ -290,7 +291,7 @@ function createHarness(initial?: Partial<MemoryState>) {
     storage: memoryStorage.storage,
     catalogLoader: {
       async load() {
-        return createCatalogSnapshot();
+        return catalog;
       },
     },
     coverImageProcessor: { process },
@@ -745,6 +746,70 @@ describe("模型配置保存内核", () => {
       revision: 1,
       visible: true,
     });
+  });
+
+  it("更新已有自定义图像模型时不再误判为重复创建", async () => {
+    const config = createDefaultModelMarketplaceConfig();
+    config.customModels.push({
+      modelId: "vendor-image-x",
+      category: "image",
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    config.imageByModel["vendor-image-x"] = {
+      revision: 1,
+      visible: true,
+      description: "旧配置",
+      cover: null,
+      supportedResolutions: ["1k", "2k", "4k"],
+    };
+    const catalog = createCatalogSnapshot();
+    catalog.entries.push({
+      category: "image",
+      configKey: "vendor-image-x",
+      displayName: "vendor-image-x",
+      iconKey: "generic",
+      isCustom: true,
+      revision: 1,
+      minimumCredits: 2,
+      marketplaceApplicable: true,
+      enabled: true,
+      visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
+      description: "旧配置",
+      coverUrl: null,
+      usesDefaultCover: true,
+      pricingSource: "explicit",
+      pricing: { ...IMAGE_PRICING },
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    const harness = createHarness({ config }, catalog);
+
+    const result = await harness.service.updateEntry({
+      actorUserId: ACTOR_USER_ID,
+      input: imageInput({
+        configKey: "vendor-image-x",
+        expectedRevision: 1,
+        isCustom: true,
+        description: "新配置",
+        supportedResolutions: ["1k", "2k", "4k"],
+      }),
+    });
+
+    expect(result).toEqual({
+      category: "image",
+      configKey: "vendor-image-x",
+      revision: 2,
+    });
+    expect(harness.repository.read().config.customModels).toContainEqual({
+      modelId: "vendor-image-x",
+      category: "image",
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    expect(
+      harness.repository.read().config.imageByModel["vendor-image-x"]
+    ).toMatchObject({ revision: 2, description: "新配置" });
+    expect(harness.repository.read().auditEvents).toHaveLength(1);
   });
 
   it("原子创建自定义视频模型并以声明分辨率写入价格矩阵", async () => {

@@ -380,9 +380,13 @@ function resolveImagePricingForPersistence(
   const pricing = input.pricing;
   return modelMarketplaceImagePricingSchema.parse({
     base1024Credits:
-      pricing.base1024Credits ?? pricing.base1kCredits ?? fallback.base1024Credits,
+      pricing.base1024Credits ??
+      pricing.base1kCredits ??
+      fallback.base1024Credits,
     base1kCredits:
-      pricing.base1kCredits ?? pricing.base1024Credits ?? fallback.base1kCredits,
+      pricing.base1kCredits ??
+      pricing.base1024Credits ??
+      fallback.base1kCredits,
     base2kCredits:
       pricing.base2kCredits ?? pricing.base1kCredits ?? fallback.base2kCredits,
     base4kCredits:
@@ -718,7 +722,10 @@ export function createModelConfigurationService(
           entry.category === input.category &&
           entry.configKey === input.configKey
       );
-      const isCustomCreate = input.isCustom === true;
+      const catalogEntryIsCustom = catalogEntry?.isCustom === true;
+      // `isCustom` 标记同时出现在自定义模型的创建和编辑请求中；只有目录中尚不存在
+      // 该模型时才是创建，已有自定义模型必须继续走 revision 更新流程。
+      const isCustomCreate = input.isCustom === true && !catalogEntry;
       const customCreateCatalogConflict = catalog.entries.some(
         (entry) =>
           entry.configKey.trim().toLowerCase() === input.configKey.toLowerCase()
@@ -729,8 +736,19 @@ export function createModelConfigurationService(
           "模型不在当前可配置清单中"
         );
       }
-      if (isCustomCreate) {
-        if (input.expectedRevision !== 0) {
+      if (
+        catalogEntry &&
+        input.isCustom !== undefined &&
+        input.isCustom !== catalogEntryIsCustom
+      ) {
+        throw new ModelConfigurationServiceError(
+          "not_configurable",
+          "模型自定义标记与当前目录不一致"
+        );
+      }
+      const isCustomEntry = isCustomCreate || catalogEntryIsCustom;
+      if (isCustomEntry) {
+        if (isCustomCreate && input.expectedRevision !== 0) {
           throw new ModelConfigurationServiceError(
             "not_configurable",
             "自定义模型 ID 已存在或修订号无效"
@@ -1007,21 +1025,42 @@ export function createModelConfigurationService(
                 ? { maxReferenceImages: input.maxReferenceImages }
                 : {}),
             };
-            if (input.category === "image") {
+            if (isCustomEntry) {
               nextConfig.customModels = nextConfig.customModels.map((model) => {
-                if (model.modelId !== input.configKey) return model;
-                const {
-                  supportsQuality: _supportsQuality,
-                  maxReferenceImages: _maxReferenceImages,
-                  ...rest
-                } = model;
+                if (
+                  model.modelId !== input.configKey ||
+                  model.category !== input.category
+                ) {
+                  return model;
+                }
+                if (input.category === "image") {
+                  const {
+                    supportsQuality: _supportsQuality,
+                    maxReferenceImages: _maxReferenceImages,
+                    ...rest
+                  } = model;
+                  return {
+                    ...rest,
+                    ...(input.supportedResolutions
+                      ? { supportedResolutions: input.supportedResolutions }
+                      : {}),
+                    ...(input.supportsQuality === true
+                      ? { supportsQuality: true }
+                      : {}),
+                    ...(input.maxReferenceImages !== undefined
+                      ? { maxReferenceImages: input.maxReferenceImages }
+                      : {}),
+                  };
+                }
                 return {
-                  ...rest,
-                  ...(input.supportsQuality === true
-                    ? { supportsQuality: true }
+                  ...model,
+                  ...(input.supportedResolutions
+                    ? { supportedResolutions: input.supportedResolutions }
                     : {}),
-                  ...(input.maxReferenceImages !== undefined
-                    ? { maxReferenceImages: input.maxReferenceImages }
+                  ...(input.outputSizesByResolution !== undefined
+                    ? {
+                        outputSizesByResolution: input.outputSizesByResolution,
+                      }
                     : {}),
                 };
               });

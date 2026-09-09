@@ -88,12 +88,12 @@ function formatPricingValue(value: number): string {
 }
 
 /**
- * 创建四档图像价格草稿。
+ * 创建图像价格草稿（包含可选 8K 档）。
  *
- * @param pricing - 已配置模型的四档价格；未配置模型传 null。
- * @returns 与输入对象隔离的字符串字段；未配置模型返回四个空输入。
+ * @param pricing - 已配置模型的价格；未配置模型传 null。
+ * @returns 与输入对象隔离的字符串字段；未配置模型返回空输入。
  * @sideEffects 无。
- * @failure DTO 类型边界保证四档齐全，不抛错。
+ * @failure DTO 类型边界保证必需价格齐全，不抛错。
  */
 function createImagePricingDraft(
   pricing:
@@ -101,8 +101,15 @@ function createImagePricingDraft(
         ModelConfigurationEntry,
         { category: "image"; pricingSource: "explicit" }
       >["pricing"]
-    | null
+    | null,
+  options: {
+    isCustom: boolean;
+    supportedResolutions?: readonly string[];
+  }
 ): ModelConfigurationImagePricingDraft {
+  const supports8k = (options.supportedResolutions ?? []).some(
+    (resolution) => resolution.trim().toLowerCase() === "8k"
+  );
   return {
     base1024Credits: pricing ? formatPricingValue(pricing.base1024Credits) : "",
     base1kCredits: pricing ? formatPricingValue(pricing.base1kCredits) : "",
@@ -111,7 +118,11 @@ function createImagePricingDraft(
     base8kCredits:
       pricing?.base8kCredits !== undefined
         ? formatPricingValue(pricing.base8kCredits)
-        : "",
+        : options.isCustom && supports8k && pricing
+          ? // 兼容早期自定义模型：旧记录可能声明 8K，但尚未持久化独立 8K 价格。
+            // 运行时本来也会按 4K 价格兜底；把这个有效值带入草稿即可恢复编辑保存。
+            formatPricingValue(pricing.base4kCredits)
+          : "",
   };
 }
 
@@ -149,7 +160,11 @@ export function createModelConfigurationDraft(
       category: "image",
       ...(entry.isCustom ? { isCustom: true } : {}),
       pricing: createImagePricingDraft(
-        entry.pricingSource === "explicit" ? entry.pricing : null
+        entry.pricingSource === "explicit" ? entry.pricing : null,
+        {
+          isCustom: entry.isCustom === true,
+          supportedResolutions: entry.supportedResolutions,
+        }
       ),
       supportedResolutions: [...(entry.supportedResolutions ?? [])],
       // 质量参数默认关闭；只有模型配置显式开启时才展示并传递。

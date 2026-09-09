@@ -65,6 +65,17 @@ const UNCONFIGURED_IMAGE_ENTRY: Extract<
   pricingSource: "unconfigured",
 };
 
+const LEGACY_CUSTOM_8K_IMAGE_ENTRY: Extract<
+  ModelConfigurationEntry,
+  { category: "image"; pricingSource: "explicit" }
+> = {
+  ...IMAGE_ENTRY,
+  configKey: "flux-2.0",
+  displayName: "Flux 2.0",
+  isCustom: true,
+  supportedResolutions: ["1k", "2k", "4k", "8k"],
+};
+
 const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   category: "video",
   configKey: "seedance2",
@@ -133,6 +144,24 @@ describe("模型配置草稿", () => {
       visible: false,
       homepageVisible: false,
       homepagePriority: "8",
+    });
+  });
+
+  it("兼容声明 8K 但历史记录缺少 8K 价格的自定义图像模型", () => {
+    const draft = createModelConfigurationDraft(
+      LEGACY_CUSTOM_8K_IMAGE_ENTRY,
+      () => "legacy-custom-id"
+    );
+
+    expect(draft).toMatchObject({
+      isCustom: true,
+      supportedResolutions: ["1k", "2k", "4k", "8k"],
+      pricing: { base8kCredits: "10" },
+    });
+    expect(
+      collectFormData(buildModelConfigurationFormData(draft))
+    ).toMatchObject({
+      base8kCredits: "10",
     });
   });
 
