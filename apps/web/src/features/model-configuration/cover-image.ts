@@ -1,14 +1,13 @@
 /**
  * 模型广场自定义封面的安全处理与内容寻址 key 构造。
  *
- * 管理保存服务把不可信上传字节交给本模块；本模块只负责体积、解码、格式、动画、像素、
+ * 管理保存服务把不可信上传字节交给本模块；本模块只负责空文件、解码、格式、动画、像素、
  * 裁切、重编码和哈希，不读取数据库、存储配置或客户端提供的文件名与 MIME。
  */
 import { createHash } from "node:crypto";
 
 import {
   MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH,
-  MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplacePublicCategory,
 } from "@repo/shared/model-marketplace";
 import sharp, { type Metadata } from "sharp";
@@ -24,7 +23,6 @@ const COVER_ASPECT_RATIO_HEIGHT_UNITS = 2;
 /** 封面校验失败的稳定错误码，传输层可据此映射友好提示。 */
 export type ModelMarketplaceCoverImageErrorCode =
   | "empty"
-  | "too_large"
   | "invalid_image"
   | "unsupported_format"
   | "animated_image"
@@ -80,7 +78,7 @@ function isAllowedCoverFormat(
 /**
  * 在严格警告与像素上限下读取图片元数据。
  *
- * @param input - 已通过原始字节体积检查的上传 Buffer。
+ * @param input - multipart 适配器读取的上传 Buffer。
  * @returns Sharp 安全解析出的格式、尺寸和页数信息。
  * @throws ModelMarketplaceCoverImageError - 损坏、截断或超过像素上限时统一失败。
  */
@@ -179,7 +177,7 @@ async function encodeSafeCoverWebp(
  *
  * @param bytes - multipart 适配器读取的原始字节；不读取文件名或声明 MIME。
  * @returns 最终 WebP 字节、其小写 SHA-256 和固定 image/webp 内容类型。
- * @throws ModelMarketplaceCoverImageError - 空文件、超限、格式非法、动画或解码失败时抛出。
+ * @throws ModelMarketplaceCoverImageError - 空文件、格式非法、动画或解码失败时抛出。
  */
 export async function processModelMarketplaceCoverImage(
   bytes: Uint8Array
@@ -187,13 +185,6 @@ export async function processModelMarketplaceCoverImage(
   if (bytes.byteLength === 0) {
     throw new ModelMarketplaceCoverImageError("empty", "封面文件不能为空。");
   }
-  if (bytes.byteLength > MAX_MODEL_MARKETPLACE_COVER_BYTES) {
-    throw new ModelMarketplaceCoverImageError(
-      "too_large",
-      "封面原文件不能超过 5 MB。"
-    );
-  }
-
   const input = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const metadata = await readSafeCoverMetadata(input);
   if (!isAllowedCoverFormat(metadata.format)) {

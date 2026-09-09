@@ -5,7 +5,6 @@
  * 的幂等 UUID，并生成 Task 5 Route 接受的严格 FormData，不发请求、不访问存储。
  */
 import {
-  MAX_MODEL_MARKETPLACE_COVER_BYTES,
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
   MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   type ModelConfigurationEntry,
@@ -382,7 +381,7 @@ function appendImagePricing(
  * @param formData - 当前保存请求的 FormData。
  * @param draft - 图像或视频草稿。
  * @sideEffects 追加展示字段；replace 时引用本地 File，不读取其字节。
- * @failure 简介超长、replace 文件为空或超过 5 MB 时抛草稿错误。
+ * @failure 简介超长或 replace 文件为空时抛草稿错误。
  */
 function appendMarketplaceFields(
   formData: FormData,
@@ -404,11 +403,8 @@ function appendMarketplaceFields(
   formData.append("description", draft.description.trim());
   formData.append("coverChange", draft.cover.action);
   if (draft.cover.action !== "replace") return;
-  if (
-    draft.cover.file.size <= 0 ||
-    draft.cover.file.size > MAX_MODEL_MARKETPLACE_COVER_BYTES
-  ) {
-    throw new ModelConfigurationDraftError("封面文件必须在 5 MB 以内");
+  if (draft.cover.file.size <= 0) {
+    throw new ModelConfigurationDraftError("封面文件不能为空");
   }
   formData.append("cover", draft.cover.file);
 }

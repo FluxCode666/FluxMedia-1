@@ -4,12 +4,9 @@
  * 使用 Sharp 在内存中构造输入，锁定不可信图片的体积、格式、像素、动画与元数据边界，
  * 同时验证输出尺寸、编码、内容哈希和不泄露模型 ID 的对象 key。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
-import {
-  MAX_MODEL_MARKETPLACE_COVER_BYTES,
-  type ModelMarketplacePublicCategory,
-} from "@repo/shared/model-marketplace";
+import type { ModelMarketplacePublicCategory } from "@repo/shared/model-marketplace";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
@@ -151,15 +148,29 @@ describe("processModelMarketplaceCoverImage", () => {
     });
   });
 
-  it("在解码前拒绝空文件与超过 5 MB 的原始字节", async () => {
+  it("在解码前拒绝空文件", async () => {
     await expect(
       processModelMarketplaceCoverImage(new Uint8Array())
     ).rejects.toMatchObject({ code: "empty" });
-    await expect(
-      processModelMarketplaceCoverImage(
-        new Uint8Array(MAX_MODEL_MARKETPLACE_COVER_BYTES + 1)
-      )
-    ).rejects.toMatchObject({ code: "too_large" });
+  });
+
+  it("不按原始字节大小拒绝合法封面", async () => {
+    const width = 1_700;
+    const height = 1_300;
+    const input = await sharp(randomBytes(width * height * 3), {
+      raw: { width, height, channels: 3 },
+    })
+      .png({ compressionLevel: 0 })
+      .toBuffer();
+
+    expect(input.byteLength).toBeGreaterThan(5 * 1024 * 1024);
+    const result = await processModelMarketplaceCoverImage(input);
+
+    await expect(sharp(result.bytes).metadata()).resolves.toMatchObject({
+      width: 1_200,
+      height: 800,
+      format: "webp",
+    });
   });
 
   it("拒绝损坏图片以及 JPEG、PNG、WebP 以外的实际格式", async () => {

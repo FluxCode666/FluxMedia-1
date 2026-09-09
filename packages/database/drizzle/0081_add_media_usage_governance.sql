@@ -131,7 +131,8 @@ BEGIN
     FROM json_object_keys(generation_input) AS field(name)
     WHERE field.name NOT IN (
       'operation', 'prompt', 'negativePrompt', 'apiPrompt',
-      'promptOptimization', 'model', 'size', 'quality', 'style', 'thinking',
+      'promptOptimization', 'model', 'size', 'aspectRatio', 'aspect_ratio',
+      'resolution', 'quality', 'style', 'thinking',
       'moderation', 'outputFormat', 'outputCompression', 'background',
       'transparentMatte', 'moderationPromptRepair', 'hdRepair', 'blockRepair',
       'repairPrompt', 'count', 'generationId', 'backendGroupId'
@@ -157,6 +158,24 @@ BEGIN
   IF generation_input::jsonb ? 'size' AND (
     json_typeof(generation_input->'size') <> 'string'
     OR char_length(btrim(generation_input->>'size')) NOT BETWEEN 1 AND 40
+  ) THEN
+    RETURN false;
+  END IF;
+  IF generation_input::jsonb ? 'aspectRatio' AND (
+    json_typeof(generation_input->'aspectRatio') <> 'string'
+    OR char_length(btrim(generation_input->>'aspectRatio')) NOT BETWEEN 1 AND 64
+  ) THEN
+    RETURN false;
+  END IF;
+  IF generation_input::jsonb ? 'aspect_ratio' AND (
+    json_typeof(generation_input->'aspect_ratio') <> 'string'
+    OR char_length(btrim(generation_input->>'aspect_ratio')) NOT BETWEEN 1 AND 64
+  ) THEN
+    RETURN false;
+  END IF;
+  IF generation_input::jsonb ? 'resolution' AND (
+    json_typeof(generation_input->'resolution') <> 'string'
+    OR char_length(btrim(generation_input->>'resolution')) NOT BETWEEN 1 AND 64
   ) THEN
     RETURN false;
   END IF;

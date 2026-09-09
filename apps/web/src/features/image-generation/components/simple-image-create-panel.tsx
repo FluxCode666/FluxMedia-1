@@ -39,7 +39,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import { getRecentImageDisplayUrl } from "@/features/image-generation/recent-image-display";
-import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
+import {
+  DEFAULT_IMAGE_MODEL,
+  normalizeImageModelResolutions,
+} from "@/features/image-generation/resolution";
 import { Link } from "@/i18n/routing";
 
 import { ImageGenerationResultGallery } from "./image-generation-result-gallery";
@@ -104,13 +107,6 @@ const IMAGE_ASPECT_RATIO_OPTIONS = [
   ["16:9", "16:9"],
   ["9:16", "9:16"],
   ["21:9", "21:9"],
-] as const;
-
-const IMAGE_RESOLUTION_OPTIONS = [
-  ["1k", "1K"],
-  ["2k", "2K"],
-  ["4k", "4K"],
-  ["8k", "8K"],
 ] as const;
 
 /** 为同一分组中的模型构造只在当前下拉生命周期内使用的稳定值。 */
@@ -190,6 +186,22 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     [props.catalog.groups, props.mode]
   );
   const selectionValue = createModelSelectionValue(props.groupId, props.model);
+  const selectedModel = useMemo(
+    () =>
+      props.catalog.groups
+        .find((group) => group.id === props.groupId)
+        ?.models.find(
+          (item) => item.id.toLowerCase() === props.model.toLowerCase()
+        ),
+    [props.catalog.groups, props.groupId, props.model]
+  );
+  const resolutionOptions = useMemo(
+    () =>
+      normalizeImageModelResolutions(selectedModel?.supportedResolutions).map(
+        (resolution) => [resolution, resolution.toUpperCase()] as const
+      ),
+    [selectedModel?.supportedResolutions]
+  );
   const modeLabel = getModeLabel(props.mode);
   const submitLabel = getSubmitLabel(props.mode);
   // `busy` remains a backwards-compatible fallback for callers that do not
@@ -694,7 +706,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {IMAGE_RESOLUTION_OPTIONS.map(([value, label]) => (
+                    {resolutionOptions.map(([value, label]) => (
                       <SelectItem key={value} value={value}>
                         {label}
                       </SelectItem>

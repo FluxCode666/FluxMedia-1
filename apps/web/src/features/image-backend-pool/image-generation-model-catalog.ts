@@ -26,6 +26,8 @@ export interface ImageGenerationCatalogModel {
   supportsQuality?: boolean;
   /** 全局模型配置的参考图数量上限；0 表示不支持参考图。 */
   maxReferenceImages?: number;
+  /** 全局模型配置声明的分辨率；缺失时由创作页使用安全默认值。 */
+  supportedResolutions?: readonly string[];
 }
 
 /** 一个可达分组的图片目录。 */
@@ -67,6 +69,8 @@ export interface ImageGenerationCatalogSource {
   supportsQualityByModel?: Readonly<Record<string, boolean>>;
   /** 全局模型配置的参考图数量上限；键统一为小写模型 ID。 */
   maxReferenceImagesByModel?: Readonly<Record<string, number>>;
+  /** 全局模型配置的图片分辨率；键统一为小写模型 ID。 */
+  supportedResolutionsByModel?: Readonly<Record<string, readonly string[]>>;
   /** 系统媒体策略的参考图硬上限。 */
   fallbackMaxReferenceImages?: number;
 }
@@ -111,6 +115,11 @@ export function buildImageGenerationModelCatalog(
       ([modelId, limit]) => [modelId.toLowerCase(), limit]
     )
   );
+  const supportedResolutionsByModel = new Map(
+    Object.entries(source.supportedResolutionsByModel ?? {}).map(
+      ([modelId, resolutions]) => [modelId.toLowerCase(), resolutions]
+    )
+  );
   const videoModelIds = new Set(
     (source.videoModelIds ?? []).map((modelId) => modelId.trim().toLowerCase())
   );
@@ -142,6 +151,8 @@ export function buildImageGenerationModelCatalog(
             member.imageMaxReferenceImages ??
             maxReferenceImagesByModel.get(normalizedId) ??
             source.fallbackMaxReferenceImages;
+          const supportedResolutions =
+            supportedResolutionsByModel.get(normalizedId);
           const current = models.get(normalizedId);
           if (current) {
             current.capabilities = mergeCapabilities(
@@ -154,6 +165,12 @@ export function buildImageGenerationModelCatalog(
                 maxReferenceImages
               );
             }
+            if (
+              current.supportedResolutions === undefined &&
+              supportedResolutions !== undefined
+            ) {
+              current.supportedResolutions = [...supportedResolutions];
+            }
           } else {
             const supportsQuality = supportsQualityByModel.get(normalizedId);
             models.set(normalizedId, {
@@ -162,6 +179,9 @@ export function buildImageGenerationModelCatalog(
               ...(supportsQuality === true ? { supportsQuality: true } : {}),
               ...(maxReferenceImages !== undefined
                 ? { maxReferenceImages }
+                : {}),
+              ...(supportedResolutions !== undefined
+                ? { supportedResolutions: [...supportedResolutions] }
                 : {}),
             });
           }

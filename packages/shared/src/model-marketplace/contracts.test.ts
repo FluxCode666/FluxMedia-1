@@ -637,6 +637,7 @@ describe("updateModelConfigurationEntryInputSchema", () => {
   });
 
   it("封面替换只接受字节并拒绝 URL、bucket、key 与未知字段", () => {
+    const largeCoverBytes = new Uint8Array(5 * 1024 * 1024 + 1);
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
@@ -644,6 +645,16 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         coverChange: {
           action: "replace",
           bytes: new Uint8Array([1, 2, 3]),
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        coverChange: {
+          action: "replace",
+          bytes: largeCoverBytes,
         },
       }).success
     ).toBe(true);
