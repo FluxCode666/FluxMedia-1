@@ -1,22 +1,19 @@
-// api-gateway 是 FluxMedia 的 Go HTTP 入口。
+// FluxMedia Go backend HTTP entrypoint.
 //
-// 当前阶段它提供稳定的公网入口、请求边界和生命周期管理，并将尚未迁移的页面与
-// 业务路由转发到 Next.js 上游。路由代理保持原始 HTTP 契约，使业务可以按路由逐步
-// 迁移到 Go，而不需要一次性重写认证、计费和媒体任务状态机。
+// This process owns the backend dependency boundary. It connects directly to
+// PostgreSQL and Redis; it never proxies requests to the Next.js web process.
 package main
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -24,6 +21,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -37,16 +37,14 @@ const (
 	maxMaxBodyBytes     = int64(512 << 20)
 	maxTimeout          = 2 * time.Hour
 	requestIDHeader     = "X-Request-ID"
-	forwardedByHeader   = "X-Forwarded-By"
-	forwardedByValue    = "fluxmedia-go-gateway"
 )
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
-// config 是启动时校验完成的不可变配置。
 type config struct {
 	bind         string
-	upstream     *url.URL
+	databaseURL  string
+	redisOptions *redis.Options
 	maxBodyBytes int64
 	readHeader   time.Duration
 	readTimeout  time.Duration
@@ -55,31 +53,36 @@ type config struct {
 	readyTimeout time.Duration
 }
 
-// gateway 保存代理和健康检查所需的共享客户端。
-type gateway struct {
-	config       config
-	proxy        *httputil.ReverseProxy
-	healthClient *http.Client
-	logger       *slog.Logger
+type backend struct {
+	config config
+	db     *pgxpool.Pool
+	redis  *redis.Client
+	logger *slog.Logger
 }
 
-// main 读取配置并启动网关；收到 SIGTERM/SIGINT 时优雅等待在途请求结束。
 func main() {
 	cfg, err := loadConfig(os.LookupEnv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "api-gateway configuration error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "backend configuration error: %v\n", err)
 		os.Exit(1)
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
 		if err := runHealthcheck(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "api-gateway healthcheck failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "backend healthcheck failed: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	server := newGateway(cfg, logger)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	server, err := newBackend(ctx, cfg, slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "backend dependency initialization failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer server.close()
+
 	httpServer := &http.Server{
 		Addr:              cfg.bind,
 		Handler:           server.handler(),
@@ -89,67 +92,93 @@ func main() {
 		IdleTimeout:       cfg.idleTimeout,
 		MaxHeaderBytes:    32 << 10,
 	}
-
 	serverErrors := make(chan error, 1)
-	go func() {
-		serverErrors <- httpServer.ListenAndServe()
-	}()
+	go func() { serverErrors <- httpServer.ListenAndServe() }()
+	server.logger.Info("go backend listening", "bind", cfg.bind)
 
-	shutdownSignal, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-
-	logger.Info("api gateway listening", "bind", cfg.bind, "upstream", cfg.upstream.Redacted())
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("api gateway stopped unexpectedly", "error", err)
+			server.logger.Error("backend stopped unexpectedly", "error", err)
 			os.Exit(1)
 		}
-	case <-shutdownSignal.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	case <-ctx.Done():
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.Error("api gateway graceful shutdown failed", "error", err)
+			server.logger.Error("backend graceful shutdown failed", "error", err)
 			os.Exit(1)
 		}
 	}
 }
 
-// runHealthcheck 验证网关进程能够连接配置的上游；供 distroless 容器健康检查调用。
+func newBackend(ctx context.Context, cfg config, logger *slog.Logger) (*backend, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	poolConfig.MaxConns = 10
+	poolConfig.MinConns = 1
+	db, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create postgres pool: %w", err)
+	}
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+	client := redis.NewClient(cfg.redisOptions)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		db.Close()
+		return nil, fmt.Errorf("ping redis: %w", err)
+	}
+	return &backend{config: cfg, db: db, redis: client, logger: logger}, nil
+}
+
+func (b *backend) close() {
+	b.db.Close()
+	_ = b.redis.Close()
+}
+
 func runHealthcheck(cfg config) error {
-	probeURL := *cfg.upstream
-	probeURL.Path = "/"
-	request, err := http.NewRequest(http.MethodGet, probeURL.String(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.readyTimeout)
+	defer cancel()
+	server, err := newBackend(ctx, cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
-		return fmt.Errorf("create readiness request: %w", err)
+		return err
 	}
-	client := &http.Client{Timeout: cfg.readyTimeout}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("probe upstream: %w", err)
-	}
-	defer response.Body.Close()
-	if _, err := io.Copy(io.Discard, response.Body); err != nil {
-		return fmt.Errorf("read readiness response: %w", err)
-	}
-	if response.StatusCode >= http.StatusInternalServerError {
-		return fmt.Errorf("upstream returned status %d", response.StatusCode)
-	}
+	server.close()
 	return nil
 }
 
-// loadConfig 解析并校验环境配置。上游地址是必填项，避免网关静默代理到错误服务。
 func loadConfig(getenv func(string) (string, bool)) (config, error) {
-	upstreamRaw, ok := getenv("GO_BACKEND_UPSTREAM_URL")
-	if !ok || strings.TrimSpace(upstreamRaw) == "" {
-		return config{}, errors.New("GO_BACKEND_UPSTREAM_URL must be configured")
+	databaseURL := requiredString(getenv, "DATABASE_URL")
+	if databaseURL == "" {
+		return config{}, errors.New("DATABASE_URL must be configured")
 	}
-	upstream, err := parseUpstreamURL(upstreamRaw)
+	redisHost := requiredString(getenv, "REDIS_HOST")
+	if redisHost == "" {
+		return config{}, errors.New("REDIS_HOST must be configured")
+	}
+	redisPassword := requiredString(getenv, "REDIS_PASSWORD")
+	if redisPassword == "" {
+		return config{}, errors.New("REDIS_PASSWORD must be configured")
+	}
+	redisPort := getString(getenv, "REDIS_PORT", "6379")
+	redisUsername := requiredString(getenv, "REDIS_USERNAME")
+	if _, err := strconv.Atoi(redisPort); err != nil {
+		return config{}, errors.New("REDIS_PORT must be a number")
+	}
+	redisDB, err := getBoundedInt64(getenv, "REDIS_DB", 4, 0, 15)
+	if err != nil {
+		return config{}, err
+	}
+	tlsEnabled, err := getBool(getenv, "REDIS_TLS", false)
 	if err != nil {
 		return config{}, err
 	}
 
-	bind := getString(getenv, "GO_BACKEND_BIND", defaultBind)
 	maxBodyBytes, err := getBoundedInt64(getenv, "GO_BACKEND_MAX_BODY_BYTES", defaultMaxBodyBytes, 1, maxMaxBodyBytes)
 	if err != nil {
 		return config{}, err
@@ -176,179 +205,132 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 	}
 
 	return config{
-		bind:         bind,
-		upstream:     upstream,
-		maxBodyBytes: maxBodyBytes,
-		readHeader:   readHeader,
-		readTimeout:  readTimeout,
-		writeTimeout: writeTimeout,
-		idleTimeout:  idleTimeout,
-		readyTimeout: readyTimeout,
+		bind: getString(getenv, "GO_BACKEND_BIND", defaultBind), databaseURL: databaseURL,
+		redisOptions: &redis.Options{
+			Addr: netJoinHostPort(redisHost, redisPort), Password: redisPassword,
+			Username: redisUsername,
+			DB:       int(redisDB), TLSConfig: tlsConfig(tlsEnabled),
+		},
+		maxBodyBytes: maxBodyBytes, readHeader: readHeader, readTimeout: readTimeout,
+		writeTimeout: writeTimeout, idleTimeout: idleTimeout, readyTimeout: readyTimeout,
 	}, nil
 }
 
-// parseUpstreamURL 只允许 HTTP(S) origin，且拒绝包含路径、查询或片段的地址。
-func parseUpstreamURL(raw string) (*url.URL, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return nil, fmt.Errorf("GO_BACKEND_UPSTREAM_URL is invalid: %w", err)
+func netJoinHostPort(host, port string) string {
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]:" + port
 	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("GO_BACKEND_UPSTREAM_URL must be an absolute URL")
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("GO_BACKEND_UPSTREAM_URL scheme %q is not supported", parsed.Scheme)
-	}
-	if parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, errors.New("GO_BACKEND_UPSTREAM_URL must contain only scheme and host")
-	}
-	parsed.Path = ""
-	return parsed, nil
+	return host + ":" + port
 }
 
-// getString 返回非空配置值，否则使用默认值。
-func getString(getenv func(string) (string, bool), key string, fallback string) string {
-	value, ok := getenv(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		return fallback
+func tlsConfig(enabled bool) *tls.Config {
+	if !enabled {
+		return nil
 	}
+	return &tls.Config{MinVersion: tls.VersionTLS12} //nolint:gosec // minimum production Redis TLS version
+}
+
+func (b *backend) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", b.handleHealth)
+	mux.HandleFunc("GET /readyz", b.handleReady)
+	mux.HandleFunc("/", b.handleNotMigrated)
+	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, mux))
+}
+
+func (b *backend) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "go-backend"})
+}
+
+func (b *backend) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), b.config.readyTimeout)
+	defer cancel()
+	if err := b.db.Ping(ctx); err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "postgres_unavailable", "The backend is not ready.")
+		return
+	}
+	if err := b.redis.Ping(ctx).Err(); err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "redis_unavailable", "The backend is not ready.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "service": "go-backend"})
+}
+
+func (b *backend) handleNotMigrated(w http.ResponseWriter, r *http.Request) {
+	// Returning an explicit response prevents an accidental fallback to Next.js.
+	// Each route is implemented in Go before it is registered here.
+	writeJSONError(w, http.StatusNotImplemented, "route_not_migrated", "This backend route has not been implemented in Go yet.")
+	b.logger.WarnContext(r.Context(), "unimplemented backend route", "method", r.Method, "path", r.URL.Path, "request_id", requestID(r))
+}
+
+func requiredString(getenv func(string) (string, bool), key string) string {
+	value, _ := getenv(key)
 	return strings.TrimSpace(value)
 }
 
-// getBoundedInt64 解析带上下界的整数环境变量。
-func getBoundedInt64(getenv func(string) (string, bool), key string, fallback, minimum, maximum int64) (int64, error) {
-	raw, ok := getenv(key)
-	if !ok || strings.TrimSpace(raw) == "" {
+func getString(getenv func(string) (string, bool), key, fallback string) string {
+	if value := requiredString(getenv, key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func getBool(getenv func(string) (string, bool), key string, fallback bool) (bool, error) {
+	value := requiredString(getenv, key)
+	if value == "" {
 		return fallback, nil
 	}
-	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return parsed, nil
+}
+
+func getBoundedInt64(getenv func(string) (string, bool), key string, fallback, minimum, maximum int64) (int64, error) {
+	raw := requiredString(getenv, key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < minimum || value > maximum {
 		return 0, fmt.Errorf("%s must be an integer between %d and %d", key, minimum, maximum)
 	}
 	return value, nil
 }
 
-// getBoundedDuration 解析以毫秒表示且带上下界的超时环境变量。
-func getBoundedDuration(getenv func(string) (string, bool), key string, fallback time.Duration, minimum, maximum time.Duration) (time.Duration, error) {
-	raw, ok := getenv(key)
-	if !ok || strings.TrimSpace(raw) == "" {
-		return fallback, nil
-	}
-	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+func getBoundedDuration(getenv func(string) (string, bool), key string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
+	value, err := getBoundedInt64(getenv, key, int64(fallback/time.Millisecond), int64(minimum/time.Millisecond), int64(maximum/time.Millisecond))
 	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer number of milliseconds", key)
+		return 0, err
 	}
-	duration := time.Duration(value) * time.Millisecond
-	if duration < minimum || duration > maximum {
-		return 0, fmt.Errorf("%s must be between %d and %d milliseconds", key, minimum/time.Millisecond, maximum/time.Millisecond)
-	}
-	return duration, nil
+	return time.Duration(value) * time.Millisecond, nil
 }
 
-// newGateway 创建不携带客户端凭据的反向代理。Authorization/Cookie 等请求头仍会
-// 传给第一方 Next.js 上游，以维持现有会话和 API Key 语义；影子或第三方转发不在此处发生。
-func newGateway(cfg config, logger *slog.Logger) *gateway {
-	proxy := httputil.NewSingleHostReverseProxy(cfg.upstream)
-	proxy.ErrorHandler = func(writer http.ResponseWriter, request *http.Request, err error) {
-		logger.ErrorContext(request.Context(), "upstream request failed", "error", err, "request_id", requestID(request))
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeJSONError(writer, http.StatusRequestEntityTooLarge, "request_body_too_large", "The request body is too large.")
-			return
-		}
-		writeJSONError(writer, http.StatusBadGateway, "upstream_unavailable", "The backend is temporarily unavailable.")
-	}
-	proxy.ModifyResponse = func(response *http.Response) error {
-		response.Header.Set(forwardedByHeader, forwardedByValue)
-		return nil
-	}
-	return &gateway{
-		config:       cfg,
-		proxy:        proxy,
-		healthClient: &http.Client{Timeout: cfg.readyTimeout},
-		logger:       logger,
-	}
-}
-
-// handler 组合健康检查、请求 ID、请求体限制和统一代理入口。
-func (g *gateway) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", g.handleHealth)
-	mux.HandleFunc("GET /readyz", g.handleReady)
-	mux.HandleFunc("/", g.handleProxy)
-	return withRequestID(g.logger, withBodyLimit(g.config.maxBodyBytes, mux))
-}
-
-// handleHealth 仅表示 Go 网关进程存活，不访问上游。
-func (g *gateway) handleHealth(writer http.ResponseWriter, request *http.Request) {
-	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// handleReady 检查 Next.js 上游是否能接受请求，供容器编排进行就绪判断。
-func (g *gateway) handleReady(writer http.ResponseWriter, request *http.Request) {
-	probeURL := *g.config.upstream
-	probeURL.Path = "/"
-	probeRequest, err := http.NewRequestWithContext(request.Context(), http.MethodGet, probeURL.String(), nil)
-	if err != nil {
-		writeJSONError(writer, http.StatusServiceUnavailable, "upstream_unavailable", "The backend is not ready.")
-		return
-	}
-	probeResponse, err := g.healthClient.Do(probeRequest)
-	if err != nil {
-		writeJSONError(writer, http.StatusServiceUnavailable, "upstream_unavailable", "The backend is not ready.")
-		return
-	}
-	defer probeResponse.Body.Close()
-	if _, err := io.Copy(io.Discard, probeResponse.Body); err != nil {
-		g.logger.WarnContext(request.Context(), "readiness probe body failed", "error", err)
-	}
-	if probeResponse.StatusCode >= http.StatusInternalServerError {
-		writeJSONError(writer, http.StatusServiceUnavailable, "upstream_unavailable", "The backend is not ready.")
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-// handleProxy 转发所有未被网关自身处理的路径，保留方法、查询参数、Cookie 和授权头。
-func (g *gateway) handleProxy(writer http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodConnect || request.Method == http.MethodTrace {
-		writeJSONError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "This HTTP method is not supported.")
-		return
-	}
-	request.Header.Set(forwardedByHeader, forwardedByValue)
-	if request.Header.Get("X-Forwarded-Proto") == "" {
-		request.Header.Set("X-Forwarded-Proto", forwardedProtocol(request))
-	}
-	g.proxy.ServeHTTP(writer, request)
-}
-
-// withRequestID 为每个请求补充可追踪 ID，并在响应中回显。
 func withRequestID(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		id := strings.TrimSpace(request.Header.Get(requestIDHeader))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.Header.Get(requestIDHeader))
 		if !requestIDPattern.MatchString(id) {
 			id = newRequestID()
-			request.Header.Set(requestIDHeader, id)
+			r.Header.Set(requestIDHeader, id)
 		}
-		writer.Header().Set(requestIDHeader, id)
-		logger.InfoContext(request.Context(), "http request", "method", request.Method, "path", request.URL.Path, "request_id", id)
-		next.ServeHTTP(writer, request)
+		w.Header().Set(requestIDHeader, id)
+		logger.InfoContext(r.Context(), "http request", "method", r.Method, "path", r.URL.Path, "request_id", id)
+		next.ServeHTTP(w, r)
 	})
 }
 
-// withBodyLimit 限制请求体大小，避免上传或错误请求耗尽网关内存。
 func withBodyLimit(maxBytes int64, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.ContentLength > maxBytes {
-			writeJSONError(writer, http.StatusRequestEntityTooLarge, "request_body_too_large", "The request body is too large.")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxBytes {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "The request body is too large.")
 			return
 		}
-		request.Body = http.MaxBytesReader(writer, request.Body, maxBytes)
-		next.ServeHTTP(writer, request)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		next.ServeHTTP(w, r)
 	})
 }
 
-// newRequestID 生成不包含敏感信息的 16 字节随机十六进制 ID。
 func newRequestID() string {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
@@ -357,35 +339,14 @@ func newRequestID() string {
 	return hex.EncodeToString(bytes[:])
 }
 
-// requestID 返回已由中间件校验的请求 ID。
-func requestID(request *http.Request) string {
-	return request.Header.Get(requestIDHeader)
+func requestID(r *http.Request) string { return r.Header.Get(requestIDHeader) }
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
 }
 
-// forwardedProtocol 根据 TLS 状态确定转发协议。
-func forwardedProtocol(request *http.Request) string {
-	if request.TLS != nil {
-		return "https"
-	}
-	return "http"
-}
-
-// writeJSON 编码稳定的 JSON 响应。
-func writeJSON(writer http.ResponseWriter, status int, value any) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(status)
-	if err := json.NewEncoder(writer).Encode(value); err != nil {
-		return
-	}
-}
-
-// writeJSONError 统一网关自身产生的错误结构，不泄露上游内部错误。
-func writeJSONError(writer http.ResponseWriter, status int, code, message string) {
-	writeJSON(writer, status, map[string]any{
-		"error": map[string]string{
-			"message": message,
-			"type":    "gateway_error",
-			"code":    code,
-		},
-	})
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{"error": map[string]string{"message": message, "type": "backend_error", "code": code}})
 }

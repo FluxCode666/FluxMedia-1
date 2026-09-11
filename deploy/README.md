@@ -1,13 +1,12 @@
 # FluxMedia 生产部署
 
-本目录提供 `media.flux-code.cc` 的生产部署配置。公网请求链路为
-`Nginx → Go api-gateway → Next.js web`；Go 网关监听宿主机回环地址 `127.0.0.1:3001`，
-web 只在 Docker 网络内暴露。Redis、PostgreSQL 与数据库迁移均为外部依赖或显式维护
-profile，不会常驻运行。
+本目录提供 `media.flux-code.cc` 的生产部署配置。Go backend 监听宿主机回环地址
+`127.0.0.1:3001`，web 只在 Docker 网络内暴露。backend entrypoint 在同一服务中执行
+数据库迁移，然后启动 Go 进程；Compose 不再定义独立 migrate 服务。
 
 ## 文件
 
-- `docker-compose.yml`：Go `api-gateway`、内部 `web` 与默认关闭的 `maintenance` 数据库迁移服务；超管与外部 Redis 连接信息由服务器 `.env` 注入。
+- `docker-compose.yml`：Go `backend` 与内部 `web`；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
 - `read-env-value.sh`：生产 Workflow 使用的 fail-closed dotenv 单键读取器。
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
 - `.env.example`：不含真实机密的服务器环境变量模板。
@@ -78,24 +77,25 @@ archive manifest 与最终文件 SHA-256。该回退只能应对数据库迁移�
 ```bash
 cd /root/flux-media
 docker compose config --quiet
-docker compose up -d web api-gateway
-docker compose ps web api-gateway
+docker compose up -d web backend
+docker compose ps web backend
 ```
 
-手工执行迁移时显式启用维护 profile。迁移成功后再启动主服务：
+手工执行迁移时复用 backend 镜像。迁移成功后再启动主服务：
 
 ```bash
 install -d -m 700 state
-docker compose --profile maintenance pull migrate
-docker compose stop --timeout 60 web api-gateway
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+docker compose stop --timeout 60 web backend
+docker compose run --rm --no-deps --interactive=false \
+  -e GO_BACKEND_SKIP_MIGRATION=true backend \
   pnpm --dir packages/database db:release-gate -- drain
 ```
 
 早期预检确认订阅、Epay 和其他迁移前置条件均满足：
 
 ```bash
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+docker compose run --rm --no-deps --interactive=false \
+  -e GO_BACKEND_SKIP_MIGRATION=true backend \
   pnpm --dir packages/database db:release-gate -- preflight-early
 ```
 
@@ -103,47 +103,51 @@ docker compose --profile maintenance run --rm --no-deps --interactive=false migr
 本次镜像 tag 和对应的 40 位 Git SHA。备份成功后再继续：
 
 ```bash
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+docker compose run --rm --no-deps --interactive=false \
+  -e GO_BACKEND_SKIP_MIGRATION=true backend \
   node apps/web/scripts/migrate-video-input-assets.mjs migrate \
   --confirm-no-legacy-writers
-release_preflight="$(docker compose --profile maintenance run --rm --no-deps \
-  --interactive=false migrate \
+release_preflight="$(docker compose run --rm --no-deps \
+  --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true backend \
   pnpm --dir packages/database db:release-gate -- preflight \
   | tee /dev/stderr)"
 release_credits_ledger_digest="$(printf '%s\n' "${release_preflight}" \
   | bash ./read-release-ledger-digest.sh)"
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate
-docker compose --profile maintenance run --rm --no-deps --interactive=false \
-  -e "RELEASE_CREDITS_LEDGER_DIGEST=${release_credits_ledger_digest}" migrate \
+docker compose run --rm --no-deps --interactive=false \
+  -e GO_BACKEND_MIGRATE_ONLY=true backend
+docker compose run --rm --no-deps --interactive=false \
+  -e "RELEASE_CREDITS_LEDGER_DIGEST=${release_credits_ledger_digest}" \
+  -e GO_BACKEND_SKIP_MIGRATION=true backend \
   pnpm --dir packages/database db:release-gate -- postcheck
 docker compose run --rm --no-deps --interactive=false web \
   node apps/web/scripts/backfill-dashboard-analytics.mjs \
   --batch-size=500 --skip-ready
-docker compose up -d web api-gateway
-docker compose --profile maintenance run --rm --no-deps --interactive=false \
+docker compose up -d web backend
+docker compose run --rm --no-deps --interactive=false \
   -e OPERATIONS_EPOCH_INITIALIZED_BY=release-<版本号> \
-  migrate pnpm --dir apps/web operations:epoch:ensure-current
+  -e GO_BACKEND_SKIP_MIGRATION=true backend pnpm --dir apps/web operations:epoch:ensure-current
 ```
 
-自动部署必须关闭 migrate 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
-默认的交互输入，迁移容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
+自动部署必须关闭 backend 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
+默认的交互输入，backend 容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
 
-自动部署先拉取新镜像，再停止旧 Web 与 Go 网关、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
+自动部署先拉取新镜像，再停止旧 Web 与 Go backend、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
 只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、迁移、
 postcheck 与控制台统计回填对账。新 Web 启动后、健康检查前，流水线会自动确保运营统计
 epoch：空表按生产应用时区当前日初始化，已有值原样跳过。资产收编开始后，任何迁移、
-后置校验、统计对账、epoch 门禁、启动或任一服务健康检查失败都会保持 Web 与网关停止，
+后置校验、统计对账、epoch 门禁、启动或任一服务健康检查失败都会保持 Web 与 backend 停止，
 绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版 Web 在本轮停服前确实处于
-运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与代理；该证据证明数据库尚未
+运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与 backend；该证据证明数据库尚未
 改变且上一版已运行在当前 schema 上。恢复迁移前数据库备份后手工启动旧 schema 镜像时，
 仍必须让 `legacy-startup` 门禁证明三个旧视频列完整。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
 
 资产收编会先把本轮新对象以 0600 NDJSON 写入部署目录 `state/`。若选择恢复迁移前数据库
-备份，必须在数据库恢复完成且旧 Web 仍停止时，用同一 migrator 镜像执行幂等对象回滚：
+备份，必须在数据库恢复完成且旧 Web 仍停止时，用同一 backend 镜像执行幂等对象回滚：
 
 ```bash
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+docker compose run --rm --no-deps --interactive=false \
+  -e GO_BACKEND_SKIP_MIGRATION=true backend \
   node apps/web/scripts/migrate-video-input-assets.mjs rollback \
   --confirm-database-restored
 ```
@@ -201,8 +205,8 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/flux-media`。服务器
 上的真实 `.env` 由运维持久维护；流水线只同步 `docker-compose.yml`、
 `create-database-backup.sh` 和 `read-env-value.sh`，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
-`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
-并排空数据库连接后，通过 `maintenance` profile 执行只读门禁、备份、迁移和后置校验，
+`FLUXMEDIA_BACKEND_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
+并排空数据库连接后，通过 backend 镜像执行只读门禁、备份、迁移和后置校验，
 再启动新 `web`。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 与基础设施负责，流水线不会创建或修改 Redis 服务。
 

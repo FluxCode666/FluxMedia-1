@@ -1,15 +1,48 @@
-# FluxMedia Go API 网关镜像。
-# 网关是无 CGO 的静态二进制，负责公网 HTTP 入口；业务上游由同网络的 web 服务提供。
-FROM golang:1.24-bookworm AS builder
+# FluxMedia 统一 backend 镜像：数据库迁移、Go HTTP 服务和 Go worker 共用同一服务。
+FROM node:22-slim AS node-base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+FROM node-base AS pruner
+WORKDIR /app
+RUN pnpm add -g turbo
+COPY . .
+RUN turbo prune @repo/web --docker
+
+FROM node-base AS migration-deps
+WORKDIR /app
+COPY --from=pruner /app/out/json/ .
+RUN pnpm install --frozen-lockfile
+
+FROM migration-deps AS migration-runtime
+WORKDIR /app
+COPY --from=pruner /app/out/full/ .
+COPY tsconfig.base.json ./tsconfig.base.json
+COPY scripts/with-root-env.mjs ./scripts/with-root-env.mjs
+ENV NODE_ENV=production
+
+FROM golang:1.24-bookworm AS go-builder
 WORKDIR /src
 COPY services/api-gateway/go.mod ./services/api-gateway/go.mod
 COPY services/api-gateway/go.sum ./services/api-gateway/go.sum
 COPY services/api-gateway/*.go ./services/api-gateway/
 WORKDIR /src/services/api-gateway
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/api-gateway .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/backend .
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=builder /out/api-gateway /api-gateway
-USER nonroot:nonroot
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate && \
+	groupadd --system --gid 1001 backend && \
+	useradd --system --uid 1001 --gid backend backend
+COPY --from=migration-runtime /app ./
+COPY --from=go-builder /out/backend /backend
+COPY services/api-gateway/backend-entrypoint.sh /usr/local/bin/backend-entrypoint
+RUN chmod 0755 /usr/local/bin/backend-entrypoint && \
+	chown -R backend:backend /app /backend /usr/local/bin/backend-entrypoint
+USER backend:backend
 EXPOSE 8080
-ENTRYPOINT ["/api-gateway"]
+ENTRYPOINT ["/usr/local/bin/backend-entrypoint"]

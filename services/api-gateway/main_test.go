@@ -1,4 +1,3 @@
-// api-gateway 的配置和 HTTP 边界测试。
 package main
 
 import (
@@ -17,141 +16,83 @@ func testEnv(values map[string]string) func(string) (string, bool) {
 	}
 }
 
-func TestLoadConfigRequiresSafeUpstreamOrigin(t *testing.T) {
-	_, err := loadConfig(testEnv(map[string]string{}))
-	if err == nil || !strings.Contains(err.Error(), "GO_BACKEND_UPSTREAM_URL") {
-		t.Fatalf("missing upstream error = %v", err)
+func validEnv(extra map[string]string) map[string]string {
+	values := map[string]string{
+		"DATABASE_URL":   "postgresql://user:pass@localhost:5432/db",
+		"REDIS_HOST":     "localhost",
+		"REDIS_PASSWORD": "secret",
 	}
+	for key, value := range extra {
+		values[key] = value
+	}
+	return values
+}
 
-	for _, value := range []string{
-		"postgres://db:5432",
-		"http://web:3000/api",
-		"http://web:3000/?secret=1",
+func TestLoadConfigRequiresBackendDependencies(t *testing.T) {
+	for _, key := range []string{"DATABASE_URL", "REDIS_HOST", "REDIS_PASSWORD"} {
+		values := validEnv(nil)
+		delete(values, key)
+		if _, err := loadConfig(testEnv(values)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Fatalf("missing %s error = %v", key, err)
+		}
+	}
+}
+
+func TestLoadConfigParsesRedisAndTimeouts(t *testing.T) {
+	cfg, err := loadConfig(testEnv(validEnv(map[string]string{
+		"REDIS_PORT":                        "6380",
+		"REDIS_USERNAME":                    "backend",
+		"REDIS_DB":                          "7",
+		"REDIS_TLS":                         "true",
+		"GO_BACKEND_READ_HEADER_TIMEOUT_MS": "5000",
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.redisOptions.Addr != "localhost:6380" || cfg.redisOptions.Username != "backend" || cfg.redisOptions.DB != 7 || cfg.redisOptions.TLSConfig == nil {
+		t.Fatalf("unexpected redis options: %+v", cfg.redisOptions)
+	}
+	if cfg.readHeader.String() != "5s" {
+		t.Fatalf("unexpected read header timeout: %s", cfg.readHeader)
+	}
+}
+
+func TestLoadConfigRejectsInvalidValues(t *testing.T) {
+	for key, value := range map[string]string{
+		"REDIS_PORT": "not-a-port",
+		"REDIS_DB":   "16",
+		"REDIS_TLS":  "yes",
 	} {
-		_, err := loadConfig(testEnv(map[string]string{"GO_BACKEND_UPSTREAM_URL": value}))
+		_, err := loadConfig(testEnv(validEnv(map[string]string{key: value})))
 		if err == nil {
-			t.Fatalf("upstream %q should be rejected", value)
+			t.Fatalf("%s=%s should be rejected", key, value)
 		}
-	}
-
-	cfg, err := loadConfig(testEnv(map[string]string{"GO_BACKEND_UPSTREAM_URL": "http://web:3000/"}))
-	if err != nil {
-		t.Fatalf("valid upstream rejected: %v", err)
-	}
-	if cfg.bind != defaultBind || cfg.maxBodyBytes != defaultMaxBodyBytes {
-		t.Fatalf("defaults not applied: %+v", cfg)
 	}
 }
 
-func TestProxyMapsChunkedOversizedBodyTo413(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		_, _ = io.ReadAll(request.Body)
-		writer.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-
-	cfg, err := loadConfig(testEnv(map[string]string{
-		"GO_BACKEND_UPSTREAM_URL":   upstream.URL,
-		"GO_BACKEND_MAX_BODY_BYTES": "4",
-	}))
-	if err != nil {
-		t.Fatal(err)
+func TestBackendHealthAndExplicitUnimplementedRoute(t *testing.T) {
+	backend := &backend{
+		config: config{maxBodyBytes: 4},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	gateway := newGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	request := httptest.NewRequest(http.MethodPost, "http://gateway.local/", strings.NewReader("12345"))
-	request.ContentLength = -1
-	response := httptest.NewRecorder()
-	gateway.handler().ServeHTTP(response, request)
-	if response.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("chunked oversized body status = %d, body=%s", response.Code, response.Body.String())
-	}
-}
+	handler := backend.handler()
 
-func TestGatewayPreservesPathHeadersAndRequestID(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/models" || request.URL.RawQuery != "page=2" {
-			t.Errorf("unexpected upstream URL: %s", request.URL.String())
-		}
-		if request.Header.Get("Authorization") != "Bearer test-key" {
-			t.Errorf("authorization header was not forwarded")
-		}
-		if request.Header.Get(forwardedByHeader) != forwardedByValue {
-			t.Errorf("gateway marker was not forwarded")
-		}
-		writer.Header().Set("X-Upstream", "ok")
-		writer.WriteHeader(http.StatusAccepted)
-		_, _ = writer.Write([]byte(`{"ok":true}`))
-	}))
-	defer upstream.Close()
-
-	cfg, err := loadConfig(testEnv(map[string]string{"GO_BACKEND_UPSTREAM_URL": upstream.URL}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gateway := newGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/v1/models?page=2", nil)
-	request.Header.Set("Authorization", "Bearer test-key")
-	request.Header.Set(requestIDHeader, "request-42")
-	response := httptest.NewRecorder()
-	gateway.handler().ServeHTTP(response, request)
-
-	if response.Code != http.StatusAccepted || response.Header().Get("X-Upstream") != "ok" {
-		t.Fatalf("unexpected response: status=%d headers=%v", response.Code, response.Header())
-	}
-	if response.Header().Get(requestIDHeader) != "request-42" {
-		t.Fatalf("request ID was not echoed: %q", response.Header().Get(requestIDHeader))
-	}
-	if response.Body.String() != `{"ok":true}` {
-		t.Fatalf("unexpected response body: %s", response.Body.String())
-	}
-}
-
-func TestGatewayRejectsUnsupportedMethodsAndOversizedBodies(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		t.Errorf("upstream should not receive oversized %s", request.Method)
-	}))
-	defer upstream.Close()
-
-	cfg, err := loadConfig(testEnv(map[string]string{
-		"GO_BACKEND_UPSTREAM_URL":   upstream.URL,
-		"GO_BACKEND_MAX_BODY_BYTES": "4",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gateway := newGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	methodRequest := httptest.NewRequest(http.MethodTrace, "http://gateway.local/", nil)
-	methodResponse := httptest.NewRecorder()
-	gateway.handler().ServeHTTP(methodResponse, methodRequest)
-	if methodResponse.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("TRACE status = %d", methodResponse.Code)
+	health := httptest.NewRecorder()
+	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "http://backend.local/healthz", nil))
+	if health.Code != http.StatusOK || !strings.Contains(health.Body.String(), "go-backend") {
+		t.Fatalf("unexpected health response: %d %s", health.Code, health.Body.String())
 	}
 
-	bodyRequest := httptest.NewRequest(http.MethodPost, "http://gateway.local/", strings.NewReader("12345"))
-	bodyResponse := httptest.NewRecorder()
-	gateway.handler().ServeHTTP(bodyResponse, bodyRequest)
-	if bodyResponse.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("oversized body status = %d", bodyResponse.Code)
+	route := httptest.NewRecorder()
+	handler.ServeHTTP(route, httptest.NewRequest(http.MethodGet, "http://backend.local/api/v1/models", nil))
+	if route.Code != http.StatusNotImplemented || !strings.Contains(route.Body.String(), "route_not_migrated") {
+		t.Fatalf("unexpected unimplemented response: %d %s", route.Code, route.Body.String())
 	}
-}
 
-func TestReadyChecksUpstream(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/" {
-			t.Errorf("readiness path = %s", request.URL.Path)
-		}
-		writer.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-	cfg, err := loadConfig(testEnv(map[string]string{"GO_BACKEND_UPSTREAM_URL": upstream.URL}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gateway := newGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	response := httptest.NewRecorder()
-	gateway.handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://gateway.local/readyz", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("ready status = %d, body=%s", response.Code, response.Body.String())
+	oversized := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "http://backend.local/api", strings.NewReader("12345"))
+	handler.ServeHTTP(oversized, request)
+	if oversized.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d", oversized.Code)
 	}
 }

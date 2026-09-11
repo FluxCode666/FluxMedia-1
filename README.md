@@ -3,8 +3,8 @@
 FluxMedia 是面向图片与视频生成业务的全栈平台。项目使用 Turborepo、Next.js、
 React、TypeScript、Go、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
 
-当前 Go 服务 `services/api-gateway` 是统一 HTTP 入口，负责请求边界、健康检查和反向
-代理；尚未迁移的业务逻辑暂由 Next.js `web` 服务承载，按路由逐步迁移。
+当前 Go 服务 `services/api-gateway` 是统一 backend 入口，直接连接 PostgreSQL 与
+Redis，并提供健康检查。页面仍由 Next.js `web` 渲染；后端 API 必须在 Go 中实现。
 
 ## 核心能力
 
@@ -19,7 +19,7 @@ React、TypeScript、Go、Drizzle ORM 与 PostgreSQL，支持站内创作和 Ope
 
 ```text
 apps/web/                       Next.js 主应用、管理后台与媒体路由
-services/api-gateway/           Go HTTP 网关与渐进迁移入口
+services/api-gateway/       Go backend HTTP 入口
 packages/database/              Drizzle schema、迁移与数据库连接
 packages/shared/                UOL、积分、存储、审核等共享业务逻辑
 packages/ui/                    共享 UI 组件
@@ -38,9 +38,12 @@ pnpm --filter @repo/database db:push
 pnpm dev
 ```
 
-数据库迁移
+开发环境启动（backend entrypoint 会执行迁移）：
+
 ```bash
-pnpm --filter @repo/database db:migrate
+make dev-infra-up
+make dev-backend       # Go backend :8080
+make dev-frontend      # Next.js 页面 :3000
 ```
 
 常用质量门：
@@ -121,8 +124,9 @@ test@test.com
 
 ## 容器与生产部署
 
-根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移与 Web 的自托管组合。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
-由外部基础设施提供，迁移只在维护 profile 中运行。
+根目录 `docker-compose.yml` 提供 PostgreSQL、Redis、backend 与 Web 的自托管组合；迁移
+由 backend entrypoint 执行。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
+由外部基础设施提供，统一启动命令为 `docker compose up -d backend web`。
 
 ```bash
 GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet

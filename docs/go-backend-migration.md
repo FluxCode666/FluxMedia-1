@@ -18,8 +18,8 @@ Go backend
   └── 外部媒体供应商
 ```
 
-切换完成后，生产 Compose 不再为 Go backend 设置 `GO_BACKEND_UPSTREAM_URL`；Go 进程
-启动时必须直接建立 PostgreSQL 和 Redis 连接，`/readyz` 必须同时检查两者。
+生产 Compose 不设置 `GO_BACKEND_UPSTREAM_URL`；Go 进程启动时直接建立 PostgreSQL 和
+Redis 连接，`/readyz` 同时检查两者。backend entrypoint 在同一容器内执行数据库迁移。
 
 ## API 契约范围
 

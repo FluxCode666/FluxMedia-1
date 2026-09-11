@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 运营总览 epoch 发布门禁的静态回归测试。
-# 使用方：生产部署质量门。锁定 migrator 镜像、Web 命令与远程发布顺序，避免迁移成功
+# 使用方：生产部署质量门。锁定 backend 镜像、Web 命令与远程发布顺序，避免迁移成功
 # 但 epoch 仍为空时启动 Web 并宣告发布成功。
 
 set -euo pipefail
@@ -51,7 +51,7 @@ app_time_zone_count="$(
   grep -Fc -- 'APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}' "${compose_path}"
 )"
 if [ "${app_time_zone_count}" -ne 2 ]; then
-  printf 'migrate 与 web 必须共享同一个 APP_TIME_ZONE 默认值。\n' >&2
+  printf 'backend 与 web 必须共享同一个 APP_TIME_ZONE 默认值。\n' >&2
   exit 1
 fi
 require_text \
@@ -65,7 +65,7 @@ require_text \
   'pnpm --dir apps/web operations:epoch:ensure-current'
 
 web_start_line="$(
-  grep -nF 'if ! docker compose up -d --remove-orphans web api-gateway; then' \
+  grep -nF 'if ! docker compose up -d --remove-orphans web backend; then' \
     "${workflow_path}" | cut -d: -f1
 )"
 epoch_gate_line="$(

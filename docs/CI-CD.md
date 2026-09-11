@@ -29,20 +29,19 @@ pnpm --filter @repo/web build
 ## 镜像发布与生产部署
 
 `.github/workflows/deploy-production.yml` 是 `media.flux-code.cc` 的生产发布入口。
-它先运行 Web 质量门、数据库迁移测试、代理 Go 测试与 Compose 校验，再构建：
+它先运行 Web 质量门、数据库迁移测试、Go backend 测试与 Compose 校验，再构建：
 
 - `fluxmedia-1-web`
-- `fluxmedia-1-migrate`
-- `fluxmedia-1-api-gateway`
+- `fluxmedia-1-backend`
 
 该工作流是唯一镜像发布链路；版本 tag 不再触发另一套旧镜像或 draft Release。
 发布时从 `main` 或与输入版本一致的 tag 手动触发，版本必须符合
 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
 
 部署阶段将 `deploy/docker-compose.yml` 与维护脚本同步到目标机，并更新
-`FLUXMEDIA_IMAGE`、`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_GATEWAY_IMAGE` 和
+`FLUXMEDIA_IMAGE`、`FLUXMEDIA_BACKEND_IMAGE` 和
 `FLUXMEDIA_TAG`。目标机的 `.env` 与业务机密不会由仓库覆盖。公网请求先进入 Go
-`api-gateway`，未迁移路由再转发到 Next.js `web`。
+`backend`，页面由 Next.js `web` 提供。
 
 ## 维护窗口与恢复边界
 
@@ -51,12 +50,12 @@ pnpm --filter @repo/web build
 1. 停止旧 Web 并等待数据库连接排空。
 2. 执行迁移前只读检查；发现旧成员或未结束的视频引用时停止。
 3. 创建并校验数据库备份。
-4. 运行 `maintenance` profile 的迁移容器。
+4. 使用 backend 镜像执行数据库迁移。
 5. 使用新 Web 镜像回填并零差异对账尚未 ready 的控制台统计读模型。
 6. 验证新 schema，启动 Web。
 7. 通过 system-only `operations.ensureCurrentEpoch` 确保运营 epoch：仅空表按生产
    `APP_TIME_ZONE` 当前自然日初始化，已有值不随发布漂移。
-8. epoch 门禁成功后同时通过 web 与 Go 网关健康检查并宣告发布完成。
+8. epoch 门禁成功后同时通过 web 与 Go backend健康检查并宣告发布完成。
 
 迁移开始后不得自动启动依赖旧 schema 的镜像。失败时由值班人员选择前向修复，
 或先恢复迁移前备份再恢复旧镜像。

@@ -1,7 +1,7 @@
 # FluxMedia 生产部署流水线。
 #
 # 使用方式：从 main 或与输入版本一致的 Git tag 手动触发。流水线先执行质量门，
-# 再构建 web 与 migrate 镜像并推送 GHCR，最后通过 SSH 账号密码同步生产 Compose、迁移数据库并更新 web 服务。
+# 再构建 web 与 backend 镜像并推送 GHCR，最后通过 SSH 账号密码同步生产 Compose。
 # 真实运行时配置只保存在目标服务器 deploy/.env，不进入仓库或 Actions 日志。
 name: Deploy Production
 
@@ -98,7 +98,7 @@ jobs:
       - name: Test deployment release recovery policy
         run: bash deploy/release-recovery-policy.test.sh
 
-      - name: Verify Go API gateway
+      - name: Verify Go backend
         working-directory: services/api-gateway
         run: |
           set -euo pipefail
@@ -202,13 +202,12 @@ jobs:
           pnpm --filter @repo/web smoke:api-upstream-worker
 
   build-and-push:
-    name: Build and push web and migrate images
+    name: Build and push web and backend images
     needs: quality
     runs-on: ubuntu-latest
     outputs:
       web_image: ${{ steps.meta.outputs.web_image }}
-      migrate_image: ${{ steps.meta.outputs.migrate_image }}
-      gateway_image: ${{ steps.meta.outputs.gateway_image }}
+      backend_image: ${{ steps.meta.outputs.backend_image }}
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
@@ -222,8 +221,7 @@ jobs:
           set -euo pipefail
           owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "web_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "migrate_image=${REGISTRY}/${owner_lower}/fluxmedia-1-migrate" >> "${GITHUB_OUTPUT}"
-          echo "gateway_image=${REGISTRY}/${owner_lower}/fluxmedia-1-api-gateway" >> "${GITHUB_OUTPUT}"
+          echo "backend_image=${REGISTRY}/${owner_lower}/fluxmedia-1-backend" >> "${GITHUB_OUTPUT}"
           echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
@@ -258,24 +256,7 @@ jobs:
           cache-from: type=gha,scope=fluxmedia-web
           cache-to: type=gha,mode=max,scope=fluxmedia-web
 
-      - name: Build and push migrate image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: Dockerfile.web
-          target: migrator
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.migrate_image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.migrate_image }}:latest
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=fluxmedia-migrate
-          cache-to: type=gha,mode=max,scope=fluxmedia-migrate
-
-      - name: Build and push Go API gateway image
+      - name: Build and push backend image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -283,13 +264,13 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ steps.meta.outputs.gateway_image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.gateway_image }}:latest
+            ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.backend_image }}:latest
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=fluxmedia-api-gateway
-          cache-to: type=gha,mode=max,scope=fluxmedia-api-gateway
+          cache-from: type=gha,scope=fluxmedia-backend
+          cache-to: type=gha,mode=max,scope=fluxmedia-backend
 
   deploy:
     name: Migrate database and deploy web with Docker Compose
@@ -306,8 +287,7 @@ jobs:
       GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.actor }}
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
       WEB_IMAGE: ${{ needs.build-and-push.outputs.web_image }}
-      MIGRATE_IMAGE: ${{ needs.build-and-push.outputs.migrate_image }}
-      GATEWAY_IMAGE: ${{ needs.build-and-push.outputs.gateway_image }}
+      BACKEND_IMAGE: ${{ needs.build-and-push.outputs.backend_image }}
       IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
     steps:
       - name: Checkout deployment files
@@ -410,19 +390,17 @@ jobs:
             -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
             bash -s -- \
               "${WEB_IMAGE}" \
-              "${MIGRATE_IMAGE}" \
-              "${GATEWAY_IMAGE}" \
+              "${BACKEND_IMAGE}" \
               "${IMAGE_TAG}" \
               "${DEPLOY_PATH}" \
               "${GITHUB_SHA}" <<'REMOTE_SCRIPT' | tee "${result_file}"
           set -euo pipefail
 
           web_image="$1"
-          migrate_image="$2"
-          gateway_image="$3"
-          image_tag="$4"
-          deploy_path="$5"
-          git_sha="$6"
+          backend_image="$2"
+          image_tag="$3"
+          deploy_path="$4"
+          git_sha="$5"
           cd "${deploy_path}"
 
           if [ ! -f .env ]; then
@@ -465,7 +443,7 @@ jobs:
             fi
           }
 
-          # 用本次新 migrator 镜像运行只读数据库门禁。
+          # 使用统一 backend 镜像运行只读数据库门禁，跳过启动迁移。
           run_release_gate() {
             gate="$1"
             expected_ledger_digest="${2:-}"
@@ -473,12 +451,12 @@ jobs:
               docker compose --profile maintenance run --rm --no-deps \
                 --interactive=false \
                 -e "RELEASE_CREDITS_LEDGER_DIGEST=${expected_ledger_digest}" \
-                migrate \
+                -e GO_BACKEND_SKIP_MIGRATION=true backend \
                 pnpm --dir packages/database db:release-gate -- "${gate}" \
                 </dev/null
             else
               docker compose --profile maintenance run --rm --no-deps \
-                --interactive=false migrate \
+                --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true backend \
                 pnpm --dir packages/database db:release-gate -- "${gate}" \
                 </dev/null
             fi
@@ -497,7 +475,7 @@ jobs:
           # 旧 schema 输入全部复制为任务对象；0074 已完成时命令是幂等空操作。
           run_video_input_asset_migration() {
             docker compose --profile maintenance run --rm --no-deps \
-              --interactive=false migrate \
+              --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true backend \
               node apps/web/scripts/migrate-video-input-assets.mjs migrate \
               --confirm-no-legacy-writers </dev/null
           }
@@ -517,7 +495,7 @@ jobs:
             docker compose --profile maintenance run --rm --no-deps \
               --interactive=false \
               -e "OPERATIONS_EPOCH_INITIALIZED_BY=release-${image_tag}" \
-              migrate \
+              -e GO_BACKEND_SKIP_MIGRATION=true backend \
               pnpm --dir apps/web operations:epoch:ensure-current \
               </dev/null
           }
@@ -527,11 +505,8 @@ jobs:
             if [ -n "${previous_image}" ]; then
               set_env_value FLUXMEDIA_IMAGE "${previous_image}"
             fi
-            if [ -n "${previous_migrate_image}" ]; then
-              set_env_value FLUXMEDIA_MIGRATE_IMAGE "${previous_migrate_image}"
-            fi
-            if [ -n "${previous_gateway_image}" ]; then
-              set_env_value FLUXMEDIA_GATEWAY_IMAGE "${previous_gateway_image}"
+            if [ -n "${previous_backend_image}" ]; then
+              set_env_value FLUXMEDIA_BACKEND_IMAGE "${previous_backend_image}"
             fi
             if [ -n "${previous_tag}" ]; then
               set_env_value FLUXMEDIA_TAG "${previous_tag}"
@@ -539,12 +514,11 @@ jobs:
           }
 
           previous_image="$(read_env_value FLUXMEDIA_IMAGE)"
-          previous_migrate_image="$(read_env_value FLUXMEDIA_MIGRATE_IMAGE)"
-          previous_gateway_image="$(read_env_value FLUXMEDIA_GATEWAY_IMAGE)"
+          previous_backend_image="$(read_env_value FLUXMEDIA_BACKEND_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
           previous_release_available=false
           if [[ "${previous_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
-            && [[ "${previous_gateway_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
+            && [[ "${previous_backend_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
             && [[ "${previous_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
             previous_release_available=true
             printf 'previous_release=%s:%s\n' \
@@ -592,7 +566,7 @@ jobs:
             if [ "${recovery_action}" = "restart-previous" ]; then
               echo "迁移尚未开始，恢复原本运行的上一版 Web 服务。" >&2
               if ! docker compose up -d --no-deps \
-                web api-gateway >/dev/null 2>&1; then
+                web backend >/dev/null 2>&1; then
                 echo "上一版服务恢复失败，保持维护状态。" >&2
               fi
             elif [ "${recovery_action}" = "keep-maintenance" ] \
@@ -604,16 +578,15 @@ jobs:
           trap handle_deployment_exit EXIT
 
           set_env_value FLUXMEDIA_IMAGE "${web_image}"
-          set_env_value FLUXMEDIA_MIGRATE_IMAGE "${migrate_image}"
-          set_env_value FLUXMEDIA_GATEWAY_IMAGE "${gateway_image}"
+          set_env_value FLUXMEDIA_BACKEND_IMAGE "${backend_image}"
           set_env_value FLUXMEDIA_TAG "${image_tag}"
           docker compose --profile maintenance config --quiet
 
-          if ! docker compose --profile maintenance pull migrate web api-gateway; then
+          if ! docker compose --profile maintenance pull web backend; then
             exit 1
           fi
 
-          echo "在停服前烟测新 migrator 镜像与纯中转门禁。"
+          echo "在停服前烟测新 backend 镜像与数据库门禁。"
           # tee 同时保留成功输出供后续判断，并在失败退出前回放阻断证据。
           preliminary_preflight="$(
             run_release_gate preflight-early | tee /dev/stderr
@@ -629,11 +602,11 @@ jobs:
           if [ -n "$(docker compose ps -q --status running web)" ]; then
             previous_web_was_running=true
           fi
-          docker compose stop --timeout 60 web api-gateway
+          docker compose stop --timeout 60 web backend
           web_stopped=true
           if [ -n "$(docker compose ps -q --status running web)" ] || \
-            [ -n "$(docker compose ps -q --status running api-gateway)" ]; then
-            echo "旧 Web 或 Go 网关容器仍在运行，拒绝迁移。" >&2
+            [ -n "$(docker compose ps -q --status running backend)" ]; then
+            echo "旧 Web 或 Go backend容器仍在运行，拒绝迁移。" >&2
             exit 1
           fi
 
@@ -661,7 +634,7 @@ jobs:
           # 远程脚本本身从 SSH stdin 读取；迁移容器不得继承 stdin，否则会吞掉后续
           # web 启动与健康检查命令，并让未完成的部署被误判为成功。
           if ! docker compose --profile maintenance run --rm --no-deps \
-            --interactive=false migrate </dev/null; then
+            --interactive=false -e GO_BACKEND_MIGRATE_ONLY=true backend </dev/null; then
             echo "数据库迁移失败，保持维护状态等待恢复备份或前向修复。" >&2
             exit 1
           fi
@@ -679,9 +652,9 @@ jobs:
             exit 1
           fi
 
-          echo "启动 Go 网关与 web 服务。"
-          if ! docker compose up -d --remove-orphans web api-gateway; then
-            echo "新 Web 或 Go 网关启动失败，保持维护状态。" >&2
+          echo "启动 Go backend与 web 服务。"
+          if ! docker compose up -d --remove-orphans web backend; then
+            echo "新 Web 或 Go backend启动失败，保持维护状态。" >&2
             exit 1
           fi
 
@@ -692,9 +665,9 @@ jobs:
           fi
 
           web_container_id="$(docker compose ps -q web)"
-          gateway_container_id="$(docker compose ps -q api-gateway)"
+          gateway_container_id="$(docker compose ps -q backend)"
           if [ -z "${web_container_id}" ] || [ -z "${gateway_container_id}" ]; then
-            echo "未找到 web 或 api-gateway 容器。" >&2
+            echo "未找到 web 或 backend 容器。" >&2
             exit 1
           fi
 
@@ -711,7 +684,7 @@ jobs:
             )"
             if [ "${web_health_status}" = "healthy" ] \
               && [ "${gateway_health_status}" = "healthy" ]; then
-              echo "web 与 Go 网关均已通过健康检查。"
+              echo "web 与 Go backend均已通过健康检查。"
               web_stopped=false
               deployment_succeeded=true
               printf 'deployment_completed=true\n'
@@ -723,12 +696,12 @@ jobs:
               || [ "${gateway_health_status}" = "unhealthy" ] || [ "${gateway_health_status}" = "exited" ]; then
               break
             fi
-            echo "等待 web/Go 网关健康检查：${attempt}/30，当前状态 web=${web_health_status}, gateway=${gateway_health_status}。"
+            echo "等待 web/Go backend健康检查：${attempt}/30，当前状态 web=${web_health_status}, gateway=${gateway_health_status}。"
             sleep 10
           done
 
-          docker compose logs --tail=100 web api-gateway >&2
-          echo "新 Web 或 Go 网关健康检查失败，保持维护状态且不启动旧镜像。" >&2
+          docker compose logs --tail=100 web backend >&2
+          echo "新 Web 或 Go backend健康检查失败，保持维护状态且不启动旧镜像。" >&2
           exit 1
           REMOTE_SCRIPT
 
@@ -797,12 +770,11 @@ jobs:
             echo "## FluxMedia 生产部署"
             echo ""
             echo "- Web 镜像：\`${WEB_IMAGE}:${IMAGE_TAG}\`"
-            echo "- Migrate 镜像：\`${MIGRATE_IMAGE}:${IMAGE_TAG}\`"
-            echo "- Go 网关镜像：\`${GATEWAY_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Go backend 镜像（含迁移运行时）：\`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
             echo "- 域名：\`${PUBLIC_APP_URL}\`"
             echo "- 提交：\`${GITHUB_SHA}\`"
             echo "- 迁移前版本：\`${{ steps.deploy.outputs.previous_release }}\`"
-            echo "- 服务：\`api-gateway → web\`（Go 网关承载公网入口）"
+            echo "- 服务：\`backend → web\`（Go backend承载公网入口）"
             echo "- 纯中转预检：\`${{ steps.deploy.outputs.relay_count }}\`"
             echo "- 备份存储：\`${{ steps.deploy.outputs.backup_storage }}\`"
             echo "- 备份 artifact：\`${{ steps.deploy.outputs.backup_artifact_id }}\`"

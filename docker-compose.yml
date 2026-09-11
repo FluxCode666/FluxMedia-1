@@ -45,23 +45,6 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    image: ghcr.io/meowfree/gpt2image-pro-migrate:${GPT2IMAGE_IMAGE_TAG:-latest}
-    env_file:
-      - ${GPT2IMAGE_ENV_FILE:-.env}
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-gpt2image}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gpt2image}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_USERNAME: ${REDIS_USERNAME:-}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB: ${REDIS_DB:-4}
-      REDIS_TLS: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   web:
     image: ghcr.io/meowfree/gpt2image-pro-web:${GPT2IMAGE_IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -93,27 +76,35 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
 
-  # Go 后端网关承载统一 HTTP 入口；尚未迁移的业务路由转发到 Next.js web。
-  api-gateway:
+  # Go backend 统一持有 PostgreSQL/Redis；数据库迁移在 entrypoint 内执行。
+  backend:
     build:
       context: .
       dockerfile: Dockerfile.api-gateway
     restart: unless-stopped
     environment:
       GO_BACKEND_BIND: :8080
-      GO_BACKEND_UPSTREAM_URL: http://web:3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gpt2image}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gpt2image}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_USERNAME: ${REDIS_USERNAME:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_DB: ${REDIS_DB:-4}
+      REDIS_TLS: "false"
       GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
       GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
     ports:
       - "${GO_BACKEND_PORT:-3000}:8080"
     depends_on:
-      web:
-        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "/api-gateway", "--healthcheck"]
+      test: ["CMD", "/backend", "--healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 5
