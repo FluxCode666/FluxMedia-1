@@ -2,7 +2,7 @@
  * 模型广场自定义封面的安全处理与内容寻址 key 构造。
  *
  * 管理保存服务把不可信上传字节交给本模块；本模块只负责空文件、解码、格式、动画、像素、
- * 裁切、重编码和哈希，不读取数据库、存储配置或客户端提供的文件名与 MIME。
+ * 缩放、重编码和哈希，不读取数据库、存储配置或客户端提供的文件名与 MIME。
  */
 import { createHash } from "node:crypto";
 
@@ -17,8 +17,6 @@ const MAX_COVER_OUTPUT_WIDTH = 1_200;
 const MAX_COVER_OUTPUT_HEIGHT = 800;
 const COVER_WEBP_QUALITY = 82;
 const CONTENT_SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const COVER_ASPECT_RATIO_WIDTH_UNITS = 3;
-const COVER_ASPECT_RATIO_HEIGHT_UNITS = 2;
 
 /** 封面校验失败的稳定错误码，传输层可据此映射友好提示。 */
 export type ModelMarketplaceCoverImageErrorCode =
@@ -98,49 +96,42 @@ async function readSafeCoverMetadata(input: Buffer): Promise<Metadata> {
 }
 
 /**
- * 根据自动旋转后的原图尺寸计算严格 3:2 且不会放大的输出尺寸。
+ * 根据自动旋转后的原图尺寸计算不裁剪且不会放大的输出尺寸。
  *
  * @param width - 自动旋转后的原图宽度。
  * @param height - 自动旋转后的原图高度。
- * @returns 不超过原图裁切区域和 1200×800 的 3:2 整数尺寸。
- * @throws ModelMarketplaceCoverImageError - 图片小于可形成 3×2 裁切区域时拒绝处理。
+ * @returns 保持原图宽高比、限制在 1200×800 且不放大的整数尺寸。
+ * @throws ModelMarketplaceCoverImageError - 图片尺寸无效时拒绝处理。
  */
 function getCoverOutputDimensions(
   width: number,
   height: number
 ): { width: number; height: number } {
-  const sourceUnit = Math.floor(
-    Math.min(
-      width / COVER_ASPECT_RATIO_WIDTH_UNITS,
-      height / COVER_ASPECT_RATIO_HEIGHT_UNITS
-    )
-  );
-  const maximumOutputUnit = Math.floor(
-    Math.min(
-      MAX_COVER_OUTPUT_WIDTH / COVER_ASPECT_RATIO_WIDTH_UNITS,
-      MAX_COVER_OUTPUT_HEIGHT / COVER_ASPECT_RATIO_HEIGHT_UNITS
-    )
-  );
-  const outputUnit = Math.min(sourceUnit, maximumOutputUnit);
-  if (outputUnit < 1) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
     throw new ModelMarketplaceCoverImageError(
       "invalid_image",
-      "封面图片尺寸过小，无法裁切为 3:2。"
+      "无法读取封面图片尺寸。"
     );
   }
 
+  const scale = Math.min(
+    1,
+    MAX_COVER_OUTPUT_WIDTH / width,
+    MAX_COVER_OUTPUT_HEIGHT / height
+  );
+
   return {
-    width: outputUnit * COVER_ASPECT_RATIO_WIDTH_UNITS,
-    height: outputUnit * COVER_ASPECT_RATIO_HEIGHT_UNITS,
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
   };
 }
 
 /**
- * 把已验证的静态图片重编码为固定模型广场封面。
+ * 把已验证的静态图片重编码为模型广场封面，不裁剪原图内容。
  *
  * @param input - 与读取元数据时相同的上传 Buffer。
- * @param dimensions - 根据自动旋转后的原图计算出的最终 3:2 尺寸。
- * @returns 自动旋转、中心裁成 3:2、限制在 1200×800 且不放大的无元数据 WebP。
+ * @param dimensions - 根据自动旋转后的原图计算出的最终等比尺寸。
+ * @returns 自动旋转、等比缩放到 1200×800 以内且不放大的无元数据 WebP。
  * @throws ModelMarketplaceCoverImageError - 实际像素解码失败时统一拒绝，不产出部分结果。
  */
 async function encodeSafeCoverWebp(
@@ -156,8 +147,7 @@ async function encodeSafeCoverWebp(
       .resize({
         width: dimensions.width,
         height: dimensions.height,
-        fit: "cover",
-        position: "centre",
+        fit: "inside",
         withoutEnlargement: true,
       })
       // 不调用 keepMetadata/withMetadata，确保 EXIF、ICC、XMP 等输入元数据被移除。
@@ -176,7 +166,7 @@ async function encodeSafeCoverWebp(
  * 安全处理管理员上传的模型广场封面。
  *
  * @param bytes - multipart 适配器读取的原始字节；不读取文件名或声明 MIME。
- * @returns 最终 WebP 字节、其小写 SHA-256 和固定 image/webp 内容类型。
+ * @returns 最终 WebP 字节、其小写 SHA-256 和固定 image/webp 内容类型；原图比例保持不变。
  * @throws ModelMarketplaceCoverImageError - 空文件、格式非法、动画或解码失败时抛出。
  */
 export async function processModelMarketplaceCoverImage(

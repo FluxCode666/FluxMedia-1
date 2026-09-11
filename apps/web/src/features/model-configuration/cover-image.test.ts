@@ -103,7 +103,7 @@ describe("processModelMarketplaceCoverImage", () => {
     expect(metadata.pages ?? 1).toBe(1);
   });
 
-  it("自动旋转、居中裁成 3:2，并移除 EXIF 与方向元数据", async () => {
+  it("自动旋转、保持原图比例，并移除 EXIF 与方向元数据", async () => {
     const input = await sharp({
       create: {
         width: 900,
@@ -119,9 +119,9 @@ describe("processModelMarketplaceCoverImage", () => {
     const result = await processModelMarketplaceCoverImage(input);
     const metadata = await sharp(result.bytes).metadata();
 
-    // 方向 6 会先把 900×600 旋成 600×900，再从中心裁出横向 3:2。
-    expect(metadata.width).toBe(600);
-    expect(metadata.height).toBe(400);
+    // 方向 6 会先把 900×600 旋成 600×900，再等比缩放到 533×800。
+    expect(metadata.width).toBe(533);
+    expect(metadata.height).toBe(800);
     expect(metadata.orientation).toBeUndefined();
     expect(metadata.exif).toBeUndefined();
     expect(metadata.icc).toBeUndefined();
@@ -143,7 +143,7 @@ describe("processModelMarketplaceCoverImage", () => {
     });
     await expect(sharp(small.bytes).metadata()).resolves.toMatchObject({
       width: 300,
-      height: 200,
+      height: 300,
       format: "webp",
     });
   });
@@ -167,7 +167,7 @@ describe("processModelMarketplaceCoverImage", () => {
     const result = await processModelMarketplaceCoverImage(input);
 
     await expect(sharp(result.bytes).metadata()).resolves.toMatchObject({
-      width: 1_200,
+      width: 1_046,
       height: 800,
       format: "webp",
     });
