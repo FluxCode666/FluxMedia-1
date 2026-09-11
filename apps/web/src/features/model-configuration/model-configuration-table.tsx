@@ -61,10 +61,10 @@ async function readStableErrorCode(response: Response): Promise<string | null> {
 }
 
 /**
- * 渲染保留原图比例的缩略图，并在自定义图失败时只回退一次本地默认图。
+ * 渲染固定 3:2 居中覆盖的缩略图，并在自定义图失败时只回退一次本地默认图。
  *
  * @param entry - 当前管理条目。
- * @returns 模型图片或占位；图片完整显示在统一缩略图区域内。
+ * @returns 模型图片或占位；两种形态尺寸完全一致。
  * @sideEffects 浏览器读取第一方图片；解码失败只更新本地 src。
  * @failure 默认封面也失败时停止渲染 img，避免无限 onError。
  */
@@ -90,7 +90,7 @@ function ModelCoverThumbnail({ entry }: { entry: ModelConfigurationEntry }) {
           src={source}
           alt=""
           aria-hidden="true"
-          className="h-full w-full object-contain"
+          className="h-full w-full object-cover"
           onError={handleError}
         />
       ) : (

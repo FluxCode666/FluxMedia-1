@@ -240,7 +240,7 @@ export function ModelConfigurationPanel({
             <CardTitle>{title}</CardTitle>
             <CardDescription>
               新增自定义模型
-              ID、媒体类型和支持分辨率，并按模型维护全局价格、展示信息与不裁剪
+              ID、媒体类型和支持分辨率，并按模型维护全局价格、展示信息与 3:2
               封面。账号只能选择这里已经注册的模型。
             </CardDescription>
           </div>

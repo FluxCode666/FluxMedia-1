@@ -1,7 +1,7 @@
 /**
  * 公开模型广场的模型卡片与媒体资产组件。
  *
- * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示完整比例封面、类别、
+ * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示 3:2 封面、类别、
  * 品牌图标、可复制模型 ID、最低价格和视频输入摘要，不读取管理配置或用户权限。
  */
 "use client";
@@ -79,10 +79,10 @@ function VideoCapabilitySummary({ model }: { model: PublicVideoModel }) {
 }
 
 /**
- * 渲染带一次性本地兜底的模型封面；完整保留原图比例，不裁剪内容。
+ * 渲染带一次性本地兜底的 3:2 模型封面；展示时居中覆盖容器。
  *
  * @param props - 公开模型、图片尺寸提示和可选样式。
- * @returns 直接加载第一方 WebP 的媒体；失败后只切换一次类别默认图。
+ * @returns 直接加载第一方 WebP 的固定比例媒体；失败后只切换一次类别默认图。
  * @sideEffects 浏览器加载图片；自定义封面失败时更新一次本地 src 状态。
  * @failure 默认封面也失败时保持失败状态，不循环更新或请求第三方地址。
  */
@@ -114,7 +114,7 @@ export function ModelMarketplaceCover({
       fill
       unoptimized
       alt={model.displayName}
-      className={`object-contain ${className}`}
+      className={`object-cover ${className}`}
       loading={eager ? "eager" : "lazy"}
       onError={handleImageError}
       sizes={sizes}

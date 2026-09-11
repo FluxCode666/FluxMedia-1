@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * 模型配置编辑弹窗的封面选择与原比例本地预览字段。
+ * 模型配置编辑弹窗的封面选择与 3:2 本地预览字段。
  *
  * 使用方是 ModelConfigurationDialog；本组件只管理浏览器对象 URL 生命周期、单次图片
  * 回退和文件选择，不上传、不读取图片字节，也不把失败预览伪装成已保存状态。
@@ -33,7 +33,7 @@ export type ModelCoverFieldProps = {
  * 渲染封面预览、替换、移除与恢复当前值操作。
  *
  * @param props - 当前服务端封面、草稿动作、权限与变更回调。
- * @returns 保留原图比例的预览和仅在可编辑时出现的文件操作。
+ * @returns 固定 3:2 的居中覆盖预览和仅在可编辑时出现的文件操作。
  * @sideEffects 选择文件时创建对象 URL；替换、恢复和卸载时及时 revoke；不发网络请求。
  * @failure 浏览器 MIME/空文件预检失败只提示并保留旧草稿；图片加载失败最多回退一次本地封面。
  */
@@ -127,7 +127,7 @@ export function ModelCoverField({
             <img
               src={renderSource}
               alt={`${category === "image" ? "图像" : "视频"}模型封面预览`}
-              className="h-full w-full object-contain"
+              className="h-full w-full object-cover"
               onError={handleImageError}
             />
           ) : (
