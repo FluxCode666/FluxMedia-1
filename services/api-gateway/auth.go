@@ -383,6 +383,7 @@ func (b *backend) handleSignOut(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 func (b *backend) handleUpdateUser(w http.ResponseWriter, r *http.Request) error {
+	noStore(w)
 	if err := b.checkOrigin(r); err != nil {
 		return err
 	}
@@ -415,7 +416,7 @@ func (b *backend) handleUpdateUser(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]bool{"status": true})
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]bool{"status": true}})
 	return nil
 }
 
@@ -477,7 +478,9 @@ func (b *backend) handleMyCreditsBalance(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return err
 	}
-	var balance int64
+	// credits_balance.balance is numeric(18,2) after migration 0007; scanning it
+	// into an integer makes pgx reject authenticated requests with a 500 response.
+	var balance float64
 	err = b.db.QueryRow(r.Context(), `SELECT COALESCE(balance, 0) FROM credits_balance WHERE user_id=$1`, s.User.ID).Scan(&balance)
 	if errors.Is(err, pgx.ErrNoRows) {
 		balance = 0

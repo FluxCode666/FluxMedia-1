@@ -144,6 +144,44 @@ func TestGoAuthExistingCredentialsAndSessionLifecycle(t *testing.T) {
 		t.Fatal("session still valid after sign-out")
 	}
 }
+
+func TestGoJSONUserEndpointsUseNumericCreditsAndScopedMutation(t *testing.T) {
+	b := integrationBackend(t)
+	id, email := seedAuthUser(t, b)
+	cookie := signInTestUser(t, b, email)
+	if _, err := b.db.Exec(context.Background(), `INSERT INTO credits_balance(id,user_id,balance) VALUES($1,$2,12.50) ON CONFLICT(user_id) DO UPDATE SET balance=12.50`, newRequestID(), id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := authRequest(t, b, "GET", "/api/user/credits", "", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("credits endpoint failed: %d %s", w.Code, w.Body.String())
+	}
+	var credits struct {
+		Data struct {
+			Balance float64 `json:"balance"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &credits); err != nil {
+		t.Fatal(err)
+	}
+	if credits.Data.Balance != 12.5 {
+		t.Fatalf("unexpected numeric balance: %s", w.Body.String())
+	}
+
+	w = authRequest(t, b, "POST", "/api/auth/update-user", `{"name":"JSON User"}`, cookie)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"data"`) {
+		t.Fatalf("profile endpoint contract failed: %d %s", w.Code, w.Body.String())
+	}
+	w = authRequest(t, b, "POST", "/api/user/time-zone", `{"timeZone":"Asia/Shanghai"}`, cookie)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"effectiveTimeZone":"Asia/Shanghai"`) {
+		t.Fatalf("time zone endpoint failed: %d %s", w.Code, w.Body.String())
+	}
+	w = authRequest(t, b, "POST", "/api/user/time-zone", `{"timeZone":"Not/AZone"}`, cookie)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid time zone accepted: %d %s", w.Code, w.Body.String())
+	}
+}
 func TestGoAuthBanAndSessionOwnership(t *testing.T) {
 	b := integrationBackend(t)
 	id, email := seedAuthUser(t, b)
