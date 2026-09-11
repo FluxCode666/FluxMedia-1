@@ -87,6 +87,8 @@ services:
       GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
       GO_BACKEND_READ_TIMEOUT_MS: ${GO_BACKEND_READ_TIMEOUT_MS:-30000}
       GO_BACKEND_IDLE_TIMEOUT_MS: ${GO_BACKEND_IDLE_TIMEOUT_MS:-75000}
+      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
+      GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3001}:8080"
     healthcheck:
@@ -95,6 +97,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+    depends_on:
+      script-runtime:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     logging:
@@ -102,6 +107,32 @@ services:
       options:
         max-size: "100m"
         max-file: "5"
+
+  # 私有 QuickJS 运行时，仅接受 backend 的内部请求，不发布宿主机端口。
+  script-runtime:
+    image: ${FLUXMEDIA_SCRIPT_RUNTIME_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-script-runtime}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    restart: unless-stopped
+    init: true
+    networks:
+      - infra
+    env_file:
+      - .env
+    environment:
+      SCRIPT_RUNTIME_BIND: :8090
+      API_UPSTREAM_SCRIPT_WORKER_COUNT: ${API_UPSTREAM_SCRIPT_WORKER_COUNT:-1}
+      API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB: ${API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB:-32}
+      API_UPSTREAM_SCRIPT_STACK_LIMIT_KB: ${API_UPSTREAM_SCRIPT_STACK_LIMIT_KB:-512}
+      SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   infra:

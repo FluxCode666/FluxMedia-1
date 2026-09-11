@@ -89,6 +89,8 @@ Redis 连接，`/readyz` 同时检查两者。backend entrypoint 在同一容器
 ```bash
 make dev-backend          # 使用原 .env/.env.local；先迁移后监听 :8080
 make dev-frontend         # 另一个终端；当前仍是原 Next.js 业务 :3000
+make dev-script-runtime   # 私有 QuickJS 运行时 :8090；Go backend 通过内部 HTTP 调用
+make dev                  # 一次启动迁移、Go backend、Web 与脚本运行时
 make test-go
 make test-go-integration  # 自动创建/复用专用本地测试库，绝不清空业务库
 ```

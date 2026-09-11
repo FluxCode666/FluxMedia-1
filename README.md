@@ -44,13 +44,15 @@ Go 已有认证主流程、外部积分/模型查询和原生 SQL 迁移；媒�
 pnpm install
 ```
 
-开发环境启动（两个终端分别启动前后端；Go 启动时会先执行未应用的 SQL 迁移）：
+开发环境启动（Go 启动时会先执行未应用的 SQL 迁移；脚本运行时只接受 Go backend 的内部请求）：
 
 ```bash
 make dev-infra-up
 make dev-migrate       # 可选：仅执行迁移后退出，使用相同的数据库配置
 make dev-backend       # Go backend :8080
 make dev-frontend      # Next.js 页面 :3000
+make dev-script-runtime # 私有 QuickJS 脚本运行时 :8090
+# 或使用 make dev 一次启动上述三个服务
 ```
 
 常用质量门：
@@ -140,6 +142,7 @@ GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet
 docker compose up -d
 ```
 
-生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
+生产 Compose 会同时启动 backend、私有 script-runtime 和 Web；数据库迁移由 backend 容器
+entrypoint 执行。生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
 [deploy/README.md](deploy/README.md)。统一号池调度契约见
 [docs/image-backend-pool-scheduling.md](docs/image-backend-pool-scheduling.md)。

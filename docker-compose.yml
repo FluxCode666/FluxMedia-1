@@ -101,6 +101,8 @@ services:
       REDIS_TLS: "false"
       GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
       GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
+      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
+      GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
     ports:
       - "${GO_BACKEND_PORT:-3000}:8080"
     depends_on:
@@ -108,12 +110,37 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      script-runtime:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/backend", "--healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+
+  # 仅供 Go backend 使用的 JavaScript/QuickJS 脚本运行时。没有宿主机端口，不能被浏览器
+  # 或公网直接访问；Go 在外呼前后负责所有鉴权、媒体令牌和供应商协议校验。
+  script-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-upstream-script-runtime
+    restart: unless-stopped
+    environment:
+      SCRIPT_RUNTIME_BIND: :8090
+      API_UPSTREAM_SCRIPT_WORKER_COUNT: ${API_UPSTREAM_SCRIPT_WORKER_COUNT:-1}
+      API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB: ${API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB:-32}
+      API_UPSTREAM_SCRIPT_STACK_LIMIT_KB: ${API_UPSTREAM_SCRIPT_STACK_LIMIT_KB:-512}
+      SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     security_opt:
       - no-new-privileges:true
 

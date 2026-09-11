@@ -1,0 +1,15 @@
+FROM node:22-slim
+WORKDIR /app
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY services/api-upstream-script-runtime/package.json ./services/api-upstream-script-runtime/package.json
+RUN pnpm install --frozen-lockfile --filter @fluxmedia/api-upstream-script-runtime...
+COPY services/api-upstream-script-runtime/server.mjs ./services/api-upstream-script-runtime/server.mjs
+COPY services/api-upstream-script-runtime/worker.mjs ./services/api-upstream-script-runtime/worker.mjs
+RUN groupadd --system --gid 1001 runtime && useradd --system --uid 1001 --gid runtime runtime
+USER runtime:runtime
+EXPOSE 8090
+ENV SCRIPT_RUNTIME_BIND=:8090
+CMD ["node", "services/api-upstream-script-runtime/server.mjs"]

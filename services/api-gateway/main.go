@@ -44,18 +44,20 @@ const (
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 type config struct {
-	bind           string
-	databaseURL    string
-	authSecret     string
-	authURL        string
-	trustedOrigins []string
-	redisOptions   *redis.Options
-	maxBodyBytes   int64
-	readHeader     time.Duration
-	readTimeout    time.Duration
-	writeTimeout   time.Duration
-	idleTimeout    time.Duration
-	readyTimeout   time.Duration
+	bind               string
+	databaseURL        string
+	authSecret         string
+	authURL            string
+	trustedOrigins     []string
+	redisOptions       *redis.Options
+	maxBodyBytes       int64
+	readHeader         time.Duration
+	readTimeout        time.Duration
+	writeTimeout       time.Duration
+	idleTimeout        time.Duration
+	readyTimeout       time.Duration
+	scriptRuntimeURL   string
+	scriptRuntimeToken string
 }
 
 type backend struct {
@@ -232,6 +234,13 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	scriptRuntimeURL := strings.TrimRight(getString(getenv, "GO_SCRIPT_RUNTIME_URL", ""), "/")
+	if scriptRuntimeURL != "" {
+		parsedRuntimeURL, parseErr := url.Parse(scriptRuntimeURL)
+		if parseErr != nil || parsedRuntimeURL.Host == "" || parsedRuntimeURL.User != nil || (parsedRuntimeURL.Scheme != "http" && parsedRuntimeURL.Scheme != "https") || parsedRuntimeURL.RawQuery != "" || parsedRuntimeURL.Fragment != "" {
+			return config{}, errors.New("GO_SCRIPT_RUNTIME_URL must be a valid HTTP(S) origin")
+		}
+	}
 	tlsEnabled, err := getBool(getenv, "REDIS_TLS", false)
 	if err != nil {
 		return config{}, err
@@ -273,6 +282,8 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 		},
 		maxBodyBytes: maxBodyBytes, readHeader: readHeader, readTimeout: readTimeout,
 		writeTimeout: writeTimeout, idleTimeout: idleTimeout, readyTimeout: readyTimeout,
+		scriptRuntimeURL:   scriptRuntimeURL,
+		scriptRuntimeToken: getString(getenv, "GO_SCRIPT_RUNTIME_TOKEN", ""),
 	}, nil
 }
 
@@ -318,6 +329,12 @@ func (b *backend) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err := b.redis.Ping(ctx).Err(); err != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "redis_unavailable", "The backend is not ready.")
 		return
+	}
+	if b.config.scriptRuntimeURL != "" {
+		if err := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken).ready(ctx); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "script_runtime_unavailable", "The backend is not ready.")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "service": "go-backend"})
 }
