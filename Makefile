@@ -4,21 +4,9 @@ SHELL := /bin/bash
 
 GO_SERVICE := services/api-gateway
 GO_BIND ?= :8080
-LOCAL_DATABASE_URL ?= postgresql://fluxcode:fluxcode_local_dev@127.0.0.1:5432/fluxcode?sslmode=disable
-LOCAL_REDIS_HOST ?= 127.0.0.1
-LOCAL_REDIS_PORT ?= 6379
-LOCAL_REDIS_PASSWORD ?= 123456
-LOCAL_REDIS_DB ?= 4
-
-export DATABASE_URL ?= $(LOCAL_DATABASE_URL)
-export BETTER_AUTH_SECRET ?= local-development-secret-change-me
-export BETTER_AUTH_URL ?= http://localhost:3000
-export NEXT_PUBLIC_APP_URL ?= http://localhost:3000
-export REDIS_HOST ?= $(LOCAL_REDIS_HOST)
-export REDIS_PORT ?= $(LOCAL_REDIS_PORT)
-export REDIS_PASSWORD ?= $(LOCAL_REDIS_PASSWORD)
-export REDIS_DB ?= $(LOCAL_REDIS_DB)
-export REDIS_TLS ?= false
+# Explicit environment > root .env.local > root .env. Never invent a database
+# or auth secret here: exported defaults override dotenv and hide existing data.
+DEV_ENV := node scripts/with-root-env.mjs --exec
 
 .PHONY: help dev-infra-up dev-migrate dev-frontend dev-backend dev test-go test-go-integration test
 
@@ -32,19 +20,18 @@ help:
 		'make test               运行 Go 单元测试和全仓 TypeScript 测试'
 
 dev-infra-up:
-	docker start fluxcode-local-postgres 2>/dev/null || true
-	docker start fluxmedia-local-redis 2>/dev/null || true
-	docker exec fluxcode-local-postgres pg_isready -U fluxcode -d fluxcode
-	docker exec fluxmedia-local-redis redis-cli -a "$${REDIS_PASSWORD}" --no-auth-warning ping
+	docker start fluxcode-local-postgres fluxmedia-local-redis
+	docker exec fluxcode-local-postgres pg_isready
+	$(DEV_ENV) sh -c 'REDISCLI_AUTH="$$REDIS_PASSWORD" exec docker exec --env REDISCLI_AUTH fluxmedia-local-redis redis-cli --no-auth-warning ping'
 
 dev-migrate: dev-infra-up
-	pnpm --filter @repo/database db:migrate
+	$(DEV_ENV) pnpm --filter @repo/database db:migrate
 
 dev-frontend: dev-infra-up
-	pnpm dev:web
+	$(DEV_ENV) pnpm dev:web
 
 dev-backend: dev-infra-up
-	cd $(GO_SERVICE) && GO_BACKEND_BIND='$(GO_BIND)' go run .
+	GO_BACKEND_BIND='$(GO_BIND)' $(DEV_ENV) go -C $(GO_SERVICE) run .
 
 dev: dev-migrate
 	@trap 'kill 0' INT TERM EXIT; \
@@ -56,7 +43,8 @@ test-go:
 	cd $(GO_SERVICE) && gofmt -w *.go && go vet ./... && go test -race ./... && go mod verify
 
 test-go-integration: dev-infra-up
-	cd $(GO_SERVICE) && REDIS_ADDR='$(LOCAL_REDIS_HOST):$(LOCAL_REDIS_PORT)' REDIS_PASSWORD='$(LOCAL_REDIS_PASSWORD)' go test -tags=integration ./...
+	$(DEV_ENV) sh -c 'REDIS_ADDR="$$REDIS_HOST:$${REDIS_PORT:-6379}" exec go -C $(GO_SERVICE) test -tags=integration ./...'
 
 test: test-go
+	node --test scripts/with-root-env.test.mjs
 	pnpm turbo test

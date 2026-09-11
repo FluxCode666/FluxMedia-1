@@ -94,6 +94,8 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: ./.github/actions/setup
+      - name: Test development environment selection
+        run: node --test scripts/with-root-env.test.mjs
       - run: pnpm turbo test
 
   # 统一媒体号池与媒体 MQ 的真实 PostgreSQL/Redis 门禁独立于 DB-free 单测运行。

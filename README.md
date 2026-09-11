@@ -28,20 +28,20 @@ deploy/                         生产 Compose、Nginx 与部署脚本
 
 ## 本地开发
 
-需要 Node.js 20+、pnpm 10、PostgreSQL 16。复制 `.env.example` 为
-`.env.local`，至少配置 `DATABASE_URL`、`BETTER_AUTH_SECRET` 与
-`BETTER_AUTH_URL`，然后执行：
+需要 Node.js 20+、pnpm 10、Go 以及 PostgreSQL/Redis。已有本地配置时继续使用原来的
+`.env` / `.env.local`，不要替换数据库名或认证密钥。新环境可参考 `.env.example`，配置
+`DATABASE_URL`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 与 `REDIS_*`。
+启动命令的配置优先级为：显式环境变量 > 根目录 `.env.local` > 根目录 `.env`。
 
 ```bash
 pnpm install
-pnpm --filter @repo/database db:push
-pnpm dev
 ```
 
-开发环境启动（backend entrypoint 会执行迁移）：
+开发环境启动（两个终端分别启动前后端；只有需要更新表结构时才执行迁移）：
 
 ```bash
 make dev-infra-up
+make dev-migrate       # 需要迁移时执行，使用相同的数据库配置
 make dev-backend       # Go backend :8080
 make dev-frontend      # Next.js 页面 :3000
 ```

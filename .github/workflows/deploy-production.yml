@@ -123,6 +123,9 @@ jobs:
       - name: Test
         run: pnpm turbo test
 
+      - name: Test development environment selection
+        run: node --test scripts/with-root-env.test.mjs
+
       - name: Migrate moderation integration database
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test

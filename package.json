@@ -7,7 +7,7 @@
     "prebuild": "pnpm cache:trim",
     "build": "turbo build",
     "pretest": "pnpm cache:trim",
-    "test": "node --test scripts/turbo-cache.test.mjs && turbo test",
+    "test": "node --test scripts/turbo-cache.test.mjs scripts/with-root-env.test.mjs && turbo test",
     "pretypecheck": "pnpm cache:trim",
     "typecheck": "turbo typecheck",
     "prelint": "pnpm cache:trim",
