@@ -7,11 +7,9 @@
  */
 
 import { Coins } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { Badge } from "@repo/ui/components/badge";
-import { getMyCreditsBalance } from "../actions";
 import { formatCredits } from "../format";
 
 /**
@@ -23,14 +21,29 @@ import { formatCredits } from "../format";
  * - 支持 Tooltip 显示详情
  */
 export function CreditBalanceBadge() {
-  const { execute, result, isPending } = useAction(getMyCreditsBalance);
+  const [balance, setBalance] = useState(0);
+  const [isPending, setIsPending] = useState(true);
 
-  // 组件挂载时获取余额
   useEffect(() => {
-    execute();
-  }, [execute]);
-
-  const balance = result.data?.balance ?? 0;
+    let active = true;
+    fetch("/api/go/api/user/credits", {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("credits request failed");
+        const payload = (await response.json()) as { data?: { balance?: number } };
+        if (active) setBalance(payload.data?.balance ?? 0);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setIsPending(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 加载状态
   if (isPending) {

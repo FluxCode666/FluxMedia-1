@@ -66,6 +66,7 @@ services:
       #   否则登录回调/Cookie 域不匹配,超管也进不去。
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填:会话签名密钥,未设置将无法登录}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL 必填:须为站点公网访问地址(如 https://your-domain),否则登录失败}
+      GO_BACKEND_URL: ${GO_BACKEND_URL:-http://backend:8080}
       LOCAL_STORAGE_PATH: /app/storage
     expose:
       - "3000"

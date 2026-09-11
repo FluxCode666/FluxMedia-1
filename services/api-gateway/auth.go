@@ -397,20 +397,94 @@ func (b *backend) handleUpdateUser(w http.ResponseWriter, r *http.Request) error
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	if in.Name != nil && (utf8.RuneCountInString(*in.Name) < 1 || utf8.RuneCountInString(*in.Name) > 100) {
-		return invalid("名称长度应为 1–100 个字符")
+	if in.Name != nil && (utf8.RuneCountInString(strings.TrimSpace(*in.Name)) < 2 || utf8.RuneCountInString(*in.Name) > 50) {
+		return invalid("名称长度应为 2–50 个字符")
 	}
 	if in.Image != nil {
-		u, err := url.Parse(*in.Image)
-		if len(*in.Image) > 4096 || err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		// Avatar values are storage keys (for example avatars/<user-id>/file.webp)
+		// in the existing database contract. Absolute URLs remain accepted for
+		// compatibility with older records, but arbitrary schemes are rejected.
+		image := strings.TrimSpace(*in.Image)
+		u, err := url.Parse(image)
+		if len(image) > 4096 || err != nil || (u.IsAbs() && u.Scheme != "https" && u.Scheme != "http") || (!u.IsAbs() && (image == "" || strings.ContainsAny(image, "\r\n\\"))) {
 			return invalid("头像地址无效")
 		}
+		in.Image = &image
 	}
 	_, err = b.db.Exec(r.Context(), `UPDATE "user" SET name=COALESCE($2,name),image=COALESCE($3,image),updated_at=now() WHERE id=$1`, s.User.ID, in.Name, in.Image)
 	if err != nil {
 		return err
 	}
 	writeJSON(w, 200, map[string]bool{"status": true})
+	return nil
+}
+
+func (b *backend) handleUpdateTimeZone(w http.ResponseWriter, r *http.Request) error {
+	noStore(w)
+	if err := b.checkOrigin(r); err != nil {
+		return err
+	}
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		TimeZone *string `json:"timeZone"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	var value *string
+	if in.TimeZone != nil {
+		trimmed := strings.TrimSpace(*in.TimeZone)
+		if trimmed == "" {
+			return invalid("时区不能为空")
+		}
+		if len(trimmed) > 100 {
+			return invalid("时区名称过长")
+		}
+		if _, err := time.LoadLocation(trimmed); err != nil {
+			return invalid("无效的 IANA 时区")
+		}
+		value = &trimmed
+	}
+	if _, err := b.db.Exec(r.Context(), `UPDATE "user" SET time_zone=$2,updated_at=now() WHERE id=$1`, s.User.ID, value); err != nil {
+		return err
+	}
+	defaultZone, err := b.settingString(r.Context(), "APP_TIME_ZONE", "UTC")
+	if err != nil {
+		return err
+	}
+	if _, err := time.LoadLocation(defaultZone); err != nil {
+		defaultZone = "UTC"
+	}
+	effective := defaultZone
+	if value != nil {
+		effective = *value
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"timeZone": value, "defaultTimeZone": defaultZone, "effectiveTimeZone": effective,
+	}})
+	return nil
+}
+
+func (b *backend) handleMyCreditsBalance(w http.ResponseWriter, r *http.Request) error {
+	noStore(w)
+	if err := b.checkOrigin(r); err != nil {
+		return err
+	}
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	var balance int64
+	err = b.db.QueryRow(r.Context(), `SELECT COALESCE(balance, 0) FROM credits_balance WHERE user_id=$1`, s.User.ID).Scan(&balance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		balance = 0
+	} else if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"balance": balance}})
 	return nil
 }
 func (b *backend) handleChangePassword(w http.ResponseWriter, r *http.Request) error {
@@ -545,6 +619,8 @@ func (b *backend) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/sign-in/email", b.endpoint(b.handleSignIn))
 	mux.HandleFunc("POST /api/auth/sign-out", b.endpoint(b.handleSignOut))
 	mux.HandleFunc("POST /api/auth/update-user", b.endpoint(b.handleUpdateUser))
+	mux.HandleFunc("POST /api/user/time-zone", b.endpoint(b.handleUpdateTimeZone))
+	mux.HandleFunc("GET /api/user/credits", b.endpoint(b.handleMyCreditsBalance))
 	mux.HandleFunc("POST /api/auth/change-password", b.endpoint(b.handleChangePassword))
 	mux.HandleFunc("GET /api/auth/list-sessions", b.endpoint(b.handleListSessions))
 	for _, path := range []string{"revoke-session", "revoke-sessions", "revoke-other-sessions"} {

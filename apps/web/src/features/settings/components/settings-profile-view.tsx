@@ -41,16 +41,13 @@ import {
 import { Camera, Loader2 } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
+import { useJsonAction } from "@repo/shared/http/use-json-action";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import type { z } from "zod";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
-import {
-  updateProfileAction,
-  updateTimeZoneAction,
-} from "@/features/settings/actions";
+import { requestGoJson } from "@/lib/go-backend-client";
 import { updateProfileSchema } from "@/features/settings/schemas";
 import { usePathname, useRouter } from "@/i18n/routing";
 
@@ -176,8 +173,13 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
     execute: executeUpdateProfile,
     executeAsync: executeUpdateProfileAsync,
     isPending,
-  } = useAction(
-    updateProfileAction,
+  } = useJsonAction(
+    async (input: FormValues) => ({
+      data: await requestGoJson<{ status: boolean }>("/api/auth/update-user", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }).then(() => ({ message: "资料更新成功" })),
+    }),
     {
       onSuccess: ({ data, input }) => {
         // 头像上传有自己的成功提示；这里只提示资料表单保存，避免重复提示。
@@ -198,7 +200,16 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
   );
 
   const { execute: executeUpdateTimeZone, isPending: isUpdatingTimeZone } =
-    useAction(updateTimeZoneAction, {
+    useJsonAction(async (input: { timeZone: string | null }) => ({
+      data: await requestGoJson<{
+        timeZone: string | null;
+        defaultTimeZone: string;
+        effectiveTimeZone: string;
+      }>("/api/user/time-zone", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    }), {
       onSuccess: ({ data }) => {
         setSelectedTimeZone(data?.timeZone ?? INHERIT_TIME_ZONE_VALUE);
         toast.success(t("timeZone.saved"));
