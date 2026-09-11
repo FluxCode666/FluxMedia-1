@@ -1,4 +1,4 @@
-# FluxMedia 生产 Compose：运行 Next.js 主服务。
+# FluxMedia 生产 Compose：运行 Go 网关与 Next.js 业务服务。
 # PostgreSQL、Redis 与其他可选上游均为外部依赖。
 name: fluxmedia
 
@@ -53,8 +53,8 @@ services:
       API_UPSTREAM_SCRIPT_STACK_LIMIT_KB: ${API_UPSTREAM_SCRIPT_STACK_LIMIT_KB:-512}
       MEDIA_IMAGE_WORKER_CONCURRENCY: ${MEDIA_IMAGE_WORKER_CONCURRENCY:-4}
       MEDIA_VIDEO_WORKER_CONCURRENCY: ${MEDIA_VIDEO_WORKER_CONCURRENCY:-4}
-    ports:
-      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    expose:
+      - "3000"
     volumes:
       - /root/docker-data/fluxmedia:/app/storage
     healthcheck:
@@ -76,6 +76,34 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+
+  # Go 后端网关是生产公网入口；尚未迁移的业务路由转发到内部 web。
+  api-gateway:
+    image: ${FLUXMEDIA_GATEWAY_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-api-gateway}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    restart: unless-stopped
+    init: true
+    networks:
+      - infra
+    environment:
+      GO_BACKEND_BIND: :8080
+      GO_BACKEND_UPSTREAM_URL: http://web:3000
+      GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
+      GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
+      GO_BACKEND_READ_TIMEOUT_MS: ${GO_BACKEND_READ_TIMEOUT_MS:-30000}
+      GO_BACKEND_IDLE_TIMEOUT_MS: ${GO_BACKEND_IDLE_TIMEOUT_MS:-75000}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3001}:8080"
+    depends_on:
+      web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/api-gateway", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

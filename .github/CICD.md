@@ -24,7 +24,7 @@ main 或匹配版本 tag
        │
        └─ 手动 Deploy Production
              ├─ Quality gate
-             ├─ GHCR：web + migrate
+             ├─ GHCR：web + migrate + Go api-gateway
              └─ production Environment 审批（如已配置）→ SSH 部署
 ```
 
@@ -38,7 +38,7 @@ main 或匹配版本 tag
 | `.github/workflows/ci.yml` | PR 与手动 CI 门禁；push 到 `main` 不触发 |
 | `.github/workflows/deploy-production.yml` | 生产质量门、镜像发布和 SSH 部署 |
 | `.github/actions/setup/action.yml` | 统一 Node.js 22、pnpm 10 与冻结依赖安装 |
-| `deploy/docker-compose.yml` | 生产 `web` 与维护迁移服务 |
+| `deploy/docker-compose.yml` | 生产 Go `api-gateway`、内部 `web` 与维护迁移服务 |
 | `deploy/.env.example` | 生产服务器 `.env` 模板，不包含真实机密 |
 | `deploy/README.md` | 服务器初始化、Redis、备份、Nginx 和迁移操作手册 |
 | `docs/CI-CD.md` | CI/CD 设计摘要和维护窗口契约 |
@@ -92,7 +92,7 @@ pnpm --filter @repo/web build
 3. 运行部署脚本测试和数据库发布门禁。
 4. 运行 Fumadocs source 生成、lint、typecheck、全仓测试和集成测试。
 5. 构建 Web standalone，执行 API upstream worker 检查与 smoke test。
-6. 使用 Docker Buildx 构建并推送 Web 与 migrate 镜像。
+6. 使用 Docker Buildx 构建并推送 Web、migrate 与 Go api-gateway 镜像。
 
 ### 4.3 GHCR 镜像
 
@@ -100,6 +100,7 @@ pnpm --filter @repo/web build
 |---|---|
 | Web | `ghcr.io/fluxcode666/fluxmedia-1-web:<version>` |
 | 数据库迁移 | `ghcr.io/fluxcode666/fluxmedia-1-migrate:<version>` |
+| Go API 网关 | `ghcr.io/fluxcode666/fluxmedia-1-api-gateway:<version>` |
 
 每个镜像同时推送 `<version>` 和 `latest` 两个 tag，平台为 `linux/amd64`。构建端使用
 GitHub 自动提供的 `GITHUB_TOKEN` 推送；目标服务器拉取私有镜像时使用 `GHCR_PAT`。

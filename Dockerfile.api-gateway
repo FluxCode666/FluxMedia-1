@@ -1,0 +1,15 @@
+# FluxMedia Go API 网关镜像。
+# 网关是无 CGO 的静态二进制，负责公网 HTTP 入口；业务上游由同网络的 web 服务提供。
+FROM golang:1.24-bookworm AS builder
+WORKDIR /src
+COPY services/api-gateway/go.mod ./services/api-gateway/go.mod
+COPY services/api-gateway/go.sum ./services/api-gateway/go.sum
+COPY services/api-gateway/*.go ./services/api-gateway/
+WORKDIR /src/services/api-gateway
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/api-gateway .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=builder /out/api-gateway /api-gateway
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/api-gateway"]

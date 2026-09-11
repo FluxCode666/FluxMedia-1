@@ -1,7 +1,10 @@
 # FluxMedia
 
 FluxMedia 是面向图片与视频生成业务的全栈平台。项目使用 Turborepo、Next.js、
-React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
+React、TypeScript、Go、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
+
+当前 Go 服务 `services/api-gateway` 是统一 HTTP 入口，负责请求边界、健康检查和反向
+代理；尚未迁移的业务逻辑暂由 Next.js `web` 服务承载，按路由逐步迁移。
 
 ## 核心能力
 
@@ -16,6 +19,7 @@ React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI �
 
 ```text
 apps/web/                       Next.js 主应用、管理后台与媒体路由
+services/api-gateway/           Go HTTP 网关与渐进迁移入口
 packages/database/              Drizzle schema、迁移与数据库连接
 packages/shared/                UOL、积分、存储、审核等共享业务逻辑
 packages/ui/                    共享 UI 组件

@@ -84,8 +84,8 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填:会话签名密钥,未设置将无法登录}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL 必填:须为站点公网访问地址(如 https://your-domain),否则登录失败}
       LOCAL_STORAGE_PATH: /app/storage
-    ports:
-      - "${WEB_PORT:-3000}:3000"
+    expose:
+      - "3000"
     volumes:
       - app-storage:/app/storage
     depends_on:
@@ -95,6 +95,31 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # Go 后端网关承载统一 HTTP 入口；尚未迁移的业务路由转发到 Next.js web。
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-gateway
+    restart: unless-stopped
+    environment:
+      GO_BACKEND_BIND: :8080
+      GO_BACKEND_UPSTREAM_URL: http://web:3000
+      GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
+      GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
+    ports:
+      - "${GO_BACKEND_PORT:-3000}:8080"
+    depends_on:
+      web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/api-gateway", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
 
   # 影子流量 relay 默认不启动。启用后，调用方把明确允许的内网 JSON 请求发给它；
   # relay 同步转发生产端，异步投递 A/B 评估端。两个目标与密钥均由部署环境固定配置。
