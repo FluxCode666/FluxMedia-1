@@ -25,7 +25,7 @@ dev-infra-up:
 	$(DEV_ENV) sh -c 'REDISCLI_AUTH="$$REDIS_PASSWORD" exec docker exec --env REDISCLI_AUTH fluxmedia-local-redis redis-cli --no-auth-warning ping'
 
 dev-migrate: dev-infra-up
-	$(DEV_ENV) pnpm --filter @repo/database db:migrate
+	$(DEV_ENV) go -C $(GO_SERVICE) run . --migrate
 
 dev-frontend: dev-infra-up
 	$(DEV_ENV) pnpm dev:web
@@ -43,7 +43,7 @@ test-go:
 	cd $(GO_SERVICE) && gofmt -w *.go && go vet ./... && go test -race ./... && go mod verify
 
 test-go-integration: dev-infra-up
-	$(DEV_ENV) sh -c 'REDIS_ADDR="$$REDIS_HOST:$${REDIS_PORT:-6379}" exec go -C $(GO_SERVICE) test -tags=integration ./...'
+	$(DEV_ENV) node scripts/test-go-integration.mjs
 
 test: test-go
 	node --test scripts/with-root-env.test.mjs

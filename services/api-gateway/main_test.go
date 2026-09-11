@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testEnv(values map[string]string) func(string) (string, bool) {
@@ -18,9 +19,10 @@ func testEnv(values map[string]string) func(string) (string, bool) {
 
 func validEnv(extra map[string]string) map[string]string {
 	values := map[string]string{
-		"DATABASE_URL":   "postgresql://user:pass@localhost:5432/db",
-		"REDIS_HOST":     "localhost",
-		"REDIS_PASSWORD": "secret",
+		"BETTER_AUTH_SECRET": "test-auth-secret",
+		"DATABASE_URL":       "postgresql://user:pass@localhost:5432/db",
+		"REDIS_HOST":         "localhost",
+		"REDIS_PASSWORD":     "secret",
 	}
 	for key, value := range extra {
 		values[key] = value
@@ -29,7 +31,7 @@ func validEnv(extra map[string]string) map[string]string {
 }
 
 func TestLoadConfigRequiresBackendDependencies(t *testing.T) {
-	for _, key := range []string{"DATABASE_URL", "REDIS_HOST", "REDIS_PASSWORD"} {
+	for _, key := range []string{"DATABASE_URL", "REDIS_HOST", "REDIS_PASSWORD", "BETTER_AUTH_SECRET"} {
 		values := validEnv(nil)
 		delete(values, key)
 		if _, err := loadConfig(testEnv(values)); err == nil || !strings.Contains(err.Error(), key) {
@@ -84,7 +86,7 @@ func TestBackendHealthAndExplicitUnimplementedRoute(t *testing.T) {
 	}
 
 	route := httptest.NewRecorder()
-	handler.ServeHTTP(route, httptest.NewRequest(http.MethodGet, "http://backend.local/api/v1/models", nil))
+	handler.ServeHTTP(route, httptest.NewRequest(http.MethodGet, "http://backend.local/api/not-implemented", nil))
 	if route.Code != http.StatusNotImplemented || !strings.Contains(route.Body.String(), "route_not_migrated") {
 		t.Fatalf("unexpected unimplemented response: %d %s", route.Code, route.Body.String())
 	}
@@ -94,5 +96,28 @@ func TestBackendHealthAndExplicitUnimplementedRoute(t *testing.T) {
 	handler.ServeHTTP(oversized, request)
 	if oversized.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body status = %d", oversized.Code)
+	}
+}
+
+func TestHealthcheckRequiresAListeningReadyServer(t *testing.T) {
+	ready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" {
+			t.Error("healthcheck used wrong path")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	cfg := config{bind: strings.TrimPrefix(ready.URL, "http://"), readyTimeout: time.Second}
+	if err := runHealthcheck(cfg); err != nil {
+		t.Fatal(err)
+	}
+	ready.Close()
+	if err := runHealthcheck(cfg); err == nil {
+		t.Fatal("healthcheck passed without a listening backend")
+	}
+	unready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer unready.Close()
+	cfg.bind = strings.TrimPrefix(unready.URL, "http://")
+	if err := runHealthcheck(cfg); err == nil {
+		t.Fatal("healthcheck passed while backend unready")
 	}
 }

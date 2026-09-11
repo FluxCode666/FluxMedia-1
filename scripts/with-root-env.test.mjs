@@ -41,6 +41,10 @@ function fixture(t, values = original) {
     join(repository, "scripts/with-root-env.mjs"),
     join(root, "scripts/with-root-env.mjs")
   );
+  copyFileSync(
+    join(repository, "scripts/test-go-integration.mjs"),
+    join(root, "scripts/test-go-integration.mjs")
+  );
   symlinkSync(
     join(repository, "node_modules"),
     join(root, "node_modules"),

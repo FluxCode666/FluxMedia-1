@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -42,25 +44,41 @@ const (
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 type config struct {
-	bind         string
-	databaseURL  string
-	redisOptions *redis.Options
-	maxBodyBytes int64
-	readHeader   time.Duration
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	idleTimeout  time.Duration
-	readyTimeout time.Duration
+	bind           string
+	databaseURL    string
+	authSecret     string
+	authURL        string
+	trustedOrigins []string
+	redisOptions   *redis.Options
+	maxBodyBytes   int64
+	readHeader     time.Duration
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	idleTimeout    time.Duration
+	readyTimeout   time.Duration
 }
 
 type backend struct {
-	config config
-	db     *pgxpool.Pool
-	redis  *redis.Client
-	logger *slog.Logger
+	mailDelivery    func(context.Context, outgoingMail) error
+	oauthHTTPClient *http.Client
+	config          config
+	db              *pgxpool.Pool
+	redis           *redis.Client
+	logger          *slog.Logger
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--route-audit" {
+		file := "../../docs/go-migration-inventory.json"
+		if len(os.Args) > 2 {
+			file = os.Args[2]
+		}
+		if err := auditRoutes(file); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, err := loadConfig(os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "backend configuration error: %v\n", err)
@@ -78,10 +96,25 @@ func main() {
 	defer cancel()
 	server, err := newBackend(ctx, cfg, slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "backend dependency initialization failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "backend dependency initialization failed; check PostgreSQL and Redis configuration")
 		os.Exit(1)
 	}
 	defer server.close()
+	if os.Getenv("GO_BACKEND_SKIP_MIGRATION") != "true" {
+		migrationCtx, migrationCancel := context.WithTimeout(ctx, 10*time.Minute)
+		count, migrationErr := runMigrations(migrationCtx, server.db, migrationDirectory())
+		migrationCancel()
+		if migrationErr != nil {
+			// SQL errors may contain credentials embedded in migration literals.
+			server.logger.Error("database migration failed; backend will not start")
+			server.close()
+			os.Exit(1)
+		}
+		server.logger.Info("database migrations completed", "applied", count)
+	}
+	if os.Getenv("GO_BACKEND_MIGRATE_ONLY") == "true" || (len(os.Args) > 1 && os.Args[1] == "--migrate") {
+		return
+	}
 
 	httpServer := &http.Server{
 		Addr:              cfg.bind,
@@ -119,6 +152,8 @@ func newBackend(ctx context.Context, cfg config, logger *slog.Logger) (*backend,
 	}
 	poolConfig.MaxConns = 10
 	poolConfig.MinConns = 1
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = "fluxmedia-go-backend"
+	poolConfig.ConnConfig.RuntimeParams["timezone"] = "UTC"
 	db, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create postgres pool: %w", err)
@@ -144,16 +179,39 @@ func (b *backend) close() {
 func runHealthcheck(cfg config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.readyTimeout)
 	defer cancel()
-	server, err := newBackend(ctx, cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	host, port, err := net.SplitHostPort(cfg.bind)
+	if err != nil {
+		return errors.New("invalid backend bind address")
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(host, port)+"/readyz", nil)
 	if err != nil {
 		return err
 	}
-	server.close()
+	response, err := (&http.Client{Timeout: cfg.readyTimeout}).Do(request)
+	if err != nil {
+		return errors.New("backend is not listening")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return errors.New("backend is not ready")
+	}
 	return nil
 }
 
 func loadConfig(getenv func(string) (string, bool)) (config, error) {
 	databaseURL := requiredString(getenv, "DATABASE_URL")
+	authSecret := requiredString(getenv, "BETTER_AUTH_SECRET")
+	if authSecret == "" {
+		return config{}, errors.New("BETTER_AUTH_SECRET must be configured")
+	}
+	authURL := getString(getenv, "BETTER_AUTH_URL", "http://localhost:3000")
+	parsedAuthURL, authURLError := url.Parse(authURL)
+	if authURLError != nil || parsedAuthURL.Host == "" || parsedAuthURL.User != nil || (parsedAuthURL.Scheme != "http" && parsedAuthURL.Scheme != "https") || parsedAuthURL.RawQuery != "" || parsedAuthURL.Fragment != "" || (parsedAuthURL.Path != "" && parsedAuthURL.Path != "/") {
+		return config{}, errors.New("BETTER_AUTH_URL must be a valid HTTP(S) origin")
+	}
 	if databaseURL == "" {
 		return config{}, errors.New("DATABASE_URL must be configured")
 	}
@@ -205,7 +263,9 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 	}
 
 	return config{
-		bind: getString(getenv, "GO_BACKEND_BIND", defaultBind), databaseURL: databaseURL,
+		authSecret: authSecret, authURL: strings.TrimRight(authURL, "/"),
+		trustedOrigins: strings.FieldsFunc(requiredString(getenv, "BETTER_AUTH_TRUSTED_ORIGINS"), func(r rune) bool { return r == ',' || r == ' ' }),
+		bind:           getString(getenv, "GO_BACKEND_BIND", defaultBind), databaseURL: databaseURL,
 		redisOptions: &redis.Options{
 			Addr: netJoinHostPort(redisHost, redisPort), Password: redisPassword,
 			Username: redisUsername,
@@ -231,11 +291,17 @@ func tlsConfig(enabled bool) *tls.Config {
 }
 
 func (b *backend) handler() http.Handler {
+	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, b.router()))
+}
+
+func (b *backend) router() *http.ServeMux {
 	mux := http.NewServeMux()
+	b.registerAuth(mux)
+	b.registerExternalAPI(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)
 	mux.HandleFunc("/", b.handleNotMigrated)
-	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, mux))
+	return mux
 }
 
 func (b *backend) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -260,7 +326,7 @@ func (b *backend) handleNotMigrated(w http.ResponseWriter, r *http.Request) {
 	// Returning an explicit response prevents an accidental fallback to Next.js.
 	// Each route is implemented in Go before it is registered here.
 	writeJSONError(w, http.StatusNotImplemented, "route_not_migrated", "This backend route has not been implemented in Go yet.")
-	b.logger.WarnContext(r.Context(), "unimplemented backend route", "method", r.Method, "path", r.URL.Path, "request_id", requestID(r))
+	b.logger.WarnContext(r.Context(), "unimplemented backend route", "method", r.Method, "path", safeLogPath(r.URL.Path), "request_id", requestID(r))
 }
 
 func requiredString(getenv func(string) (string, bool), key string) string {
@@ -315,7 +381,7 @@ func withRequestID(logger *slog.Logger, next http.Handler) http.Handler {
 			r.Header.Set(requestIDHeader, id)
 		}
 		w.Header().Set(requestIDHeader, id)
-		logger.InfoContext(r.Context(), "http request", "method", r.Method, "path", r.URL.Path, "request_id", id)
+		logger.InfoContext(r.Context(), "http request", "method", r.Method, "path", safeLogPath(r.URL.Path), "request_id", id)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -329,6 +395,13 @@ func withBodyLimit(maxBytes int64, next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func safeLogPath(path string) string {
+	if strings.HasPrefix(path, "/api/auth/reset-password/") {
+		return "/api/auth/reset-password/[token]"
+	}
+	return path
 }
 
 func newRequestID() string {

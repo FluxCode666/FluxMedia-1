@@ -85,8 +85,12 @@ services:
       context: .
       dockerfile: Dockerfile.api-gateway
     restart: unless-stopped
+    env_file:
+      - ${GPT2IMAGE_ENV_FILE:-.env}
     environment:
       GO_BACKEND_BIND: :8080
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-gpt2image}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gpt2image}
       REDIS_HOST: redis
       REDIS_PORT: "6379"

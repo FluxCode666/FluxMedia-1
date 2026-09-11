@@ -26,9 +26,16 @@ packages/ui/                    共享 UI 组件
 deploy/                         生产 Compose、Nginx 与部署脚本
 ```
 
+## Go 迁移当前状态
+
+**全量迁移尚未完成，当前分支不能作为 Go 后端最终验收或生产发布版本。**
+Go 已有认证主流程、外部积分/模型查询和原生 SQL 迁移；媒体生成、后台任务、管理端
+操作、支付、存储等仍需迁移。前端仍在执行原 Next.js 业务。完整清单与验证记录见
+[迁移契约](docs/go-backend-migration.md)，生产发布会检查实际 Go 路由覆盖并阻止未完成的切换。
+
 ## 本地开发
 
-需要 Node.js 20+、pnpm 10、Go 以及 PostgreSQL/Redis。已有本地配置时继续使用原来的
+需要 Node.js 20+、pnpm 10、Go 1.26.6+ 以及 PostgreSQL/Redis。已有本地配置时继续使用原来的
 `.env` / `.env.local`，不要替换数据库名或认证密钥。新环境可参考 `.env.example`，配置
 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 与 `REDIS_*`。
 启动命令的配置优先级为：显式环境变量 > 根目录 `.env.local` > 根目录 `.env`。
@@ -37,11 +44,11 @@ deploy/                         生产 Compose、Nginx 与部署脚本
 pnpm install
 ```
 
-开发环境启动（两个终端分别启动前后端；只有需要更新表结构时才执行迁移）：
+开发环境启动（两个终端分别启动前后端；Go 启动时会先执行未应用的 SQL 迁移）：
 
 ```bash
 make dev-infra-up
-make dev-migrate       # 需要迁移时执行，使用相同的数据库配置
+make dev-migrate       # 可选：仅执行迁移后退出，使用相同的数据库配置
 make dev-backend       # Go backend :8080
 make dev-frontend      # Next.js 页面 :3000
 ```

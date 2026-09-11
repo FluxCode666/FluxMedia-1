@@ -68,8 +68,12 @@ services:
     init: true
     networks:
       - infra
+    env_file:
+      - .env
     environment:
       GO_BACKEND_BIND: :8080
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://media.flux-code.cc}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST 必填}
       REDIS_PORT: ${REDIS_PORT:-6379}
