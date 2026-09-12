@@ -31,6 +31,49 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/analytics/data-dashboard", b.endpoint(b.handleDataDashboard))
 	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
 	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
+	mux.HandleFunc("GET /api/analytics/summary", b.endpoint(b.handleAnalyticsSummary))
+}
+
+// handleAnalyticsSummary serves the dashboard's immutable usage summary directly from
+// the Go read models. The session user is the only accepted scope.
+func (b *backend) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	asOf := time.Now().UTC()
+	start := asOf.Add(-24 * time.Hour)
+	var image24, video24 int
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(image_count),0),COALESCE(sum(video_seconds),0) FROM user_output_usage_event WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, start, asOf).Scan(&image24, &video24); err != nil {
+		return err
+	}
+	var imageLife, videoLife int
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(image_count),0),COALESCE(sum(video_seconds),0) FROM user_output_usage_event WHERE user_id=$1`, s.User.ID).Scan(&imageLife, &videoLife); err != nil {
+		return err
+	}
+	var credit24, creditLife float64
+	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, start, asOf).Scan(&credit24)
+	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1`, s.User.ID).Scan(&creditLife)
+	rows, err := b.db.Query(r.Context(), `SELECT COALESCE(NULLIF(TRIM(g.model),''),'unknown'),count(*) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id WHERE e.user_id=$1 AND e.operation_created_at >= $2 AND e.operation_created_at < $3 GROUP BY 1`, s.User.ID, start, asOf)
+	if err != nil {
+		return err
+	}
+	models := []any{}
+	total := 0
+	for rows.Next() {
+		var m string
+		var n int
+		if err = rows.Scan(&m, &n); err != nil {
+			rows.Close()
+			return err
+		}
+		models = append(models, map[string]any{"model": m, "taskCount": n})
+		total += n
+	}
+	rows.Close()
+	dist := map[string]any{"models": models, "totalTasks": total}
+	writeJSON(w, 200, map[string]any{"asOf": asOf.Format(time.RFC3339Nano), "timeZone": "UTC", "last24HoursRange": map[string]any{"start": start.Format(time.RFC3339Nano), "end": asOf.Format(time.RFC3339Nano)}, "last24Hours": map[string]any{"imageCount": image24, "videoSeconds": video24, "creditsConsumed": credit24}, "modelDistribution": dist, "lifetime": map[string]any{"imageCount": imageLife, "videoSeconds": videoLife, "creditsConsumed": creditLife}})
+	return nil
 }
 
 func (b *backend) handleTicketCreate(w http.ResponseWriter, r *http.Request) error {

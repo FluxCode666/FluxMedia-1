@@ -15,7 +15,7 @@ import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { WalletBalanceSnapshot } from "@repo/shared/credits/wallet-contract";
 import { logError } from "@repo/shared/logger";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
-import { invokeOperation } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
@@ -94,11 +94,8 @@ async function loadSummaryThroughUol(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<UsageSummaryOutput> {
-  return invokeOperation<UsageSummaryOutput>(
-    "analytics.getMyUsageSummary",
-    {},
-    { type: "user", userId: input.userId, role: input.role }
-  );
+  void input;
+  return requestGoJson<UsageSummaryOutput>("/api/analytics/summary");
 }
 
 /** 通过 Credits UOL 读取本人当前余额，身份只来自服务端 Principal。 */
@@ -106,11 +103,8 @@ async function loadBalanceThroughUol(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<WalletBalanceSnapshot> {
-  return invokeOperation<WalletBalanceSnapshot>(
-    "credits.getMyBalance",
-    {},
-    { type: "user", userId: input.userId, role: input.role }
-  );
+  void input;
+  return requestGoJson<WalletBalanceSnapshot>("/api/credits/balance");
 }
 
 /**
