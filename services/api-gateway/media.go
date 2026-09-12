@@ -63,6 +63,7 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/upload/presigned", b.endpoint(b.handleUploadPresigned))
 	mux.HandleFunc("GET /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageGet))
 	mux.HandleFunc("PUT /api/storage/{bucket}/{key...}", b.endpoint(b.handleStoragePut))
+	mux.HandleFunc("POST /api/storage/delete", b.endpoint(b.handleStorageDelete))
 	mux.HandleFunc("GET /api/jobs/credits/expire", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("GET /api/jobs/images/expire-pending", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("POST /api/jobs/credits/expire", b.endpoint(b.handleCreditsExpireJob))
@@ -654,6 +655,35 @@ func (b *backend) handleStoragePut(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (b *backend) handleStorageDelete(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Key    string `json:"key"`
+		Bucket string `json:"bucket"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	if in.Bucket == "" {
+		in.Bucket = "generations"
+	}
+	if in.Bucket != "generations" || in.Key == "" || filepath.IsAbs(in.Key) || filepath.Clean(in.Key) != in.Key || strings.Contains(in.Key, "..") || !strings.HasPrefix(in.Key, "uploads/"+s.User.ID+"/") {
+		return forbidden()
+	}
+	err = os.Remove(filepath.Join(b.config.storagePath, in.Bucket, filepath.FromSlash(in.Key)))
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": in.Key})
 	return nil
 }
 func urlPathEscape(value string) string {
