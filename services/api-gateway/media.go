@@ -259,14 +259,71 @@ func (b *backend) imageStatus(r *http.Request, id string, userID string) (map[st
 	if status == "failed" {
 		public = "failed"
 	}
-	extra := map[string]any{"generation_id": generationID, "generationId": generationID}
+	extra := map[string]any{"generation_id": generationID, "generationId": generationID, "task_id": taskID, "taskId": taskID}
 	if completed != nil {
 		extra["completed_at"] = completed.UTC().Format(time.RFC3339Nano)
 	}
 	if taskErr != nil {
 		extra["error"] = map[string]any{"message": *taskErr}
 	}
-	return taskResponse(taskID, model, public, *created, extra), nil
+	// The first-party browser contract includes the generation projection used by
+	// the result panel. Keep this enrichment in Go so polling never falls back to
+	// the old Next.js database route.
+	var promptValue, sizeValue, revisedPrompt, storageKey, storageBucket string
+	var metadataRaw []byte
+	var generationCreated time.Time
+	var generationCompleted *time.Time
+	var generationError *string
+	if err := b.db.QueryRow(r.Context(), `SELECT prompt,COALESCE(size,''),COALESCE(revised_prompt,''),COALESCE(storage_key,''),COALESCE(storage_bucket,'generations'),metadata,created_at,completed_at,error FROM generation WHERE id=$1 AND user_id=$2`, generationID, userID).Scan(&promptValue, &sizeValue, &revisedPrompt, &storageKey, &storageBucket, &metadataRaw, &generationCreated, &generationCompleted, &generationError); err == nil {
+		if promptValue != "" {
+			extra["prompt"] = promptValue
+		}
+		if sizeValue != "" {
+			extra["size"] = sizeValue
+		}
+		if revisedPrompt != "" {
+			extra["revisedPrompt"] = revisedPrompt
+			extra["revised_prompt"] = revisedPrompt
+		}
+		if generationCreated.Unix() > 0 {
+			extra["createdAt"] = generationCreated.UTC().Format(time.RFC3339Nano)
+		}
+		if generationCompleted != nil {
+			extra["completedAt"] = generationCompleted.UTC().Format(time.RFC3339Nano)
+		}
+		if generationError != nil && *generationError != "" {
+			extra["error"] = *generationError
+		}
+		if storageKey != "" {
+			if storageBucket == "" {
+				storageBucket = "generations"
+			}
+			imageURL := "/api/storage/" + urlPathEscape(storageBucket) + "/" + urlPathEscape(storageKey)
+			extra["imageUrl"] = imageURL
+			extra["image_url"] = imageURL
+			extra["imageOutputs"] = []any{map[string]any{"generationId": generationID, "imageUrl": imageURL, "storageKey": storageKey, "storageBucket": storageBucket, "role": "final"}}
+		}
+		if len(metadataRaw) > 0 {
+			var metadata map[string]any
+			if json.Unmarshal(metadataRaw, &metadata) == nil {
+				if repaired, ok := metadata["promptRepairNotice"].(string); ok && repaired != "" {
+					extra["promptRepairNotice"] = repaired
+				}
+				if output, ok := metadata["outputImage"].(map[string]any); ok {
+					if outputs, ok := output["imageOutputs"].([]any); ok && len(outputs) > 0 {
+						extra["imageOutputs"] = outputs
+					}
+					if outputURL, ok := output["imageUrl"].(string); ok && outputURL != "" {
+						extra["imageUrl"] = outputURL
+					}
+				}
+			}
+		}
+	}
+	response := taskResponse(taskID, model, public, *created, extra)
+	response["generationId"] = generationID
+	response["generation_id"] = generationID
+	return response, nil
 }
 func (b *backend) handleImageStatus(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
@@ -376,6 +433,17 @@ func (b *backend) handleVideoCreateSession(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 	v["object"] = "video.generation"
+	// Match the first-party video task DTO consumed by VideoCreatePanel.
+	if taskID, ok := v["id"].(string); ok {
+		v["taskId"] = taskID
+		v["status"] = "queued"
+	}
+	duration := rawInt(body, "duration", "duration_seconds", "seconds")
+	unitPrice := 1.0
+	v["billing"] = map[string]any{"kind": "snapshot", "mode": "per_item", "unit": "item", "unitPrice": unitPrice, "durationSeconds": duration, "quotedCredits": unitPrice, "actualCredits": 0}
+	if ratio := rawString(body, "aspectRatio", "aspect_ratio"); ratio != "" {
+		v["aspectRatio"] = ratio
+	}
 	writeJSON(w, 202, v)
 	return nil
 }
@@ -396,6 +464,7 @@ func (b *backend) videoStatus(r *http.Request, id, userID string) (map[string]an
 		public = "processing"
 	}
 	extra := map[string]any{"duration": duration, "duration_seconds": duration, "aspect_ratio": ratio, "aspectRatio": ratio, "resolution": resolution}
+	extra["billing"] = map[string]any{"kind": "snapshot", "mode": "per_item", "unit": "item", "unitPrice": 1.0, "durationSeconds": duration, "quotedCredits": 1.0, "actualCredits": 0}
 	if taskErr != nil {
 		extra["error"] = map[string]any{"message": *taskErr}
 	}
@@ -403,6 +472,9 @@ func (b *backend) videoStatus(r *http.Request, id, userID string) (map[string]an
 		extra["completed_at"] = updated.UTC().Format(time.RFC3339Nano)
 	}
 	v := taskResponse(id, model, public, created, extra)
+	v["taskId"] = id
+	v["task_id"] = id
+	v["createdAt"] = created.UTC().Format(time.RFC3339Nano)
 	v["object"] = "video.generation"
 	return v, nil
 }
@@ -427,12 +499,35 @@ func (b *backend) handleVideoStatusSession(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
+	noStore(w)
 	writeJSON(w, 200, v)
 	return nil
 }
 func (b *backend) handleVideoCapabilities(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
-	writeJSON(w, 200, map[string]any{"object": "list", "data": videoModelIDs})
+	// Keep the first-party capability DTO in Go. The web panel validates this
+	// shape strictly and uses it to populate model, duration and billing controls.
+	items := make([]map[string]any, 0, len(videoModelIDs))
+	for _, model := range videoModelIDs {
+		items = append(items, map[string]any{
+			"model":        model,
+			"displayName":  model,
+			"durations":    []int{4, 8},
+			"aspectRatios": []string{"16:9", "9:16"},
+			"resolutions":  []string{"720p"},
+			"input": map[string]any{
+				"frames":                               "none",
+				"referenceImages":                      map[string]any{"maxCount": 0, "configurable": false},
+				"framesAndReferencesMutuallyExclusive": true,
+			},
+			"audio":               map[string]any{"supported": false, "defaultEnabled": false},
+			"configuredReachable": true,
+			"billing": []map[string]any{{
+				"kind": "current_quote", "resolution": "720p", "mode": "per_item", "unit": "item", "unitPrice": 1, "quoteToken": "go-" + model + "-720p",
+			}},
+		})
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "limits": map[string]any{"maxMediaInputCount": 256, "maxMediaInputBytes": 512 * 1024 * 1024}})
 	return nil
 }
 func (b *backend) handleVideoCapabilitiesSession(w http.ResponseWriter, r *http.Request) error {
