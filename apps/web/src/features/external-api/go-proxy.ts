@@ -1,4 +1,3 @@
-import type { NextRequest } from "next/server";
 
 /**
  * Forward the public OpenAI/Gemini compatible API to the Go gateway.
@@ -9,7 +8,7 @@ import type { NextRequest } from "next/server";
  * external clients do not need to know which process serves the endpoint.
  */
 export async function proxyExternalApi(
-  request: NextRequest,
+  request: Request,
   _context?: unknown
 ): Promise<Response> {
   const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(
