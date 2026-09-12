@@ -15,21 +15,15 @@ import {
   adminPaymentUserSearchInputSchema,
 } from "@repo/shared/payment/admin-contract";
 import { adminAction } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 
-import { ensureUolInitialized } from "@/server/uol-init";
 
 /** 读取指定日期范围或默认当前自然月的充值支付概览。 */
 export const getAdminPaymentOverviewAction = adminAction
   .metadata({ action: "payment.getAdminOverview" })
   .schema(adminPaymentOverviewInputSchema)
-  .action(async ({ parsedInput, ctx }): Promise<AdminPaymentOverviewOutput> => {
-    await ensureUolInitialized();
-    return invokeOperation<AdminPaymentOverviewOutput>(
-      "payment.getAdminOverview",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }): Promise<AdminPaymentOverviewOutput> => {
+    return requestGoJson<AdminPaymentOverviewOutput>("/api/admin/payment/overview", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 读取一页全站充值订单。 */
@@ -37,13 +31,8 @@ export const listAdminPaymentOrdersAction = adminAction
   .metadata({ action: "payment.listAdminOrders" })
   .schema(adminPaymentOrderListInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<AdminPaymentOrderListOutput> => {
-      await ensureUolInitialized();
-      return invokeOperation<AdminPaymentOrderListOutput>(
-        "payment.listAdminOrders",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
+    async ({ parsedInput }): Promise<AdminPaymentOrderListOutput> => {
+      return requestGoJson<AdminPaymentOrderListOutput>("/api/admin/payment/orders", { method: "POST", body: JSON.stringify(parsedInput) });
     }
   );
 
@@ -52,12 +41,7 @@ export const searchAdminPaymentOrderUsersAction = adminAction
   .metadata({ action: "payment.searchAdminOrderUsers" })
   .schema(adminPaymentUserSearchInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<AdminPaymentUserSearchOutput> => {
-      await ensureUolInitialized();
-      return invokeOperation<AdminPaymentUserSearchOutput>(
-        "payment.searchAdminOrderUsers",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
+    async ({ parsedInput }): Promise<AdminPaymentUserSearchOutput> => {
+      return requestGoJson<AdminPaymentUserSearchOutput>("/api/admin/payment/users/search", { method: "POST", body: JSON.stringify(parsedInput) });
     }
   );

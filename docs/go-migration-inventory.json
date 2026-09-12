@@ -602,18 +602,18 @@
       "source": "packages/shared/src/support/actions/admin-users.ts",
       "exports": [
         "getAllUsersAction",
-        "setUserModerationPolicyAction",
-        "setUserImageGenerationConcurrencyAction",
         "getUserDetailAction",
+        "createUserAction",
         "updateUserRoleAction",
+        "updateUserProfileAction",
+        "setUserPasswordAction",
         "banUserAction",
         "adminGrantCreditsAction",
         "adminAdjustCreditsAction",
         "setUserCreditsStatusAction",
         "setExternalApiKeyStatusAction",
-        "createUserAction",
-        "updateUserProfileAction",
-        "setUserPasswordAction"
+        "setUserModerationPolicyAction",
+        "setUserImageGenerationConcurrencyAction"
       ]
     },
     {
@@ -1629,7 +1629,6 @@
     "packages/shared/src/mcp/user-key-actions.ts",
     "packages/shared/src/payment/epay.ts",
     "packages/shared/src/referrals/service.ts",
-    "packages/shared/src/support/actions/admin-users.ts",
     "packages/shared/src/support/admin-user-list-service.ts",
     "packages/shared/src/support/ticket-list-service.ts",
     "packages/shared/src/system-settings/bootstrap.ts",

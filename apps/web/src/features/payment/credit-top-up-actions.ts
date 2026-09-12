@@ -11,11 +11,8 @@
  */
 import { z } from "zod";
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { protectedAction } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
 
-import { ensureUolInitialized } from "@/server/uol-init";
 import { requestGoJson } from "@/server/go-backend-client";
 
 const topUpCheckoutSchema = z.object({
@@ -46,10 +43,8 @@ export const getCreditTopUpOptionsAction = protectedAction
 export const createCreditTopUpCheckoutAction = protectedAction
   .metadata({ action: "credits.createTopUpCheckout" })
   .schema(topUpCheckoutSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    return invokeOperation<{
+  .action(async ({ parsedInput }) => {
+    return requestGoJson<{
       orderId: string;
       status: string;
       currency: string;
@@ -58,21 +53,15 @@ export const createCreditTopUpCheckoutAction = protectedAction
       creditsAmount: number;
       qrCode: string | null;
       expiresAt: string | null;
-    }>("credits.createTopUpCheckout", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role,
-    });
+    }>("/api/credits/top-up/checkout", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 查询当前用户自己的充值订单状态，用于二维码支付后的短轮询。 */
 export const getCreditTopUpOrderStatusAction = protectedAction
   .metadata({ action: "credits.getTopUpOrderStatus" })
   .schema(z.object({ orderId: z.string().min(1) }))
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    return invokeOperation<{
+  .action(async ({ parsedInput }) => {
+    return requestGoJson<{
       orderId: string;
       status: string;
       currency: string;
@@ -81,21 +70,15 @@ export const getCreditTopUpOrderStatusAction = protectedAction
       qrCode: string | null;
       expiresAt: string | null;
       fulfilledAt: string | null;
-    }>("credits.getTopUpOrderStatus", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role,
-    });
+    }>("/api/credits/top-up/order-status", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 查询当前用户自己的统一积分支付状态，供支付结果页轮询。 */
 export const getCreditPaymentStatusAction = protectedAction
   .metadata({ action: "credits.getPaymentStatus" })
   .schema(z.object({ orderId: z.string().min(1) }))
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    return invokeOperation<{
+  .action(async ({ parsedInput }) => {
+    return requestGoJson<{
       orderId: string;
       provider: "alipay_f2f" | "epay" | "creem";
       status:
@@ -110,9 +93,5 @@ export const getCreditPaymentStatusAction = protectedAction
       qrCode: string | null;
       expiresAt: string | null;
       fulfilledAt: string | null;
-    }>("credits.getPaymentStatus", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role,
-    });
+    }>("/api/credits/payment/status", { method: "POST", body: JSON.stringify(parsedInput) });
   });
