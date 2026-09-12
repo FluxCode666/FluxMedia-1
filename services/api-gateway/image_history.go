@@ -311,7 +311,7 @@ func (b *backend) handleAdminHistory(w http.ResponseWriter, r *http.Request) err
 	if e != nil {
 		return e
 	}
-	if s.User.Role != "admin" && s.User.Role != "owner" {
+	if s.User.Role != "observer_admin" && s.User.Role != "admin" && s.User.Role != "super_admin" && s.User.Role != "owner" {
 		return forbidden()
 	}
 	var in struct {
@@ -382,7 +382,7 @@ func (b *backend) handleAdminRequestSnapshot(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	if s.User.Role != "admin" && s.User.Role != "owner" {
+	if s.User.Role != "observer_admin" && s.User.Role != "admin" && s.User.Role != "super_admin" && s.User.Role != "owner" {
 		return forbidden()
 	}
 	var in struct {

@@ -36,6 +36,17 @@ func (b *backend) requireAdmin(r *http.Request, super bool) (*sessionResponse, e
 	return s, nil
 }
 
+func (b *backend) requireAdminViewer(r *http.Request) (*sessionResponse, error) {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return nil, err
+	}
+	if s.User.Role != "observer_admin" && s.User.Role != "admin" && s.User.Role != "super_admin" && s.User.Role != "owner" {
+		return nil, forbidden()
+	}
+	return s, nil
+}
+
 // handleVideoReconciliation preserves the removed endpoint's explicit contract.
 func (b *backend) handleVideoReconciliation(w http.ResponseWriter, r *http.Request) error {
 	return &apiError{http.StatusGone, "REMOVED", "视频人工核对入口已移除"}
@@ -261,7 +272,7 @@ func (b *backend) modelConfigurationRead(r *http.Request, canEdit bool) (map[str
 }
 
 func (b *backend) handleModelConfigurationRead(w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) error {
-	s, err := b.requireAdmin(r, false)
+	s, err := b.requireAdminViewer(r)
 	if err != nil {
 		return err
 	}

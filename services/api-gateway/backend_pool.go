@@ -30,7 +30,7 @@ func (b *backend) handleBackendPoolRead(w http.ResponseWriter, r *http.Request) 
 		return nil
 
 	case "/api/admin/image-backend/size-configs":
-		if _, err := b.requireAdmin(r, false); err != nil {
+		if _, err := b.requireAdminViewer(r); err != nil {
 			return err
 		}
 		rows, err := b.db.Query(r.Context(), `SELECT c.id,c.name,c.created_at,c.updated_at,m.resolution,m.aspect_ratio,m.size FROM image_size_config c LEFT JOIN image_size_config_mapping m ON m.config_id=c.id ORDER BY c.name ASC,c.id ASC,m.id ASC`)
