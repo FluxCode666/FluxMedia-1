@@ -317,8 +317,43 @@ func (b *backend) handleHistory(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		p := publicGeneration(v)
-		p["type"] = "image"
+		p["kind"] = "image"
+		p["status"] = historyStatusImage(v.Status)
+		p["creditDetails"] = nil
+		p["promptRepairNotice"] = nil
+		p["referenceImages"] = []any{}
+		p["processingDurationSeconds"] = processingSeconds(v.CreatedAt, v.CompletedAt)
 		out = append(out, p)
+	}
+	videoRows, videoErr := b.db.Query(r.Context(), `SELECT id,user_id,prompt,model,duration_seconds,aspect_ratio,resolution,status,storage_key,storage_bucket,credits_consumed,error,metadata,input_manifest,created_at,completed_at FROM video_generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, s.User.ID, lim)
+	if videoErr != nil {
+		return videoErr
+	}
+	defer videoRows.Close()
+	for videoRows.Next() {
+		var v generationDTO
+		var duration int
+		var ratio, resolution string
+		var manifest any
+		if err := videoRows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.Model, &duration, &ratio, &resolution, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &manifest, &v.CreatedAt, &v.CompletedAt); err != nil {
+			return err
+		}
+		row := adminVideoHistoryRecord(v, "", duration, ratio, resolution, manifest)
+		delete(row, "userId")
+		delete(row, "userEmail")
+		delete(row, "backendAccount")
+		delete(row, "submissionAttempts")
+		out = append(out, row)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left, _ := out[i].(map[string]any)
+		right, _ := out[j].(map[string]any)
+		lt, _ := left["createdAt"].(string)
+		rt, _ := right["createdAt"].(string)
+		return lt > rt
+	})
+	if len(out) > lim {
+		out = out[:lim]
 	}
 	writeJSON(w, 200, map[string]any{"records": out, "items": out, "nextCursor": nil, "totalCount": len(out)})
 	return rows.Err()
