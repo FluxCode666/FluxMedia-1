@@ -8,8 +8,8 @@ import {
   canManageUserPermissions,
   canViewGlobalUsageRecords,
   canViewImageBackendPool,
+  normalizeUserRole,
 } from "./auth/roles";
-import { normalizeUserRole } from "./auth/roles";
 import {
   DATABASE_QUERY_TIMEOUT_MESSAGE,
   DATABASE_QUERY_UNAVAILABLE_MESSAGE,
