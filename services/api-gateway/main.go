@@ -321,6 +321,7 @@ func (b *backend) router() *http.ServeMux {
 	b.registerNewsletterRoutes(mux)
 	b.registerSupportDashboardRoutes(mux)
 	b.registerAdminUserRoutes(mux)
+	b.registerAdminStatusRoutes(mux)
 	b.registerOperationsRoutes(mux)
 	b.registerMCPKeyRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)

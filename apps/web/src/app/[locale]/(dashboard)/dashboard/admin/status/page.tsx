@@ -27,7 +27,6 @@ import {
   parseDateInputInTimeZone,
 } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
-import { invokeOperation } from "@repo/shared/uol";
 import { VIDEO_MODEL_CAPABILITIES } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
@@ -60,7 +59,7 @@ import { classifyGenerationError } from "@/features/image-generation/sla";
 import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
 import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
 import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 import { GLOBAL_STATUS_CACHE_TAG } from "./cache-tag";
 import { RefreshStatusButton } from "./refresh-status-button";
 
@@ -1253,16 +1252,18 @@ async function loadHistoricalGenerationErrors(
     role: "user" | "observer_admin" | "admin" | "super_admin";
   }
 ): Promise<AdminStatusErrorListOutput> {
-  await ensureUolInitialized();
-  return invokeOperation<AdminStatusErrorListOutput>(
-    "image.listAdminStatusErrors",
+  void principal;
+  return requestGoJson<AdminStatusErrorListOutput>(
+    "/api/admin/status/errors",
     {
-      fromDate: filters.fromDate,
-      toDate: filters.toDate,
-      page: filters.page,
-      pageSize: filters.pageSize,
-    },
-    principal
+      method: "POST",
+      body: JSON.stringify({
+        fromDate: filters.fromDate?.toISOString() ?? null,
+        toDate: filters.toDate?.toISOString() ?? null,
+        page: filters.page,
+        pageSize: filters.pageSize,
+      }),
+    }
   );
 }
 
