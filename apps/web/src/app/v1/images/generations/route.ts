@@ -1,5 +1,4 @@
-import { corsPreflight, corsRoute } from "@/features/external-api/cors";
-import { postExternalImageGenerations } from "@/features/external-api/handlers/image-generations";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export const POST = corsRoute(postExternalImageGenerations);
-export const OPTIONS = corsPreflight;
+export const POST = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;

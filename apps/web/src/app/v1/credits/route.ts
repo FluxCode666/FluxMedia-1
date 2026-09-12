@@ -1,5 +1,4 @@
-import { corsPreflight, corsRoute } from "@/features/external-api/cors";
-import { getExternalCredits } from "@/features/external-api/handlers/credits";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export const GET = corsRoute(getExternalCredits);
-export const OPTIONS = corsPreflight;
+export const GET = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;

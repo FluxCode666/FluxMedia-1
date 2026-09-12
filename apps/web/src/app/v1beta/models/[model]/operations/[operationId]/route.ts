@@ -1,6 +1,4 @@
-/** Gemini Operation 查询入口；复用统一任务真相。 */
-import { corsPreflight, corsRoute } from "@/features/external-api/cors";
-import { getGeminiVideoOperation } from "@/features/external-api/handlers/gemini-video";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export const GET = corsRoute(getGeminiVideoOperation);
-export const OPTIONS = corsPreflight;
+export const GET = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;

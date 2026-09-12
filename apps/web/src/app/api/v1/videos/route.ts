@@ -1,6 +1,4 @@
-/** 带 /api 前缀的已下线视频创建地址；不得回退到 generations。 */
-import { corsPreflight, corsRoute } from "@/features/external-api/cors";
-import { postDeprecatedVideoGenerations } from "@/features/external-api/handlers/video-deprecated";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export const POST = corsRoute(postDeprecatedVideoGenerations);
-export const OPTIONS = corsPreflight;
+export const POST = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;

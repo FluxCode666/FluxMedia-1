@@ -1,2 +1,4 @@
-/** /api/v1beta Gemini predictLongRunning 等价部署别名。 */
-export { OPTIONS, POST } from "@/app/v1beta/models/[model]:predictLongRunning/route";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
+
+export const POST = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;

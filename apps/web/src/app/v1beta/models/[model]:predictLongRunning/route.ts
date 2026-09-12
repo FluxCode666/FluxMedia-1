@@ -1,6 +1,4 @@
-/** Gemini predictLongRunning 兼容入口；只委托薄 handler。 */
-import { corsPreflight, corsRoute } from "@/features/external-api/cors";
-import { postGeminiVideoGeneration } from "@/features/external-api/handlers/gemini-video";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export const POST = corsRoute(postGeminiVideoGeneration);
-export const OPTIONS = corsPreflight;
+export const POST = proxyExternalApi;
+export const OPTIONS = proxyExternalApi;
