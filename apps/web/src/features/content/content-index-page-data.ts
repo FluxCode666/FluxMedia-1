@@ -5,12 +5,11 @@
  * URL 只负责提供已经白名单解析的页码和页大小；失败交给页面错误边界。
  */
 
-import { invokeOperation } from "@repo/shared/uol";
 import type {
   BlogPostListOutput,
   PseoPageListOutput,
 } from "@repo/shared/uol/operations/content";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 读取公开博客索引分页。 */
 export async function loadBlogIndexPageData(input: {
@@ -18,11 +17,8 @@ export async function loadBlogIndexPageData(input: {
   page: number;
   pageSize: number;
 }): Promise<BlogPostListOutput> {
-  await ensureUolInitialized();
-  return invokeOperation<BlogPostListOutput>("content.listBlogPosts", input, {
-    type: "system",
-    reason: "public-blog-index-page",
-  });
+  const query = new URLSearchParams({ locale: input.locale, page: String(input.page), pageSize: String(input.pageSize) });
+  return requestGoJson<BlogPostListOutput>(`/api/content/blog?${query.toString()}`);
 }
 
 /** 读取公开 PSEO 索引分页。 */
@@ -31,9 +27,6 @@ export async function loadPseoIndexPageData(input: {
   page: number;
   pageSize: number;
 }): Promise<PseoPageListOutput> {
-  await ensureUolInitialized();
-  return invokeOperation<PseoPageListOutput>("content.listPseoPages", input, {
-    type: "system",
-    reason: "public-pseo-index-page",
-  });
+  const query = new URLSearchParams({ locale: input.locale, page: String(input.page), pageSize: String(input.pageSize) });
+  return requestGoJson<PseoPageListOutput>(`/api/content/pseo?${query.toString()}`);
 }
