@@ -71,6 +71,12 @@ async function loadBalanceThroughUol(input: {
  * 外层错误包含完整 SQL 和绑定参数，不能直接进入日志；若根因缺失则只记录通用消息。
  */
 function sanitizeRecentCreationsError(error: unknown): Error {
+  if (error instanceof Error && error.cause instanceof Error) {
+    const cause = error.cause as Error & { code?: string };
+    const safe = new Error(cause.message);
+    if (cause.code) Object.assign(safe, { code: cause.code });
+    return safe;
+  }
   return new Error(
     error instanceof Error ? error.message : "Recent creations query failed"
   );
