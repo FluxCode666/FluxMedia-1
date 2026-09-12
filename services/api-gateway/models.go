@@ -231,7 +231,9 @@ func (b *backend) handlePublicModelMarketplace(w http.ResponseWriter, r *http.Re
 			}
 			item["category"] = "image"
 			item["priceUnit"] = "per_image"
-			item["pricing"] = normalizedImagePricing(pricing)
+			normalizedPricing := normalizedImagePricing(pricing)
+			item["pricing"] = normalizedPricing
+			item["minimumCredits"] = minImagePricing(normalizedPricing)
 			for _, field := range []string{"supportedResolutions", "supportsQuality", "maxReferenceImages"} {
 				if value, exists := entry[field]; exists {
 					item[field] = value
@@ -329,8 +331,25 @@ func intOrDefault(value any, fallback int) int {
 
 func normalizedImagePricing(pricing map[string]any) map[string]any {
 	result := map[string]any{}
-	for _, key := range []string{"base1024Credits", "base1kCredits", "base2kCredits", "base4kCredits", "base8kCredits"} {
+	for _, key := range []string{"base1024Credits", "base1kCredits", "base2kCredits", "base4kCredits"} {
 		result[key] = positiveNumber(pricing[key], 1)
 	}
+	if value, ok := pricing["base8kCredits"]; ok {
+		result["base8kCredits"] = positiveNumber(value, 1)
+	}
 	return result
+}
+
+func minImagePricing(pricing map[string]any) float64 {
+	minimum := 0.0
+	for _, value := range pricing {
+		price := positiveNumber(value, 0)
+		if price > 0 && (minimum == 0 || price < minimum) {
+			minimum = price
+		}
+	}
+	if minimum == 0 {
+		return 1
+	}
+	return minimum
 }
