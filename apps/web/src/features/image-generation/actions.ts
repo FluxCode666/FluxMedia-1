@@ -14,9 +14,8 @@ import {
 } from "@repo/shared/image-generation/gallery-contract";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import { protectedAction } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
 import { z } from "zod";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
@@ -65,12 +64,8 @@ export const deleteGenerationAction = protectedAction
     z.object({ generationId: z.string().trim().min(1).max(128) }).strict()
   )
   .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation<{ success: boolean }>("image.delete", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: await getUserRoleById(ctx.userId),
-    });
+    void ctx;
+    return requestGoJson<{ success: boolean }>("/api/image-generation/delete", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /**
@@ -90,16 +85,8 @@ export const batchDeleteGenerationAction = protectedAction
       .strict()
   )
   .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation<{ success: boolean; deletedCount: number }>(
-      "image.batchDelete",
-      parsedInput,
-      {
-        type: "user",
-        userId: ctx.userId,
-        role: await getUserRoleById(ctx.userId),
-      }
-    );
+    void ctx;
+    return requestGoJson<{ success: boolean; deletedCount: number }>("/api/image-generation/batch-delete", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 读取本人图库的一批安全卡片；用于触底追加和详情返回后的有界重放。 */
@@ -107,14 +94,6 @@ export const getMyGalleryItemsAction = protectedAction
   .metadata({ action: "image.listMyGallery" })
   .schema(galleryListInputSchema)
   .action(async ({ parsedInput, ctx }): Promise<GalleryListOutput> => {
-    await ensureUolInitialized();
-    return invokeOperation<GalleryListOutput>(
-      "image.listMyGallery",
-      parsedInput,
-      {
-        type: "user",
-        userId: ctx.userId,
-        role: await getUserRoleById(ctx.userId),
-      }
-    );
+    void ctx;
+    return requestGoJson<GalleryListOutput>("/api/image-generation/gallery", { method: "POST", body: JSON.stringify(parsedInput) });
   });

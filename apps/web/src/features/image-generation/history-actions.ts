@@ -7,7 +7,6 @@
  * 会话 Principal 并调用 UOL；查询归属、短期签名和数据库读取留在统一接口层绑定中。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   type AdminHistoryListOutput,
   type AdminHistoryRequestSnapshotOutput,
@@ -20,27 +19,21 @@ import {
   globalUsageRecordsViewerAction,
   protectedAction,
 } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
 import {
   videoGetInputsInputSchema,
   type videoGetInputsOutputSchema,
 } from "@repo/shared/uol/operations/video-generation";
 import type { z } from "zod";
 
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 读取当前登录用户的一页图片/视频统一历史。 */
 export const getMyHistoryRecordsAction = protectedAction
   .metadata({ action: "image.listMyHistoryRecords" })
   .schema(historyListInputSchema)
   .action(async ({ parsedInput, ctx }): Promise<HistoryListOutput> => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    return invokeOperation<HistoryListOutput>(
-      "image.listMyHistoryRecords",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role }
-    );
+    void ctx;
+    return requestGoJson<HistoryListOutput>("/api/image-generation/history", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 读取管理员可见的一页全局图片/视频统一历史。 */
@@ -48,12 +41,8 @@ export const getAdminHistoryRecordsAction = globalUsageRecordsViewerAction
   .metadata({ action: "image.listAdminHistoryRecords" })
   .schema(adminHistoryListInputSchema)
   .action(async ({ parsedInput, ctx }): Promise<AdminHistoryListOutput> => {
-    await ensureUolInitialized();
-    return invokeOperation<AdminHistoryListOutput>(
-      "image.listAdminHistoryRecords",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+    void ctx;
+    return requestGoJson<AdminHistoryListOutput>("/api/admin/image-generation/history", { method: "POST", body: JSON.stringify(parsedInput) });
   });
 
 /** 管理员展开详情时按需读取请求脚本处理后的脱敏真实请求正文。 */
@@ -62,15 +51,11 @@ export const getAdminHistoryRequestSnapshotAction =
     .metadata({ action: "image.getAdminHistoryRequestSnapshot" })
     .schema(adminHistoryRequestSnapshotInputSchema)
     .action(
-      async ({
-        parsedInput,
-        ctx,
-      }): Promise<AdminHistoryRequestSnapshotOutput> => {
-        await ensureUolInitialized();
-        return invokeOperation<AdminHistoryRequestSnapshotOutput>(
-          "image.getAdminHistoryRequestSnapshot",
-          parsedInput,
-          { type: "user", userId: ctx.userId, role: ctx.role }
+      async ({ parsedInput, ctx }): Promise<AdminHistoryRequestSnapshotOutput> => {
+        void ctx;
+        return requestGoJson<AdminHistoryRequestSnapshotOutput>(
+          "/api/admin/image-generation/request-snapshot",
+          { method: "POST", body: JSON.stringify(parsedInput) }
         );
       }
     );
@@ -84,12 +69,10 @@ export const getVideoInputsAction = protectedAction
       parsedInput,
       ctx,
     }): Promise<z.output<typeof videoGetInputsOutputSchema>> => {
-      await ensureUolInitialized();
-      const role = await getUserRoleById(ctx.userId);
-      return invokeOperation<z.output<typeof videoGetInputsOutputSchema>>(
-        "video.getInputs",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role }
+      void ctx;
+      return requestGoJson<z.output<typeof videoGetInputsOutputSchema>>(
+        "/api/image-generation/video-inputs",
+        { method: "POST", body: JSON.stringify(parsedInput) }
       );
     }
   );
