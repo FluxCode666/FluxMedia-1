@@ -1,7 +1,7 @@
 /**
  * 本地化公开模型广场页面。
  *
- * 使用方是营销 Header、Footer、sitemap 与站外访问者；页面只消费公开 UOL DTO，
+ * 使用方是营销 Header、Footer、sitemap 与站外访问者；页面只消费公开 Go DTO，
  * 显式禁用 Full Route Cache，并区分空目录与依赖失败。
  */
 import type { Metadata } from "next";
@@ -39,7 +39,7 @@ export async function generateMetadata({
  * 渲染公开模型广场。
  *
  * @returns 标题说明、公开模型浏览器，或稳定的空目录/不可用状态。
- * @sideEffects 通过页面数据边界调用一次公开 UOL operation，并读取当前语言文案。
+ * @sideEffects 通过页面数据边界调用一次公开 Go endpoint，并读取当前语言文案。
  * @failure 公开依赖失败时返回友好不可用状态，不暴露底层错误或伪造空目录。
  */
 export default async function ModelsPage() {

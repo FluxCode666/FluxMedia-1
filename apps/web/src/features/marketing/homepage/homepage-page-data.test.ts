@@ -13,6 +13,7 @@ const runtimeMocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getUserRoleById: vi.fn(),
   invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
   loggerError: vi.fn(),
 }));
 
@@ -40,6 +41,9 @@ vi.mock("@repo/shared/uol", () => ({
 }));
 vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: runtimeMocks.ensureUolInitialized,
+}));
+vi.mock("@/server/go-backend-client", () => ({
+  requestGoJson: runtimeMocks.requestGoJson,
 }));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children, href }: { children: ReactNode; href: string }) =>
@@ -199,6 +203,9 @@ describe("loadHomepagePageData", () => {
   it("三个生产 loader 初始化 UOL 后以独立 system reason 并行调用 operation", async () => {
     for (const mock of Object.values(runtimeMocks)) mock.mockReset();
     runtimeMocks.ensureUolInitialized.mockResolvedValue(undefined);
+    runtimeMocks.requestGoJson.mockImplementation(async (path: string) =>
+      path.includes("sla-visibility") ? { enabled: true } : READY_SLA_STATS
+    );
     runtimeMocks.invokeOperation.mockImplementation(
       async (operationName: string) => {
         if (operationName === "modelMarketplace.listPublicModels") {
@@ -217,26 +224,15 @@ describe("loadHomepagePageData", () => {
 
     const result = await loadHomepagePageData();
 
-    expect(runtimeMocks.ensureUolInitialized).toHaveBeenCalledTimes(3);
+    expect(runtimeMocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
       "modelMarketplace.listPublicModels",
       {},
       { type: "system", reason: "homepage-model-marketplace" },
       { requestId: expect.any(String) }
     );
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "settings.getHomepageSlaVisibility",
-      {},
-      { type: "system", reason: "homepage-sla-visibility" },
-      { requestId: expect.any(String) }
-    );
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "analytics.getHomepageGenerationSlaStats",
-      {},
-      { type: "system", reason: "homepage-generation-sla-stats" },
-      { requestId: expect.any(String) }
-    );
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledTimes(3);
+    expect(runtimeMocks.requestGoJson).toHaveBeenCalledWith("/api/marketing/sla-visibility");
+    expect(runtimeMocks.requestGoJson).toHaveBeenCalledWith("/api/marketing/sla-stats");
     expect(
       runtimeMocks.ensureUolInitialized.mock.invocationCallOrder[0] ?? 0
     ).toBeLessThan(

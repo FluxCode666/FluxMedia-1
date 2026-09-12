@@ -30,9 +30,9 @@ type PublicCatalogOutput = z.infer<typeof publicCatalogOutputSchema>;
 /**
  * 通过 Go first-party endpoint 读取公开模型目录。
  *
- * @returns 通过 operation 输出 schema 校验的公开 DTO。
+ * @returns 通过 Go endpoint 输出 schema 校验的公开 DTO。
  * @sideEffects 读取 Go 后端中的运行时目录、价格、公开展示配置与可达模型配置。
- * @failure 初始化、operation、依赖或输出校验失败时拒绝 Promise，由页面装配器降级。
+ * @failure 后端依赖或输出校验失败时拒绝 Promise，由页面装配器降级。
  */
 async function loadPublicModelsThroughGo(): Promise<PublicCatalogOutput> {
   return requestGoJson<PublicCatalogOutput>("/api/model-marketplace/public");
@@ -43,7 +43,7 @@ async function loadPublicModelsThroughGo(): Promise<PublicCatalogOutput> {
  *
  * @param loadModels - 可注入的公开目录读取器；生产默认值只走 Go。
  * @returns 严格 ready DTO 或稳定 unavailable，不泄露底层错误。
- * @sideEffects 生产默认读取器会初始化 UOL 并查询运行时依赖；本函数不写外部状态。
+ * @sideEffects 生产默认读取器查询 Go 后端运行时依赖；本函数不写外部状态。
  * @failure 任意异常或畸形输出统一返回 unavailable，成功空数组保持 ready。
  */
 export async function loadModelMarketplacePageData(

@@ -6,22 +6,18 @@
  */
 import "server-only";
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isAdminRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logger } from "@repo/shared/logger";
 import { modelMarketplacePublicItemSchema } from "@repo/shared/model-marketplace";
-import {
-  invokeOperation,
-  OperationError,
-  type OperationErrorCode,
-} from "@repo/shared/uol";
+import { invokeOperation, OperationError, type OperationErrorCode } from "@repo/shared/uol";
 import type {
   HomepageGenerationSlaStatsOutput,
   HomepageSlaVisibilityOutput,
 } from "@repo/shared/uol/operations";
 
 import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 首页视觉模型格子所需的最小公开字段。 */
 export type HomepageModelItem = {
@@ -246,13 +242,8 @@ async function loadCatalogThroughUol(requestId: string): Promise<unknown> {
 async function loadSlaVisibilityThroughUol(
   requestId: string
 ): Promise<boolean> {
-  await ensureUolInitialized();
-  const output = await invokeOperation<HomepageSlaVisibilityOutput>(
-    "settings.getHomepageSlaVisibility",
-    {},
-    { type: "system", reason: "homepage-sla-visibility" },
-    { requestId }
-  );
+  void requestId;
+  const output = await requestGoJson<HomepageSlaVisibilityOutput>("/api/marketing/sla-visibility");
   return output.enabled;
 }
 
@@ -268,13 +259,8 @@ async function loadSlaVisibilityThroughUol(
 async function loadSlaStatsThroughUol(
   requestId: string
 ): Promise<HomepageGenerationSlaStatsOutput> {
-  await ensureUolInitialized();
-  return invokeOperation<HomepageGenerationSlaStatsOutput>(
-    "analytics.getHomepageGenerationSlaStats",
-    {},
-    { type: "system", reason: "homepage-generation-sla-stats" },
-    { requestId }
-  );
+  void requestId;
+  return requestGoJson<HomepageGenerationSlaStatsOutput>("/api/marketing/sla-stats");
 }
 
 const defaultLoaders: HomepagePageDataLoaders = {
@@ -283,7 +269,11 @@ const defaultLoaders: HomepagePageDataLoaders = {
   loadSlaVisibility: loadSlaVisibilityThroughUol,
   loadSlaStats: loadSlaStatsThroughUol,
   loadSession: getServerSession,
-  loadRole: getUserRoleById,
+  loadRole: async (userId) => {
+    void userId;
+    const session = await getServerSession();
+    return (session?.user as { role?: string } | undefined)?.role ?? "user";
+  },
   reportFailure: reportHomepageFailure,
 };
 
