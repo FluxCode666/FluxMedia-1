@@ -6,14 +6,12 @@
  * 使用方是账户设置页；本文件只校验输入、构造登录用户 Principal、调用 UOL，并刷新
  * Dashboard 布局。时区校验与持久化由 user.updateMyTimeZone 单点负责。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { protectedAction } from "@repo/shared/safe-action";
 import { userTimeZoneSchema } from "@repo/shared/time-zone";
-import { invokeOperation } from "@repo/shared/uol";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 const updateTimeZoneSchema = z.object({
   timeZone: userTimeZoneSchema,
@@ -23,17 +21,14 @@ const updateTimeZoneSchema = z.object({
 export const updateTimeZoneAction = protectedAction
   .metadata({ action: "settings.updateTimeZone" })
   .schema(updateTimeZoneSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    const result = await invokeOperation<{
+  .action(async ({ parsedInput }) => {
+    const result = await requestGoJson<{
       timeZone: string | null;
       defaultTimeZone: string;
       effectiveTimeZone: string;
-    }>("user.updateMyTimeZone", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role,
+    }>("/api/user/time-zone", {
+      method: "POST",
+      body: JSON.stringify(parsedInput),
     });
     revalidatePath("/dashboard", "layout");
     return result;

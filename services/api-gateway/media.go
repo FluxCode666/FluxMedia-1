@@ -33,6 +33,10 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 			mux.HandleFunc(method+" "+prefix+"/videos", b.externalEndpoint(b.handleVideoCreate))
 			mux.HandleFunc(method+" "+prefix+"/videos/capabilities", b.externalEndpoint(b.handleVideoCapabilities))
 		}
+		// Capabilities is a read-only discovery endpoint. Register GET explicitly
+		// before the parameterized /videos/{taskId} route so "capabilities" is
+		// never misinterpreted as a task ID.
+		mux.HandleFunc("GET "+prefix+"/videos/capabilities", b.externalEndpoint(b.handleVideoCapabilities))
 		mux.HandleFunc("GET "+prefix+"/images/{taskId}", b.externalEndpoint(b.handleImageStatus))
 		mux.HandleFunc("OPTIONS "+prefix+"/images/{taskId}", b.externalEndpoint(b.handleImageStatus))
 		mux.HandleFunc("GET "+prefix+"/videos/{taskId}", b.externalEndpoint(b.handleVideoStatus))

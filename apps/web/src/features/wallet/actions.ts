@@ -82,6 +82,6 @@ export const getMyWalletPageDataAction = protectedAction
       loadRecentOrders: () =>
         invokeWalletOperation("payment.listMyRecentOrders", principal),
       loadTopUp: () =>
-        invokeWalletOperation("credits.getTopUpOptions", principal),
+        requestGoJson<WalletTopUpOptions>("/api/credits/top-up/options"),
     });
   });

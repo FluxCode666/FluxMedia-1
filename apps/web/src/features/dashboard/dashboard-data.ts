@@ -4,19 +4,11 @@
  * 首屏 Server Component 与刷新 Server Action 共用本模块，确保近 24 小时摘要、模型
  * 分布和近期创作采用同一用户 Principal。
  */
-import { db } from "@repo/database";
-import {
-  type SafePostgresPoolError,
-  sanitizePostgresPoolError,
-} from "@repo/database/pool";
-import { generation } from "@repo/database/schema";
 import type { UsageSummaryOutput } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { WalletBalanceSnapshot } from "@repo/shared/credits/wallet-contract";
 import { logError } from "@repo/shared/logger";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { requestGoJson } from "@/server/go-backend-client";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -38,7 +30,7 @@ type DashboardSnapshotDependencies = {
     role: AppUserRole;
   }) => Promise<WalletBalanceSnapshot>;
   loadRecentCreations: (userId: string) => Promise<RecentCreation[]>;
-  reportRecentCreationsError: (error: SafePostgresPoolError) => void;
+  reportRecentCreationsError: (error: Error) => void;
 };
 
 /**
@@ -48,45 +40,12 @@ type DashboardSnapshotDependencies = {
  * @returns 可直接交给 RecentCreationsClient 的签名 URL 数据；无记录时返回空数组。
  */
 export async function loadRecentDashboardCreations(
-  userId: string
+  _userId: string
 ): Promise<RecentCreation[]> {
-  const rows = await db
-    .select({
-      id: generation.id,
-      prompt: generation.prompt,
-      revisedPrompt: generation.revisedPrompt,
-      model: generation.model,
-      size: generation.size,
-      status: generation.status,
-      creditsConsumed: generation.creditsConsumed,
-      storageKey: generation.storageKey,
-      storageBucket: generation.storageBucket,
-      createdAt: generation.createdAt,
-    })
-    .from(generation)
-    .where(
-      and(
-        eq(generation.userId, userId),
-        eq(generation.status, "completed"),
-        isNotNull(generation.storageKey)
-      )
-    )
-    .orderBy(desc(generation.createdAt))
-    .limit(4);
-
-  return rows.map((row) => ({
-    id: row.id,
-    prompt: row.prompt,
-    revisedPrompt: row.revisedPrompt,
-    model: row.model,
-    size: row.size,
-    status: row.status,
-    creditsConsumed: row.creditsConsumed,
-    storageKey: row.storageKey,
-    storageBucket: row.storageBucket,
-    imageUrl: buildSignedStorageImageUrl(row.storageKey, row.storageBucket),
-    createdAt: row.createdAt.toISOString(),
-  }));
+  // The Go endpoint derives ownership from the forwarded session cookie. Keep
+  // userId in the function signature for the existing dependency contract, but
+  // never trust a caller-provided ID when selecting records.
+  return requestGoJson<RecentCreation[]>("/api/image-generation/recent?limit=4");
 }
 
 /** 通过 Analytics UOL 读取本人摘要，身份只来自服务端 Principal。 */
@@ -112,16 +71,14 @@ async function loadBalanceThroughUol(input: {
  *
  * 外层错误包含完整 SQL 和绑定参数，不能直接进入日志；若根因缺失则只记录通用消息。
  */
-function sanitizeRecentCreationsError(error: unknown): SafePostgresPoolError {
-  const cause =
-    error instanceof Error && "cause" in error ? error.cause : undefined;
-  return sanitizePostgresPoolError(
-    cause ?? new Error("Recent creations query failed")
+function sanitizeRecentCreationsError(error: unknown): Error {
+  return new Error(
+    error instanceof Error ? error.message : "Recent creations query failed"
   );
 }
 
 /** 记录脱敏后的近期创作降级原因，但不让非关键画廊预览拖垮控制台主体。 */
-function reportRecentCreationsError(error: SafePostgresPoolError): void {
+function reportRecentCreationsError(error: Error): void {
   logError(new Error("Dashboard recent creations are unavailable"), {
     source: "dashboard-recent-creations",
     databaseError: error,
