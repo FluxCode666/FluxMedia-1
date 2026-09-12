@@ -307,7 +307,10 @@ return request;
     expect(body).toMatchObject({
       model: "vendor-image-id",
       adaptation: "gpt-image-2->vendor-image-id",
+      aspect_ratio: "16:9",
+      resolution: "2k",
     });
+    expect(body).not.toHaveProperty("aspectRatio");
     expect(body).not.toHaveProperty("size");
     expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -622,6 +625,8 @@ return request;
           throw new Error("missing FormData");
         expect(formData.get("image")).toBeInstanceOf(Blob);
         expect(formData.get("mask")).toBeInstanceOf(Blob);
+        expect(formData.get("aspect_ratio")).toBe("16:9");
+        expect(formData.has("aspectRatio")).toBe(false);
         expect(String(formData.get("prompt"))).toContain(
           '<ref id="edit-reference-1" prompt="source &amp;&quot;.png" />'
         );
@@ -640,6 +645,7 @@ return request;
       {
         prompt: "参考 @图1 调整颜色",
         model: "gpt-image-2",
+        aspectRatio: "16:9",
         images: [
           {
             name: 'source &".png',
@@ -759,6 +765,8 @@ return request;
         ]);
         expect(body.model).toBe("vendor-image-id");
         expect(body.n).toBe(1);
+        expect(body.aspect_ratio).toBe("16:9");
+        expect(body).not.toHaveProperty("aspectRatio");
         expect(body.size).toBeUndefined();
         return successfulImageResponse();
       }
@@ -767,6 +775,7 @@ return request;
     const result = await editImage(config, {
       prompt: "combine references",
       model: "gpt-image-2",
+      aspectRatio: "16:9",
       images: [
         {
           name: "ref-1.png",
@@ -976,7 +985,7 @@ return request;
         }
         expect(formData.get("count")).toBe("1");
         expect(JSON.parse(String(formData.get("options")))).toEqual({
-          aspectRatio: "16:9",
+          aspect_ratio: "16:9",
           resolution: "2k",
           compression: 80,
           streaming: true,
@@ -993,7 +1002,7 @@ return request;
       ...createPoolApiConfig(`
 if (
   typeof request.n !== "string" ||
-  typeof request.aspectRatio !== "string" ||
+  typeof request.aspect_ratio !== "string" ||
   typeof request.resolution !== "string" ||
   typeof request.output_compression !== "string" ||
   request.stream !== "true"
@@ -1002,13 +1011,13 @@ if (
 }
 request.count = Number(request.n);
 request.options = {
-  aspectRatio: request.aspectRatio,
+  aspect_ratio: request.aspect_ratio,
   resolution: request.resolution,
   compression: Number(request.output_compression),
   streaming: request.stream === "true",
 };
 delete request.n;
-  delete request.aspectRatio;
+  delete request.aspect_ratio;
   delete request.resolution;
 delete request.output_compression;
 delete request.stream;

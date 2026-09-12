@@ -787,7 +787,7 @@ function appendImageParams(
   });
   if (resolved.size) formData.append("size", resolved.size);
   if (resolved.aspectRatio)
-    formData.append("aspectRatio", resolved.aspectRatio);
+    formData.append("aspect_ratio", resolved.aspectRatio);
   if (resolved.resolution) formData.append("resolution", resolved.resolution);
   const dimensions = parseImageSize(resolved.size ?? "");
   if (dimensions) {
@@ -1589,7 +1589,7 @@ export async function generateImage(
       n: 1,
       ...(resolvedSize.size ? { size: resolvedSize.size } : {}),
       ...(resolvedSize.aspectRatio
-        ? { aspectRatio: resolvedSize.aspectRatio }
+        ? { aspect_ratio: resolvedSize.aspectRatio }
         : {}),
       ...(resolvedSize.resolution
         ? { resolution: resolvedSize.resolution }
@@ -1778,7 +1778,7 @@ async function createPublicUrlEditRequestBody(input: {
       ...(resolved.size && resolved.size !== "auto"
         ? { size: resolved.size }
         : {}),
-      ...(resolved.aspectRatio ? { aspectRatio: resolved.aspectRatio } : {}),
+      ...(resolved.aspectRatio ? { aspect_ratio: resolved.aspectRatio } : {}),
       ...(resolved.resolution ? { resolution: resolved.resolution } : {}),
       image_urls: urls,
     },
