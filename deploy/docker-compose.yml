@@ -91,7 +91,7 @@ services:
       GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
       GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
     ports:
-      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3001}:8080"
+      - "${BIND_HOST:-127.0.0.1}:${GO_BACKEND_PORT:-3001}:8080"
     healthcheck:
       test: ["CMD", "/backend", "--healthcheck"]
       interval: 30s
