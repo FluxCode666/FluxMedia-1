@@ -5,8 +5,7 @@
  * 数据作用域、用户邮箱筛选、cursor 绑定与字段脱敏均在统一接口层处理。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
+import { canViewGlobalUsageRecords, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
@@ -46,7 +45,7 @@ export default async function DashboardAdminHistoryPage({
     ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewGlobalUsageRecords(role)) redirect(`/${locale}/dashboard`);
 
   const isZh = locale === "zh";

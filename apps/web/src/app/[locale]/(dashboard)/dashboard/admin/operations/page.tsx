@@ -5,8 +5,7 @@
  * 快照、导出记录及安全失败状态交给客户端 Panel；页面本身不读取运营数据库。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import type { Metadata } from "next";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -52,7 +51,7 @@ export default async function OperationsDashboardPage({
     return redirect({ href: "/dashboard", locale });
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) {
     return redirect({ href: "/dashboard", locale });
   }
