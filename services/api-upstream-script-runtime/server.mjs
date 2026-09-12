@@ -1,6 +1,5 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -223,7 +222,7 @@ const server = createServer(async (request, response) => {
     const payload = parseRequest(await readJson(request));
     const output = payload.script ? await pool.execute(payload) : payload.input;
     return writeJson(response, 200, { data: { output } });
-  } catch (error) {
+  } catch (_error) {
     return writeJson(response, 422, { error: { code: "SCRIPT_EXECUTION_FAILED", message: "Script execution failed" } });
   }
 });
