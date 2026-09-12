@@ -3,11 +3,9 @@
 /**
  * 图片生成与媒体删除 Server Action 薄适配器。
  *
- * 使用方：创作页与画廊。输入经 Zod 校验后构造本人 Principal，所有业务逻辑经 UOL
- * operation 执行，Action 不直接访问数据库或对象存储。
+ * 使用方：创作页与画廊。输入经 Zod 校验后转发到 Go first-party API，Action 不直接
+ * 访问数据库或对象存储。
  */
-import { randomUUID } from "node:crypto";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   type GalleryListOutput,
   galleryListInputSchema,
@@ -20,7 +18,6 @@ import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
 } from "./resolution";
-import { invokeImageGenerationOperation } from "./uol-client";
 
 const generateImageSchema = z
   .object({
@@ -35,26 +32,32 @@ const generateImageSchema = z
   })
   .strict();
 
-/** 创建单次图片生成任务并委托统一 image.generate operation。 */
+/** 创建单次图片生成任务并委托 Go 图片任务接口。 */
 export const generateImageAction = protectedAction
   .metadata({ action: "image-generation.generate" })
   .schema(generateImageSchema)
   .action(async ({ parsedInput, ctx }) => {
-    return invokeImageGenerationOperation(
-      {
-        operation: "generate",
-        generationId: randomUUID(),
+    void ctx;
+    return requestGoJson<{
+      id: string;
+      taskId?: string;
+      generationId: string;
+      generation_id?: string;
+      model: string;
+      status: string;
+      created?: number;
+      created_at?: string;
+      imageUrl?: string;
+      imageOutputs?: Array<Record<string, unknown>>;
+    }>("/api/images/generate", {
+      method: "POST",
+      body: JSON.stringify({
         prompt: parsedInput.prompt,
         aspectRatio: parsedInput.aspectRatio ?? parsedInput.aspect_ratio,
         resolution: parsedInput.resolution,
         model: parsedInput.model,
-      },
-      {
-        type: "user",
-        userId: ctx.userId,
-        role: await getUserRoleById(ctx.userId),
-      }
-    );
+      }),
+    });
   });
 
 /** 移除本人单条生成媒体；保留任务、计费与历史用量事实。 */
@@ -70,7 +73,7 @@ export const deleteGenerationAction = protectedAction
 
 /**
  * 批量移除本人生成媒体。
- * UOL 服务排除仍被其他任务引用的共享对象，并把任务更新为不可见媒体墓碑；最多 100 条。
+ * Go 服务排除仍被其他任务引用的共享对象，并把任务更新为不可见媒体墓碑；最多 100 条。
  */
 export const batchDeleteGenerationAction = protectedAction
   .metadata({ action: "image-generation.batch-delete" })
