@@ -349,7 +349,7 @@ export const resetImageBackendMemberStatusAction = adminAction
 export const setImageBackendMemberEnabledAction = adminAction
   .metadata({ action: "imageBackendPool.setMemberEnabled" })
   .schema(setMemberEnabledSchema)
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
     const result = await requestPool<{ id: string; isEnabled: boolean }>(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}/enabled`, "POST", { isEnabled: parsedInput.isEnabled });
     revalidateBackendPoolPage();
     return { success: true, ...result };
@@ -359,7 +359,7 @@ export const setImageBackendMemberEnabledAction = adminAction
 export const deleteImageBackendMemberAction = adminAction
   .metadata({ action: "imageBackendPool.deleteMember" })
   .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
     await requestPool(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}`, "DELETE");
     revalidateBackendPoolPage();
     return { success: true };
