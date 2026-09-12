@@ -15,6 +15,78 @@ func (b *backend) registerSystemSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/system-settings/import-env", b.endpoint(b.handleSystemSettingsImportEnv))
 	mux.HandleFunc("POST /api/system-settings/initialize-defaults", b.endpoint(b.handleSystemSettingsInitializeDefaults))
 	mux.HandleFunc("PUT /api/system-settings/site-logo", b.endpoint(b.handleSystemSettingsSiteLogo))
+	mux.HandleFunc("GET /api/system-settings/model-pricing", b.endpoint(b.handleSystemModelPricing))
+	mux.HandleFunc("GET /api/system-settings/moderation-policy", b.endpoint(b.handleSystemModerationPolicyGet))
+	mux.HandleFunc("PUT /api/system-settings/moderation-policy", b.endpoint(b.handleSystemModerationPolicyPut))
+}
+
+func (b *backend) handleSystemModelPricing(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdmin(r, false); err != nil {
+		return err
+	}
+	image, err := b.setting(r.Context(), "IMAGE_MODEL_CREDIT_PRICES", map[string]any{"version": 1, "byModel": map[string]any{}})
+	if err != nil {
+		return err
+	}
+	modes, err := b.setting(r.Context(), "VIDEO_MODEL_BILLING_MODES", map[string]any{})
+	if err != nil {
+		return err
+	}
+	perItem, err := b.setting(r.Context(), "VIDEO_MODEL_CREDITS_PER_ITEM", map[string]any{})
+	if err != nil {
+		return err
+	}
+	perSecond, err := b.setting(r.Context(), "VIDEO_MODEL_CREDITS_PER_SECOND", map[string]any{})
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"image": image, "videoBillingModes": modes, "videoCreditsPerItem": perItem, "videoCreditsPerSecond": perSecond})
+	return nil
+}
+
+func (b *backend) handleSystemModerationPolicyGet(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdmin(r, true); err != nil {
+		return err
+	}
+	value, err := b.setting(r.Context(), "CONTENT_MODERATION_BLOCK_RISK_LEVEL", "high")
+	if err != nil {
+		return err
+	}
+	level, _ := value.(string)
+	if level != "low" && level != "medium" && level != "high" {
+		level = "high"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"policy": map[string]any{"globalDefault": level, "userOverride": nil, "effectiveLevel": level, "source": "global"}, "recentAudits": []any{}})
+	return nil
+}
+
+func (b *backend) handleSystemModerationPolicyPut(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireAdmin(r, true)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Level  string `json:"level"`
+		Reason string `json:"reason"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	if in.Level != "low" && in.Level != "medium" && in.Level != "high" {
+		return invalid("审核级别不合法")
+	}
+	if strings.TrimSpace(in.Reason) == "" || len([]rune(in.Reason)) > 300 {
+		return invalid("变更原因不合法")
+	}
+	old, _ := b.setting(r.Context(), "CONTENT_MODERATION_BLOCK_RISK_LEVEL", "high")
+	oldLevel, _ := old.(string)
+	raw, _ := json.Marshal(in.Level)
+	if _, err := b.db.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_by,updated_at) VALUES('CONTENT_MODERATION_BLOCK_RISK_LEVEL',$1,false,$2,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, raw, s.User.ID); err != nil {
+		return err
+	}
+	changed := oldLevel != in.Level
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "changed": changed, "previousLevel": oldLevel, "level": in.Level, "message": map[bool]string{true: "全站审核级别已更新", false: "全站审核级别未发生变化"}[changed]})
+	return nil
 }
 
 func (b *backend) handleSystemSettingsGet(w http.ResponseWriter, r *http.Request) error {

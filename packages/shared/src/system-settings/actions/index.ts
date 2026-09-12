@@ -10,7 +10,6 @@
 import { z } from "zod";
 import { cookies } from "next/headers";
 
-import type { AppUserRole } from "../../auth/roles";
 import {
   moderationBlockRiskLevelSchema,
   type ResolvedModerationPolicyValues,
@@ -21,7 +20,7 @@ import {
   adminAction,
   superAdminAction,
 } from "../../safe-action";
-import { invokeOperation, OperationError, type Principal } from "../../uol";
+import { OperationError } from "../../uol";
 import "../../uol/operations/moderation";
 import "../../uol/operations/system-settings";
 import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
@@ -38,14 +37,6 @@ const globalModerationPolicyInputSchema = z
       .max(300, "变更原因最多 300 个字符"),
   })
   .strict();
-
-/** 从已复查数据库角色的 Action 上下文构造可信人工会话 Principal。 */
-function createSystemSettingsPrincipal(input: {
-  userId: string;
-  role: AppUserRole;
-}): Principal {
-  return { type: "user", userId: input.userId, role: input.role };
-}
 
 /** 把 UOL 错误映射为安全中文反馈，不透传 internal_error 内部消息。 */
 function throwModerationPolicyActionError(error: unknown): never {
@@ -107,30 +98,21 @@ export const getSystemSettingsAction = superAdminAction
 /** 读取后端池等只读消费者所需的完整全局价格矩阵。 */
 export const getGlobalModelPricingAction = adminAction
   .metadata({ action: "system-settings.model-pricing.get" })
-  .action(async ({ ctx }) => {
-    return await invokeOperation<{
+  .action(async () => {
+    return requestGo<{
       image: ImageCreditOverrides;
+      videoBillingModes: Record<string, string>;
+      videoCreditsPerItem: Record<string, number>;
       videoCreditsPerSecond: Record<string, number>;
-    }>(
-      "settings.getModelPricing",
-      {},
-      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-    );
+    }>("/api/system-settings/model-pricing");
   });
 
 /** 读取全站审核级别，只负责把真实 super_admin 会话传入 UOL。 */
 export const getGlobalModerationPolicyAction = superAdminAction
   .metadata({ action: "system-settings.moderation.getGlobalPolicy" })
-  .action(async ({ ctx }) => {
+  .action(async () => {
     try {
-      const policy = await invokeOperation<ResolvedModerationPolicyValues>(
-        "moderation.getGlobalRiskPolicy",
-        {},
-        createSystemSettingsPrincipal({
-          userId: ctx.userId,
-          role: ctx.role,
-        })
-      );
+      const { policy } = await requestGo<{ policy: ResolvedModerationPolicyValues }>("/api/system-settings/moderation-policy");
       // WHY: 策略读取保持由 UOL 统一解析；审计只做固定 action 的只读投影，
       // 不复用通用设置写入口，也不把无关管理员 metadata 暴露给组件。
       return { policy, recentAudits: [] };
@@ -143,16 +125,9 @@ export const getGlobalModerationPolicyAction = superAdminAction
 export const setGlobalModerationPolicyAction = superAdminAction
   .metadata({ action: "system-settings.moderation.setGlobalPolicy" })
   .schema(globalModerationPolicyInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
     try {
-      const result = await invokeOperation<SetGlobalRiskLevelResult>(
-        "moderation.setGlobalRiskLevel",
-        parsedInput,
-        createSystemSettingsPrincipal({
-          userId: ctx.userId,
-          role: ctx.role,
-        })
-      );
+      const result = await requestGo<SetGlobalRiskLevelResult>("/api/system-settings/moderation-policy", parsedInput, "PUT");
       return {
         success: true,
         ...result,
