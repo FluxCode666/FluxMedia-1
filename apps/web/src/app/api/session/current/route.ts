@@ -12,13 +12,17 @@ async function proxySession(): Promise<Response> {
     headers: cookie ? { cookie } : undefined,
     cache: "no-store",
   });
+  const responseHeaders = new Headers({
+    "content-type": response.headers.get("content-type") || "application/json",
+    "cache-control": "private, no-store, no-cache, max-age=0, must-revalidate",
+    vary: "Cookie",
+  });
+  for (const value of response.headers.getSetCookie?.() ?? []) {
+    responseHeaders.append("set-cookie", value);
+  }
   return new Response(await response.arrayBuffer(), {
     status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") || "application/json",
-      "cache-control": "private, no-store, no-cache, max-age=0, must-revalidate",
-      vary: "Cookie",
-    },
+    headers: responseHeaders,
   });
 }
 
