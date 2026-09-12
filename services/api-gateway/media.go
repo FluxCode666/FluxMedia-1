@@ -19,6 +19,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -230,7 +231,7 @@ func (b *backend) handleImageEdit(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	body, err := decodeImageEditBody(r)
+	body, err := b.decodeImageEditBody(r)
 	if err != nil {
 		return err
 	}
@@ -241,7 +242,7 @@ func (b *backend) handleImageEdit(w http.ResponseWriter, r *http.Request) error 
 	writeJSON(w, http.StatusAccepted, response)
 	return nil
 }
-func decodeImageEditBody(r *http.Request) (map[string]json.RawMessage, error) {
+func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessage, error) {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
 		return decodeObject(r)
 	}
@@ -249,7 +250,7 @@ func decodeImageEditBody(r *http.Request) (map[string]json.RawMessage, error) {
 		return nil, invalid("Invalid multipart body")
 	}
 	body := map[string]json.RawMessage{}
-	for _, key := range []string{"prompt", "model", "aspect_ratio", "aspectRatio", "resolution", "quality", "background"} {
+	for _, key := range []string{"prompt", "model", "aspect_ratio", "aspectRatio", "resolution", "quality", "background", "moderation", "thinking", "output_format", "outputFormat", "output_compression", "outputCompression", "transparentMatte", "transparent_matte", "hdRepair", "hd_repair", "blockRepair", "block_repair", "repairPrompt", "repair_prompt", "generationId", "generation_id", "backendGroupId", "backend_group_id", "apiPrompt", "promptOptimization"} {
 		if value := r.FormValue(key); value != "" {
 			encoded, _ := json.Marshal(value)
 			body[key] = encoded
@@ -258,7 +259,107 @@ func decodeImageEditBody(r *http.Request) (map[string]json.RawMessage, error) {
 	if rawString(body, "prompt") == "" || rawString(body, "model") == "" {
 		return nil, invalid("prompt and model are required")
 	}
+	session, err := b.requireSession(r)
+	if err != nil {
+		return nil, err
+	}
+	_, bucket, err := b.storageBuckets(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]map[string]any, 0, 4)
+	for _, field := range []string{"image", "image[]", "image_1", "image_2", "image_3", "image_4"} {
+		for _, fileHeaders := range r.MultipartForm.File[field] {
+			ref, putErr := b.stageMultipartImage(r, session.User.ID, bucket, fileHeaders)
+			if putErr != nil {
+				return nil, putErr
+			}
+			refs = append(refs, ref)
+		}
+	}
+	if len(refs) == 0 {
+		return nil, invalid("At least one source image is required")
+	}
+	encoded, _ := json.Marshal(refs)
+	body["images"] = encoded
+	if maskHeaders := r.MultipartForm.File["mask"]; len(maskHeaders) > 0 {
+		ref, putErr := b.stageMultipartImage(r, session.User.ID, bucket, maskHeaders[0])
+		if putErr != nil {
+			return nil, putErr
+		}
+		encoded, _ = json.Marshal(ref)
+		body["mask"] = encoded
+	}
 	return body, nil
+}
+
+func (b *backend) stageMultipartImage(r *http.Request, userID, bucket string, header *multipart.FileHeader) (map[string]any, error) {
+	if header == nil || header.Size <= 0 || header.Size > b.config.maxBodyBytes {
+		return nil, invalid("image file is empty or too large")
+	}
+	file, err := header.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, b.config.maxBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > b.config.maxBodyBytes {
+		return nil, &apiError{413, "REQUEST_BODY_TOO_LARGE", "请求体过大"}
+	}
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return nil, invalid("source files must be images")
+	}
+	ext := ".png"
+	if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
+		ext = ".jpg"
+	} else if strings.Contains(contentType, "webp") {
+		ext = ".webp"
+	}
+	key := fmt.Sprintf("%s/image-inputs/%s/%s%s", userID, newRequestID(), newRequestID(), ext)
+	if err := b.putStorageObject(r.Context(), bucket, key, data, contentType); err != nil {
+		return nil, err
+	}
+	return map[string]any{"source": "storage", "mimeType": contentType, "storageKey": key, "storageBucket": bucket, "byteLength": len(data)}, nil
+}
+
+func (b *backend) putStorageObject(ctx context.Context, bucket, key string, data []byte, contentType string) error {
+	endpoint, err := b.settingString(ctx, "STORAGE_ENDPOINT", "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(endpoint) == "" {
+		file := filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(file, data, 0o640)
+	}
+	access, err := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
+	if err != nil {
+		return err
+	}
+	secret, err := b.settingString(ctx, "STORAGE_SECRET_ACCESS_KEY", "")
+	if err != nil {
+		return err
+	}
+	region, err := b.settingString(ctx, "STORAGE_REGION", "auto")
+	if err != nil {
+		return err
+	}
+	if access == "" || secret == "" {
+		return &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+	if err != nil {
+		return err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: bytes.NewReader(data), ContentType: aws.String(contentType)})
+	return err
 }
 
 func (b *backend) imageStatus(r *http.Request, id string, userID string) (map[string]any, error) {
@@ -382,7 +483,7 @@ func (b *backend) handleImageEditSession(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return err
 	}
-	body, err := decodeImageEditBody(r)
+	body, err := b.decodeImageEditBody(r)
 	if err != nil {
 		return err
 	}
