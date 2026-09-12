@@ -267,7 +267,7 @@ func adminStatusErrorCategory(message *string) string {
 	return "platform"
 }
 func (b *backend) handleAdminStatusErrors(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.requireAdmin(r, false); err != nil {
+	if _, err := b.requireAdminViewer(r); err != nil {
 		return err
 	}
 	var in struct {
