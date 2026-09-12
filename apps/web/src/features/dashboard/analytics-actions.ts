@@ -7,7 +7,6 @@
  * readiness、范围校验、余额维护、用户归属和数据库访问统一由 UOL operation 负责。
  */
 import { usageSummaryInputSchema } from "@repo/shared/analytics/contracts";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { protectedAction } from "@repo/shared/safe-action";
 
 import {
@@ -23,9 +22,10 @@ export const refreshDashboardSnapshotAction = protectedAction
   .metadata({ action: "analytics.refreshDashboardSnapshot" })
   .schema(usageSummaryInputSchema)
   .action(async ({ ctx }): Promise<DashboardSnapshot> => {
-    const role = await getUserRoleById(ctx.userId);
     return loadDashboardSnapshot({
       userId: ctx.userId,
-      role,
+      // Go derives authorization from the forwarded Better Auth session. The
+      // legacy role field remains only for the shared data contract.
+      role: "user",
     });
   });

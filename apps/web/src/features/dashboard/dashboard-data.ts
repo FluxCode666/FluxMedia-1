@@ -11,7 +11,6 @@ import { logError } from "@repo/shared/logger";
 import { requestGoJson } from "@/server/go-backend-client";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
-import { ensureUolInitialized } from "@/server/uol-init";
 
 export type DashboardSnapshot = {
   summary: UsageSummaryOutput;
@@ -86,7 +85,9 @@ function reportRecentCreationsError(error: Error): void {
 }
 
 const defaultSnapshotDependencies: DashboardSnapshotDependencies = {
-  ensureInitialized: ensureUolInitialized,
+  // All three reads below are Go first-party endpoints. Keep the dependency
+  // hook for tests and older callers, but do not initialize the Next UOL.
+  ensureInitialized: async () => undefined,
   loadSummary: loadSummaryThroughUol,
   loadBalance: loadBalanceThroughUol,
   loadRecentCreations: loadRecentDashboardCreations,
