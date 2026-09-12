@@ -1,7 +1,10 @@
 # FluxMedia
 
 FluxMedia 是面向图片与视频生成业务的全栈平台。项目使用 Turborepo、Next.js、
-React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
+React、TypeScript、Go、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
+
+当前 Go 服务 `services/api-gateway` 是统一 backend 入口，直接连接 PostgreSQL 与
+Redis，并提供健康检查。页面仍由 Next.js `web` 渲染；后端 API 必须在 Go 中实现。
 
 ## 核心能力
 
@@ -16,27 +19,40 @@ React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI �
 
 ```text
 apps/web/                       Next.js 主应用、管理后台与媒体路由
+services/api-gateway/       Go backend HTTP 入口
 packages/database/              Drizzle schema、迁移与数据库连接
 packages/shared/                UOL、积分、存储、审核等共享业务逻辑
 packages/ui/                    共享 UI 组件
 deploy/                         生产 Compose、Nginx 与部署脚本
 ```
 
+## Go 迁移当前状态
+
+**全量迁移尚未完成，当前分支不能作为 Go 后端最终验收或生产发布版本。**
+Go 已有认证主流程、外部积分/模型查询和原生 SQL 迁移；媒体生成、后台任务、管理端
+操作、支付、存储等仍需迁移。前端仍在执行原 Next.js 业务。完整清单与验证记录见
+[迁移契约](docs/go-backend-migration.md)，生产发布会检查实际 Go 路由覆盖并阻止未完成的切换。
+
 ## 本地开发
 
-需要 Node.js 20+、pnpm 10、PostgreSQL 16。复制 `.env.example` 为
-`.env.local`，至少配置 `DATABASE_URL`、`BETTER_AUTH_SECRET` 与
-`BETTER_AUTH_URL`，然后执行：
+需要 Node.js 20+、pnpm 10、Go 1.26.6+ 以及 PostgreSQL/Redis。已有本地配置时继续使用原来的
+`.env` / `.env.local`，不要替换数据库名或认证密钥。新环境可参考 `.env.example`，配置
+`DATABASE_URL`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL` 与 `REDIS_*`。
+启动命令的配置优先级为：显式环境变量 > 根目录 `.env.local` > 根目录 `.env`。
 
 ```bash
 pnpm install
-pnpm --filter @repo/database db:push
-pnpm dev
 ```
 
-数据库迁移
+开发环境启动（Go 启动时会先执行未应用的 SQL 迁移；脚本运行时只接受 Go backend 的内部请求）：
+
 ```bash
-pnpm --filter @repo/database db:migrate
+make dev-infra-up
+make dev-migrate       # 可选：仅执行迁移后退出，使用相同的数据库配置
+make dev-backend       # Go backend :8080
+make dev-frontend      # Next.js 页面 :3000
+make dev-script-runtime # 私有 QuickJS 脚本运行时 :8090
+# 或使用 make dev 一次启动上述三个服务
 ```
 
 常用质量门：
@@ -117,14 +133,16 @@ test@test.com
 
 ## 容器与生产部署
 
-根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移与 Web 的自托管组合。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
-由外部基础设施提供，迁移只在维护 profile 中运行。
+根目录 `docker-compose.yml` 提供 PostgreSQL、Redis、backend 与 Web 的自托管组合；迁移
+由 backend entrypoint 执行。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
+由外部基础设施提供，统一启动命令为 `docker compose up -d backend web`。
 
 ```bash
 GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet
 docker compose up -d
 ```
 
-生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
+生产 Compose 会同时启动 backend、私有 script-runtime 和 Web；数据库迁移由 backend 容器
+entrypoint 执行。生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
 [deploy/README.md](deploy/README.md)。统一号池调度契约见
 [docs/image-backend-pool-scheduling.md](docs/image-backend-pool-scheduling.md)。

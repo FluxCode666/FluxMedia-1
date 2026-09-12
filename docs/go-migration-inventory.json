@@ -1,0 +1,1635 @@
+{
+  "routes": [
+    {
+      "path": "/api/admin/model-configuration",
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/admin/model-configuration/route.ts"
+    },
+    {
+      "path": "/api/admin/operations/exports/[taskId]/download",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/admin/operations/exports/[taskId]/download/route.ts"
+    },
+    {
+      "path": "/api/admin/site-branding/logo",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/admin/site-branding/logo/route.ts"
+    },
+    {
+      "path": "/api/admin/videos/reconciliation",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/admin/videos/reconciliation/route.ts"
+    },
+    {
+      "path": "/api/auth/[...all]",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/auth/[...all]/route.ts"
+    },
+    {
+      "path": "/api/auth/registration-verification",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/auth/registration-verification/route.ts"
+    },
+    {
+      "path": "/api/images/edit",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/images/edit/route.ts"
+    },
+    {
+      "path": "/api/images/generate",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/images/generate/route.ts"
+    },
+    {
+      "path": "/api/images/status/[id]",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/images/status/[id]/route.ts"
+    },
+    {
+      "path": "/api/jobs/credits/expire",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/jobs/credits/expire/route.ts"
+    },
+    {
+      "path": "/api/jobs/images/expire-pending",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/jobs/images/expire-pending/route.ts"
+    },
+    {
+      "path": "/api/mcp/admin",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/mcp/admin/route.ts"
+    },
+    {
+      "path": "/api/mcp/user",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/mcp/user/route.ts"
+    },
+    {
+      "path": "/api/payments/epay/return",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/payments/epay/return/route.ts"
+    },
+    {
+      "path": "/api/search",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/search/route.ts"
+    },
+    {
+      "path": "/api/session/current",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/session/current/route.ts"
+    },
+    {
+      "path": "/api/site-logo",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/site-logo/route.ts"
+    },
+    {
+      "path": "/api/storage/[bucket]/[...key]",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/storage/[bucket]/[...key]/route.ts"
+    },
+    {
+      "path": "/api/upload/presigned",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/upload/presigned/route.ts"
+    },
+    {
+      "path": "/api/v1/credits",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1/credits/route.ts"
+    },
+    {
+      "path": "/api/v1/images/[taskId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1/images/[taskId]/route.ts"
+    },
+    {
+      "path": "/api/v1/images/edits",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1/images/edits/route.ts"
+    },
+    {
+      "path": "/api/v1/images/generations",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1/images/generations/route.ts"
+    },
+    {
+      "path": "/api/v1/models",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1/models/route.ts"
+    },
+    {
+      "path": "/api/v1/videos",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1/videos/route.ts"
+    },
+    {
+      "path": "/api/v1/videos/[taskId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1/videos/[taskId]/route.ts"
+    },
+    {
+      "path": "/api/v1/videos/capabilities",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1/videos/capabilities/route.ts"
+    },
+    {
+      "path": "/api/v1/videos/generations",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1/videos/generations/route.ts"
+    },
+    {
+      "path": "/api/v1beta/models/[model]:predictLongRunning",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1beta/models/[model]:predictLongRunning/route.ts"
+    },
+    {
+      "path": "/api/v1beta/models/[model]/operations/[operationId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/api/v1beta/models/[model]/operations/[operationId]/route.ts"
+    },
+    {
+      "path": "/api/v1beta/models/[model]/predictLongRunning",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/v1beta/models/[model]/predictLongRunning/route.ts"
+    },
+    {
+      "path": "/api/videos/[taskId]",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/videos/[taskId]/route.ts"
+    },
+    {
+      "path": "/api/videos/capabilities",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/api/videos/capabilities/route.ts"
+    },
+    {
+      "path": "/api/videos/generate",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/videos/generate/route.ts"
+    },
+    {
+      "path": "/api/webhooks/alipay",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/webhooks/alipay/route.ts"
+    },
+    {
+      "path": "/api/webhooks/creem",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/webhooks/creem/route.ts"
+    },
+    {
+      "path": "/api/webhooks/epay",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/webhooks/epay/route.ts"
+    },
+    {
+      "path": "/moderate",
+      "methods": [
+        "POST"
+      ],
+      "source": "apps/web/src/app/moderate/route.ts"
+    },
+    {
+      "path": "/r/[code]",
+      "methods": [
+        "GET"
+      ],
+      "source": "apps/web/src/app/r/[code]/route.ts"
+    },
+    {
+      "path": "/v1/credits",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1/credits/route.ts"
+    },
+    {
+      "path": "/v1/images/[taskId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1/images/[taskId]/route.ts"
+    },
+    {
+      "path": "/v1/images/edits",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1/images/edits/route.ts"
+    },
+    {
+      "path": "/v1/images/generations",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1/images/generations/route.ts"
+    },
+    {
+      "path": "/v1/models",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1/models/route.ts"
+    },
+    {
+      "path": "/v1/videos",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1/videos/route.ts"
+    },
+    {
+      "path": "/v1/videos/[taskId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1/videos/[taskId]/route.ts"
+    },
+    {
+      "path": "/v1/videos/capabilities",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1/videos/capabilities/route.ts"
+    },
+    {
+      "path": "/v1/videos/generations",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1/videos/generations/route.ts"
+    },
+    {
+      "path": "/v1beta/models/[model]:predictLongRunning",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1beta/models/[model]:predictLongRunning/route.ts"
+    },
+    {
+      "path": "/v1beta/models/[model]/operations/[operationId]",
+      "methods": [
+        "GET",
+        "OPTIONS"
+      ],
+      "source": "apps/web/src/app/v1beta/models/[model]/operations/[operationId]/route.ts"
+    },
+    {
+      "path": "/v1beta/models/[model]/predictLongRunning",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "source": "apps/web/src/app/v1beta/models/[model]/predictLongRunning/route.ts"
+    }
+  ],
+  "actions": [
+    {
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/actions.ts",
+      "exports": [
+        "refreshGlobalStatusAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/dashboard/analytics-actions.ts",
+      "exports": [
+        "refreshDashboardSnapshotAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/data-dashboard/actions.ts",
+      "exports": [
+        "refreshDataDashboardAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/data-dashboard/admin-actions.ts",
+      "exports": [
+        "refreshAdminDataDashboardAction",
+        "searchAdminDataDashboardUsersAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/image-backend-pool/actions.ts",
+      "exports": [
+        "getAdminImageBackendPoolAction",
+        "listAdminImageBackendMembersAction",
+        "listAdminImageBackendGroupsAction",
+        "listImageSizeConfigsAction",
+        "saveImageSizeConfigAction",
+        "deleteImageSizeConfigAction",
+        "saveImageBackendGroupAction",
+        "deleteImageBackendGroupAction",
+        "saveImageBackendMemberAction",
+        "importImageBackendMembersAction",
+        "resetImageBackendMemberStatusAction",
+        "setImageBackendMemberEnabledAction",
+        "deleteImageBackendMemberAction",
+        "testApiUpstreamAdapterAction",
+        "getApiUpstreamRuntimeDiagnosticsAction",
+        "getImageBackendGroupOptionsAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/image-generation/actions.ts",
+      "exports": [
+        "generateImageAction",
+        "deleteGenerationAction",
+        "batchDeleteGenerationAction",
+        "getMyGalleryItemsAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/image-generation/history-actions.ts",
+      "exports": [
+        "getMyHistoryRecordsAction",
+        "getAdminHistoryRecordsAction",
+        "getAdminHistoryRequestSnapshotAction",
+        "getVideoInputsAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/marketing/actions/sla-status.ts",
+      "exports": [
+        "runMarketingSlaVisibilityUpdate",
+        "updateMarketingSlaStatusVisibilityAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/model-configuration/actions.ts",
+      "exports": [
+        "getModelConfigurationAction",
+        "listModelConfigurationsAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "exports": [
+        "recordDashboardWebVisitAction",
+        "getOperationsOverviewAction",
+        "getOperationsDetailAction",
+        "createOperationsExportAction",
+        "listOperationsExportsAction",
+        "retryOperationsExportAction",
+        "prepareOperationsExportDownloadAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/payment/admin/actions.ts",
+      "exports": [
+        "getAdminPaymentOverviewAction",
+        "listAdminPaymentOrdersAction",
+        "searchAdminPaymentOrderUsersAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/payment/credit-top-up-actions.ts",
+      "exports": [
+        "getCreditTopUpOptionsAction",
+        "createCreditTopUpCheckoutAction",
+        "getCreditTopUpOrderStatusAction",
+        "getCreditPaymentStatusAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/referrals/actions.ts",
+      "exports": [
+        "getMyReferralDashboardAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/settings/actions/external-api-key.ts",
+      "exports": [
+        "getExternalApiKeys",
+        "createExternalApiKey",
+        "revokeExternalApiKey",
+        "deleteExternalApiKey",
+        "updateExternalApiKeyGroup",
+        "updateExternalApiKeyQuota"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/settings/actions/update-profile.ts",
+      "exports": [
+        "updateProfileAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/settings/actions/update-time-zone.ts",
+      "exports": [
+        "updateTimeZoneAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/support/ticket-actions.ts",
+      "exports": [
+        "listTicketsAction",
+        "listTicketMessagesAction",
+        "markTicketSeenAction"
+      ]
+    },
+    {
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "exports": [
+        "getMyWalletBalanceAction",
+        "getMyWalletTopUpOptionsAction",
+        "getMyWalletRecentPaymentOrdersAction",
+        "getMyWalletPageDataAction"
+      ]
+    },
+    {
+      "source": "packages/shared/src/announcements/actions.ts",
+      "exports": [
+        "countUnreadAnnouncementsForUser",
+        "markAnnouncementIdsReadForUser",
+        "getMyUnreadAnnouncementCountAction",
+        "markAllAnnouncementsReadAction",
+        "markAnnouncementReadAction",
+        "createAnnouncementAction",
+        "updateAnnouncementAction",
+        "deleteAnnouncementAction",
+        "toggleAnnouncementPublishAction"
+      ]
+    },
+    {
+      "source": "packages/shared/src/credits/actions.ts",
+      "exports": [
+        "grantRegistrationBonus",
+        "getMyCreditsBalance",
+        "getMyActiveBatches",
+        "getMyTransactions",
+        "useCredits",
+        "checkCreditsAvailable",
+        "createCreditsPurchaseCheckout",
+        "getCreditPackages"
+      ]
+    },
+    {
+      "source": "packages/shared/src/mail/actions.ts",
+      "exports": [
+        "subscribeNewsletter",
+        "unsubscribeNewsletter",
+        "checkSubscriptionStatus"
+      ]
+    },
+    {
+      "source": "packages/shared/src/storage/actions.ts",
+      "exports": [
+        "getSignedUploadUrlAction",
+        "deleteFileAction"
+      ]
+    },
+    {
+      "source": "packages/shared/src/support/actions/admin-users.ts",
+      "exports": [
+        "getAllUsersAction",
+        "setUserModerationPolicyAction",
+        "setUserImageGenerationConcurrencyAction",
+        "getUserDetailAction",
+        "updateUserRoleAction",
+        "banUserAction",
+        "adminGrantCreditsAction",
+        "adminAdjustCreditsAction",
+        "setUserCreditsStatusAction",
+        "setExternalApiKeyStatusAction",
+        "createUserAction",
+        "updateUserProfileAction",
+        "setUserPasswordAction"
+      ]
+    },
+    {
+      "source": "packages/shared/src/support/actions/ticket.ts",
+      "exports": [
+        "createTicketAction",
+        "addTicketMessageAction",
+        "getAdminUnreadTicketCountAction",
+        "getMyUnreadTicketCountAction",
+        "adminReplyTicketAction",
+        "updateTicketStatusAction"
+      ]
+    },
+    {
+      "source": "packages/shared/src/system-settings/actions/index.ts",
+      "exports": [
+        "getSystemSettingsAction",
+        "getGlobalModelPricingAction",
+        "getGlobalModerationPolicyAction",
+        "setGlobalModerationPolicyAction",
+        "updateSystemSettingsAction",
+        "setSiteLogoAction",
+        "importSystemSettingsFromEnvAction",
+        "initializeSystemSettingsDefaultsAction"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "name": "analytics.getAdminDataDashboard",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/analytics.ts"
+    },
+    {
+      "name": "analytics.getHomepageGenerationSlaStats",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/homepage-reliability.ts"
+    },
+    {
+      "name": "analytics.getMyDataDashboard",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/analytics.ts"
+    },
+    {
+      "name": "analytics.getMyUsageSummary",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/analytics.ts"
+    },
+    {
+      "name": "analytics.getMyUsageTrends",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/analytics.ts"
+    },
+    {
+      "name": "analytics.searchAdminDataDashboardUsers",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/analytics.ts"
+    },
+    {
+      "name": "content.listBlogPosts",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/content.ts"
+    },
+    {
+      "name": "content.listPseoPages",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/content.ts"
+    },
+    {
+      "name": "credits.adminAdjust",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.adminGrant",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.checkAvailable",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.consume",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.createPurchaseCheckout",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.createTopUpCheckout",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.freeze",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.fulfillAlipayTopUp",
+      "access": "{ kind: \"webhook\", provider: \"alipay\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.fulfillCreemTopUp",
+      "access": "{ kind: \"webhook\", provider: \"creem\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.fulfillEpayTopUp",
+      "access": "{ kind: \"webhook\", provider: \"epay\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getBalance",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getMyActiveBatches",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getMyBalance",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getMyTransactions",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getMyUsageEventDetail",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getPaymentStatus",
+      "access": "{ kind: \"owner\", resource: \"payment_order\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getTopUpOptions",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getTopUpOrderStatus",
+      "access": "{ kind: \"owner\", resource: \"payment_order\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getUserActiveBatches",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getUserTransactionCount",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.getUserTransactions",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.grant",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.listMyUsageEvents",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.processExpired",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.refund",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.runExpireJob",
+      "access": "{ kind: \"cron\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.setStatus",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.unfreeze",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "credits.useCredits",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/credits.ts"
+    },
+    {
+      "name": "externalApi.adminSetKeyStatus",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.createKey",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.deleteKey",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.getCredits",
+      "access": "{ kind: \"apiKey\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.getModels",
+      "access": "{ kind: \"apiKey\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.getTask",
+      "access": "{ kind: \"apiKey\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.listKeys",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.revokeKey",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.updateKeyGroup",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "externalApi.updateKeyQuota",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/external-api.ts"
+    },
+    {
+      "name": "image.batchDelete",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.delete",
+      "access": "{ kind: \"owner\", resource: \"generation\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.enqueueAsync",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.generate",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.generateAction",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getAdminHistoryRequestSnapshot",
+      "access": "{\n    kind: \"roles\",\n    roles: [\"observer_admin\", \"admin\", \"super_admin\"],\n  }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getAsyncTask",
+      "access": "{ kind: \"owner\", resource: \"image async task\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getEffectiveConfig",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getGenerationById",
+      "access": "{ kind: \"owner\", resource: \"generation\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getGenerationStats",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getStatus",
+      "access": "{ kind: \"owner\", resource: \"generation\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getUserGenerationCount",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getUserGenerations",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.getUserRecentGenerations",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.listAdminHistoryRecords",
+      "access": "{\n    kind: \"roles\",\n    roles: [\"observer_admin\", \"admin\", \"super_admin\"],\n  }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.listAdminStatusErrors",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/admin-status.ts"
+    },
+    {
+      "name": "image.listMyGallery",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.listMyHistoryRecords",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.maintainHistoryCountProjection",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "image.processAsyncTask",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/image-generation.ts"
+    },
+    {
+      "name": "mediaLimits.getEffective",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/media-limits.ts"
+    },
+    {
+      "name": "mediaLimits.setUserConcurrencyOverride",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/media-limits.ts"
+    },
+    {
+      "name": "modelMarketplace.listPublicModels",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/model-marketplace.ts"
+    },
+    {
+      "name": "moderation.getGlobalRiskPolicy",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.getProviders",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.getUserRiskPolicy",
+      "access": "{\n    kind: \"roles\",\n    roles: [\"observer_admin\", \"admin\", \"super_admin\"],\n  }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.isEnabled",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.moderateContent",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.proxyModerate",
+      "access": "{ kind: \"proxySecret\" }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.resolveEffectiveRiskLevel",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.setGlobalRiskLevel",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "moderation.setUserRiskLevelOverride",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/moderation.ts"
+    },
+    {
+      "name": "operations.createExport",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.ensureCurrentEpoch",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/operations-dashboard-facts.ts"
+    },
+    {
+      "name": "operations.expireExports",
+      "access": "{ kind: \"cronJob\", job: \"operations-export-retention\" }",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.getDetail",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.getOverview",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.listExports",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.openLocalExportDownload",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.prepareExportDownload",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.processExports",
+      "access": "{ kind: \"cronJob\", job: \"operations-export\" }",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "operations.recordWebVisit",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/operations-dashboard-facts.ts"
+    },
+    {
+      "name": "operations.retryExport",
+      "access": "adminAccess",
+      "source": "packages/shared/src/uol/operations/operations-dashboard.ts"
+    },
+    {
+      "name": "payment.getAdminOverview",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/payment.ts"
+    },
+    {
+      "name": "payment.listAdminOrders",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/payment.ts"
+    },
+    {
+      "name": "payment.listMyRecentOrders",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/payment.ts"
+    },
+    {
+      "name": "payment.recoverFulfillments",
+      "access": "{ kind: \"cronJob\", job: \"payment-fulfillment\" }",
+      "source": "packages/shared/src/uol/operations/payment-fulfillment.ts"
+    },
+    {
+      "name": "payment.searchAdminOrderUsers",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/payment.ts"
+    },
+    {
+      "name": "pool.deleteGroup",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.deleteImageSizeConfig",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.deleteMember",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.getAdminPool",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.getApiUpstreamRuntimeDiagnostics",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.getGroupOptions",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.getImageSizeConfigOptions",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.listAdminGroups",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.listAdminMembers",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.listImageSizeConfigs",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.resetMemberStatus",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.saveGroup",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.saveImageSizeConfig",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.saveMember",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.setMemberEnabled",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.testApiUpstreamAdapter",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "referral.getMyDashboard",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/referrals.ts"
+    },
+    {
+      "name": "referral.listMyRelationships",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/referrals.ts"
+    },
+    {
+      "name": "settings.bootstrap",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.deleteModelConfigurationEntry",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/model-marketplace.ts"
+    },
+    {
+      "name": "settings.getHomepageSlaVisibility",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/homepage-reliability.ts"
+    },
+    {
+      "name": "settings.getModelConfiguration",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/model-marketplace.ts"
+    },
+    {
+      "name": "settings.getModelPricing",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.getPaginationConfig",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.getSiteBranding",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.getSnapshot",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.getValue",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.importFromEnv",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.initializeDefaults",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.listModelConfigurations",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/model-marketplace.ts"
+    },
+    {
+      "name": "settings.setMarketingSlaVisibility",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/system-settings-marketing.ts"
+    },
+    {
+      "name": "settings.setSiteLogo",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.syncToEnv",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.update",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "settings.updateModelConfigurationEntry",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/model-marketplace.ts"
+    },
+    {
+      "name": "settings.uploadSiteLogo",
+      "access": "{ kind: \"roles\", roles: [\"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/system-settings.ts"
+    },
+    {
+      "name": "storage.createPresignedUpload",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.deleteFile",
+      "access": "{ kind: \"owner\", resource: \"storage-file\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.deleteObject",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.getObject",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.getSignedReadUrl",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.getSignedUploadUrl",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.putObject",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "storage.readObject",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/storage.ts"
+    },
+    {
+      "name": "support.addMessage",
+      "access": "{ kind: \"owner\", resource: \"ticket\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.adminReply",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.countUnreadAnnouncements",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.createAnnouncement",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.createTicket",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.deleteAnnouncement",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getAdminAnnouncements",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getAdminTicketDetail",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getAdminUnreadCount",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getAllTickets",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getDashboardConfiguration",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getMyTickets",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getMyUnreadCount",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.getTicketDetail",
+      "access": "{ kind: \"owner\", resource: \"ticket\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.listAdminAnnouncementPage",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.listAnnouncements",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.listMyAnnouncementPage",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.markAdminTicketSeen",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.markAllAnnouncementsRead",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.markAnnouncementRead",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.markMyTicketSeen",
+      "access": "{ kind: \"owner\", resource: \"ticket\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.toggleAnnouncementPublish",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.updateAnnouncement",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "support.updateTicketStatus",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/support.ts"
+    },
+    {
+      "name": "user.ban",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.bootstrap",
+      "access": "{ kind: \"system\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.create",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.getCurrentSession",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.getDetail",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.getMyTimeZone",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.list",
+      "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.sendVerificationCode",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.setCreditsStatus",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.setExternalApiKeyStatus",
+      "access": "{ kind: \"admin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.setPassword",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.updateMyTimeZone",
+      "access": "{ kind: \"user\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.updateProfile",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.updateRole",
+      "access": "{ kind: \"superAdmin\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "user.verifyCode",
+      "access": "{ kind: \"public\" }",
+      "source": "packages/shared/src/uol/operations/user-auth.ts"
+    },
+    {
+      "name": "video.generate",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    },
+    {
+      "name": "video.getGeminiOperation",
+      "access": "{ kind: \"owner\", resource: \"Gemini video Operation\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    },
+    {
+      "name": "video.getInputs",
+      "access": "{ kind: \"owner\", resource: \"video task inputs\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    },
+    {
+      "name": "video.getStatus",
+      "access": "{ kind: \"owner\", resource: \"video task\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    },
+    {
+      "name": "video.listCapabilities",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    },
+    {
+      "name": "video.requestAccountInputCleanup",
+      "access": "{ kind: \"protected\" }",
+      "source": "packages/shared/src/uol/operations/video-generation.ts"
+    }
+  ],
+  "directDatabaseImports": [
+    "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/page.tsx",
+    "apps/web/src/app/[locale]/(dashboard)/dashboard/settings/page.tsx",
+    "apps/web/src/app/api/images/status/[id]/route.ts",
+    "apps/web/src/app/api/mcp/user/route.ts",
+    "apps/web/src/app/api/session/current/route.ts",
+    "apps/web/src/app/api/storage/[bucket]/[...key]/route.ts",
+    "apps/web/src/features/dashboard/analytics-service.ts",
+    "apps/web/src/features/dashboard/dashboard-data.ts",
+    "apps/web/src/features/dashboard/output-usage-read-model.ts",
+    "apps/web/src/features/data-dashboard/admin-data-dashboard-user-search.ts",
+    "apps/web/src/features/data-dashboard/data-dashboard-service.ts",
+    "apps/web/src/features/external-api/auth.ts",
+    "apps/web/src/features/external-api/key-management-service.ts",
+    "apps/web/src/features/external-api/platform-model-catalog-service.ts",
+    "apps/web/src/features/external-api/quota.ts",
+    "apps/web/src/features/image-generation/admin-history-repository.ts",
+    "apps/web/src/features/image-generation/gallery-repository.ts",
+    "apps/web/src/features/image-generation/generation-deletion-service.ts",
+    "apps/web/src/features/image-generation/history-repository.ts",
+    "apps/web/src/features/image-generation/operations.ts",
+    "apps/web/src/features/image-generation/queries.ts",
+    "apps/web/src/features/image-generation/sla.ts",
+    "apps/web/src/features/image-generation/video-callback-delivery.ts",
+    "apps/web/src/features/image-generation/video-callback-policy.ts",
+    "apps/web/src/features/image-generation/video-input-assets.ts",
+    "apps/web/src/features/image-generation/video-operations.ts",
+    "apps/web/src/features/operations-dashboard/commercial-repository.ts",
+    "apps/web/src/features/operations-dashboard/content-repository.ts",
+    "apps/web/src/features/operations-dashboard/detail-commercial-sql.ts",
+    "apps/web/src/features/operations-dashboard/detail-content-sql.ts",
+    "apps/web/src/features/operations-dashboard/detail-growth-sql.ts",
+    "apps/web/src/features/operations-dashboard/export-task-cleanup-repository.ts",
+    "apps/web/src/features/operations-dashboard/export-task-contracts.ts",
+    "apps/web/src/features/operations-dashboard/export-task-create-repository.ts",
+    "apps/web/src/features/operations-dashboard/export-task-lease-repository.ts",
+    "apps/web/src/features/operations-dashboard/export-task-read-repository.ts",
+    "apps/web/src/features/operations-dashboard/growth-repository.ts",
+    "apps/web/src/features/operations-dashboard/health-adapter.ts",
+    "apps/web/src/features/operations-dashboard/operations-facts-repository.ts",
+    "apps/web/src/features/payment/admin/admin-payment-repository.ts",
+    "apps/web/src/features/payment/credit-top-up.ts",
+    "apps/web/src/features/payment/creem-fulfillment.ts",
+    "apps/web/src/features/payment/epay-fulfillment.ts",
+    "apps/web/src/features/payment/payment-fulfillment-service.ts",
+    "apps/web/src/features/payment/payment-lifecycle-service.ts",
+    "apps/web/src/features/payment/user-payment-orders.ts",
+    "apps/web/src/features/settings/actions/update-profile.ts",
+    "apps/web/src/features/site-branding/service.ts",
+    "apps/web/src/features/usage-log/repository.ts",
+    "apps/web/src/server/internal-job-scheduler.ts",
+    "apps/web/src/server/uol-bindings/admin-status.ts",
+    "packages/shared/src/announcements/actions.ts",
+    "packages/shared/src/announcements/list-service.ts",
+    "packages/shared/src/auth/bootstrap-super-admin.ts",
+    "packages/shared/src/auth/index.ts",
+    "packages/shared/src/auth/registration-identity.ts",
+    "packages/shared/src/auth/registration-verification-plugin.ts",
+    "packages/shared/src/auth/registration-verification.ts",
+    "packages/shared/src/auth/role-server.ts",
+    "packages/shared/src/credits/actions.ts",
+    "packages/shared/src/credits/core.ts",
+    "packages/shared/src/credits/purchase-orders.ts",
+    "packages/shared/src/credits/usage-read-model.ts",
+    "packages/shared/src/database-errors.ts",
+    "packages/shared/src/generation-maintenance.ts",
+    "packages/shared/src/mail/actions.ts",
+    "packages/shared/src/mcp/user-key-actions.ts",
+    "packages/shared/src/payment/epay.ts",
+    "packages/shared/src/referrals/service.ts",
+    "packages/shared/src/support/actions/admin-users.ts",
+    "packages/shared/src/support/actions/ticket.ts",
+    "packages/shared/src/support/admin-user-list-service.ts",
+    "packages/shared/src/support/ticket-list-service.ts",
+    "packages/shared/src/system-settings/actions/index.ts",
+    "packages/shared/src/system-settings/bootstrap.ts",
+    "packages/shared/src/system-settings/env-file.ts",
+    "packages/shared/src/system-settings/index.ts",
+    "packages/shared/src/time-zone/server.ts",
+    "packages/shared/src/uol/invoke.ts"
+  ]
+}

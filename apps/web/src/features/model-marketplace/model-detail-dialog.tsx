@@ -447,7 +447,7 @@ export function ModelDetailDialog({
             <ModelMarketplaceCover
               model={model}
               sizes="96vw"
-              className="object-contain"
+              className="object-cover"
             />
           </div>
         </DialogContent>

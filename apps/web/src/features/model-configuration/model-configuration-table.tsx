@@ -61,7 +61,7 @@ async function readStableErrorCode(response: Response): Promise<string | null> {
 }
 
 /**
- * 渲染固定 3:2 缩略图，并在自定义图失败时只回退一次本地默认图。
+ * 渲染固定 3:2 居中覆盖的缩略图，并在自定义图失败时只回退一次本地默认图。
  *
  * @param entry - 当前管理条目。
  * @returns 模型图片或占位；两种形态尺寸完全一致。

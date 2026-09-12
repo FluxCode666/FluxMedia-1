@@ -79,7 +79,7 @@ function VideoCapabilitySummary({ model }: { model: PublicVideoModel }) {
 }
 
 /**
- * 渲染带一次性本地兜底的 3:2 模型封面。
+ * 渲染带一次性本地兜底的 3:2 模型封面；展示时居中覆盖容器。
  *
  * @param props - 公开模型、图片尺寸提示和可选样式。
  * @returns 直接加载第一方 WebP 的固定比例媒体；失败后只切换一次类别默认图。

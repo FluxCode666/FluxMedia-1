@@ -180,7 +180,7 @@ export interface ModelConfigurationCoverImageProcessor {
    * 解码并规范化不可信图片字节。
    *
    * @param bytes - 已通过共享输入大小上限的原始文件字节。
-   * @returns 去元数据、3:2 且内容哈希已计算的静态 WebP。
+   * @returns 去元数据、保持原图比例且内容哈希已计算的静态 WebP。
    * @throws 图片非法或处理失败时显式上抛，调用方此时不会触达存储。
    */
   process(bytes: Uint8Array): Promise<ProcessedModelConfigurationCover>;

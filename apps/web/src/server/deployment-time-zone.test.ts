@@ -75,15 +75,15 @@ function readEnvExampleValue(source: string, key: string): string | undefined {
 }
 
 describe("deployment time-zone contract", () => {
-  it("keeps Node and migration processes in UTC", () => {
-    expect(readComposeService("migrate")).toContain("      TZ: UTC");
+  it("keeps Node and Go backend migration processes in UTC", () => {
+    expect(readComposeService("backend")).toContain("      TZ: UTC");
     expect(readComposeService("web")).toContain("      TZ: UTC");
     expect(readEnvExampleValue(rootEnvExample, "TZ")).toBe("UTC");
     expect(readEnvExampleValue(deployEnvExample, "TZ")).toBe("UTC");
   });
 
   it("uses Asia/Shanghai only as the default display time zone", () => {
-    expect(readComposeService("migrate")).toContain(
+    expect(readComposeService("backend")).toContain(
       `      APP_TIME_ZONE: \${APP_TIME_ZONE:-Asia/Shanghai}`
     );
     expect(readComposeService("web")).toContain(

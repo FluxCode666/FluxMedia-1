@@ -1,0 +1,61 @@
+name: Go backend
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [codex/go-backend-migration]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: fluxmedia_go_test_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fluxmedia_go_test_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+      GO_BACKEND_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+      BETTER_AUTH_SECRET: ci-test-auth-secret
+      REDIS_HOST: 127.0.0.1
+      REDIS_ADDR: 127.0.0.1:6379
+      REDIS_PASSWORD: ci-test-redis-password
+      REDIS_DB: "4"
+      REDIS_TLS: "false"
+      GOTOOLCHAIN: go1.26.6
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Set Redis test password
+        run: docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass ci-test-redis-password
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: services/api-gateway/go.sum
+      - name: Check Go formatting
+        working-directory: services/api-gateway
+        run: test -z "$(gofmt -l *.go)"
+      - name: Verify dependencies and static analysis
+        working-directory: services/api-gateway
+        run: |
+          go mod verify
+          go vet ./...
+      - name: PostgreSQL and Redis integration with race detection
+        working-directory: services/api-gateway
+        run: go test -race -tags=integration ./...
+      - name: Scan reachable vulnerabilities
+        working-directory: services/api-gateway
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

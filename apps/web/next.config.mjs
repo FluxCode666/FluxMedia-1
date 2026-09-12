@@ -15,6 +15,14 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   assetPrefix: process.env.NEXT_PUBLIC_ASSET_PREFIX || "",
+  async rewrites() {
+    return [
+      {
+        source: "/api/go/:path*",
+        destination: `${process.env.GO_BACKEND_URL || "http://localhost:8080"}/:path*`,
+      },
+    ];
+  },
   async headers() {
     return [
       {

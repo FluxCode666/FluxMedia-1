@@ -45,23 +45,6 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    image: ghcr.io/meowfree/gpt2image-pro-migrate:${GPT2IMAGE_IMAGE_TAG:-latest}
-    env_file:
-      - ${GPT2IMAGE_ENV_FILE:-.env}
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-gpt2image}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gpt2image}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_USERNAME: ${REDIS_USERNAME:-}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB: ${REDIS_DB:-4}
-      REDIS_TLS: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   web:
     image: ghcr.io/meowfree/gpt2image-pro-web:${GPT2IMAGE_IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -83,9 +66,10 @@ services:
       #   否则登录回调/Cookie 域不匹配,超管也进不去。
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填:会话签名密钥,未设置将无法登录}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL 必填:须为站点公网访问地址(如 https://your-domain),否则登录失败}
+      GO_BACKEND_URL: ${GO_BACKEND_URL:-http://backend:8080}
       LOCAL_STORAGE_PATH: /app/storage
-    ports:
-      - "${WEB_PORT:-3000}:3000"
+    expose:
+      - "3000"
     volumes:
       - app-storage:/app/storage
     depends_on:
@@ -93,8 +77,74 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+
+  # Go backend 统一持有 PostgreSQL/Redis；数据库迁移在 entrypoint 内执行。
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-gateway
+    restart: unless-stopped
+    env_file:
+      - ${GPT2IMAGE_ENV_FILE:-.env}
+    environment:
+      GO_BACKEND_BIND: :8080
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gpt2image}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gpt2image}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_USERNAME: ${REDIS_USERNAME:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_DB: ${REDIS_DB:-4}
+      REDIS_TLS: "false"
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}
+      TZ: UTC
+      GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
+      GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
+      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
+      GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+    ports:
+      - "${GO_BACKEND_PORT:-3000}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      script-runtime:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/backend", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+
+  # 仅供 Go backend 使用的 JavaScript/QuickJS 脚本运行时。没有宿主机端口，不能被浏览器
+  # 或公网直接访问；Go 在外呼前后负责所有鉴权、媒体令牌和供应商协议校验。
+  script-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-upstream-script-runtime
+    restart: unless-stopped
+    environment:
+      SCRIPT_RUNTIME_BIND: :8090
+      API_UPSTREAM_SCRIPT_WORKER_COUNT: ${API_UPSTREAM_SCRIPT_WORKER_COUNT:-1}
+      API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB: ${API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB:-32}
+      API_UPSTREAM_SCRIPT_STACK_LIMIT_KB: ${API_UPSTREAM_SCRIPT_STACK_LIMIT_KB:-512}
+      SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
 
   # 影子流量 relay 默认不启动。启用后，调用方把明确允许的内网 JSON 请求发给它；
   # relay 同步转发生产端，异步投递 A/B 评估端。两个目标与密钥均由部署环境固定配置。

@@ -33,7 +33,7 @@ export type ModelCoverFieldProps = {
  * 渲染封面预览、替换、移除与恢复当前值操作。
  *
  * @param props - 当前服务端封面、草稿动作、权限与变更回调。
- * @returns 固定 3:2 预览和仅在可编辑时出现的文件操作。
+ * @returns 固定 3:2 的居中覆盖预览和仅在可编辑时出现的文件操作。
  * @sideEffects 选择文件时创建对象 URL；替换、恢复和卸载时及时 revoke；不发网络请求。
  * @failure 浏览器 MIME/空文件预检失败只提示并保留旧草稿；图片加载失败最多回退一次本地封面。
  */
@@ -180,7 +180,7 @@ export function ModelCoverField({
         </div>
       ) : null}
       <p className={cn("text-xs text-muted-foreground", disabled && "mt-1")}>
-        JPEG、PNG 或 WebP；保存后统一裁为 3:2 WebP。
+        JPEG、PNG 或 WebP；保存后等比缩放为不超过 1200×800 的 WebP，不裁剪内容。
       </p>
     </div>
   );
