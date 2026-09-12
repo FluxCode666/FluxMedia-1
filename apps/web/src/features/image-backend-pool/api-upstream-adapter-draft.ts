@@ -120,7 +120,7 @@ function createRequestSample(
         body: {
           model: "gpt-image-2",
           prompt: "A lighthouse at sunset",
-          aspectRatio: "1:1",
+          aspect_ratio: "1:1",
           resolution: "1k",
           client_request_id: "sample-image-request",
         },
