@@ -30,7 +30,11 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 			mux.HandleFunc(method+" "+prefix+"/images/generations", b.externalEndpoint(b.handleImageCreate))
 			mux.HandleFunc(method+" "+prefix+"/images/edits", b.externalEndpoint(b.handleImageEdit))
 			mux.HandleFunc(method+" "+prefix+"/videos/generations", b.externalEndpoint(b.handleVideoCreate))
-			mux.HandleFunc(method+" "+prefix+"/videos", b.externalEndpoint(b.handleVideoCreate))
+			if method == "POST" {
+				mux.HandleFunc(method+" "+prefix+"/videos", b.externalEndpoint(b.handleDeprecatedVideoCreate))
+			} else {
+				mux.HandleFunc(method+" "+prefix+"/videos", b.externalEndpoint(b.handleVideoCreate))
+			}
 			mux.HandleFunc(method+" "+prefix+"/videos/capabilities", b.externalEndpoint(b.handleVideoCapabilities))
 		}
 		// Capabilities is a read-only discovery endpoint. Register GET explicitly
@@ -98,6 +102,14 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("DELETE /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("GET /api/admin/operations/exports/{taskId}/download", b.endpoint(b.handleExportDownload))
+}
+
+// handleDeprecatedVideoCreate preserves the public contract of the retired
+// /v1/videos endpoint. Clients must use /v1/videos/generations; accepting the
+// old path would create a task under a route that the Next implementation has
+// explicitly disabled.
+func (b *backend) handleDeprecatedVideoCreate(w http.ResponseWriter, r *http.Request) error {
+	return &apiError{http.StatusGone, "DEPRECATED_ENDPOINT", "该接口已下线，请使用 /v1/videos/generations"}
 }
 
 func decodeObject(r *http.Request) (map[string]json.RawMessage, error) {
