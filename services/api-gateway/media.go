@@ -5,6 +5,8 @@ package main
 // while workers can claim the queued rows independently of this process.
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -71,6 +73,7 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/upload/presigned", b.endpoint(b.handleUploadPresigned))
 	mux.HandleFunc("GET /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageGet))
 	mux.HandleFunc("PUT /api/storage/{bucket}/{key...}", b.endpoint(b.handleStoragePut))
+	mux.HandleFunc("DELETE /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageDeletePath))
 	mux.HandleFunc("POST /api/storage/delete", b.endpoint(b.handleStorageDelete))
 	mux.HandleFunc("GET /api/jobs/credits/expire", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("GET /api/jobs/images/expire-pending", b.endpoint(b.handleJobHealth))
@@ -709,12 +712,39 @@ func (b *backend) handleUploadPresigned(w http.ResponseWriter, r *http.Request) 
 func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error {
 	bucket := r.PathValue("bucket")
 	key := r.PathValue("key")
-	if bucket == "" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") {
+	// The public avatar alias is a logical name, never a physical bucket.
+	systemBucket, generationsBucket, err := b.storageBuckets(r.Context())
+	if err != nil {
+		return err
+	}
+	if bucket == "_avatars" {
+		bucket = systemBucket
+	}
+	// A path width is accepted for parity with the Next route. Go currently
+	// serves the original object when image processing is unavailable; keeping
+	// the segment out of the object key is still essential for signed URLs.
+	if parts := strings.Split(key, "/"); len(parts) > 1 && strings.HasPrefix(parts[0], "w") {
+		if _, parseErr := strconv.Atoi(strings.TrimPrefix(parts[0], "w")); parseErr == nil {
+			key = strings.Join(parts[1:], "/")
+		}
+	}
+	if bucket == "" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") {
 		return &apiError{400, "INVALID_PATH", "Invalid storage path"}
 	}
-	if bucket == "generations" {
-		if _, err := b.requireSession(r); err != nil {
-			return err
+	if bucket != systemBucket && bucket != generationsBucket {
+		return forbidden()
+	}
+	domain := storageObjectDomain(bucket, key, systemBucket, generationsBucket)
+	if domain == "" {
+		return &apiError{400, "INVALID_PATH", "Invalid public asset key"}
+	}
+	if domain == "generations" {
+		if err := b.verifyStorageSignature(r, bucket, key); err != nil {
+			// First-party requests may use a valid session for objects they own,
+			// matching the Next route's signature fallback.
+			if !b.storageObjectOwned(r, key) {
+				return err
+			}
 		}
 	}
 	root := filepath.Join(b.config.storagePath, bucket)
@@ -745,10 +775,99 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if domain == "generations" {
+		w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=2592000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	w.WriteHeader(200)
 	_, err = w.Write(data)
 	return err
+}
+
+// storageBuckets resolves the runtime bucket settings used by the Next route.
+// Keeping this in Go prevents a deploy-time environment value from silently
+// diverging from the system settings selected by administrators.
+func (b *backend) storageBuckets(ctx context.Context) (string, string, error) {
+	system, err := b.settingString(ctx, "SYSTEM_ASSETS_BUCKET_NAME", "system")
+	if err != nil {
+		return "", "", err
+	}
+	generations, err := b.settingString(ctx, "GENERATIONS_BUCKET_NAME", "generations")
+	if err != nil {
+		return "", "", err
+	}
+	valid := func(value string) bool {
+		if value == "" || value == "." || value == ".." || value == "_avatars" || len(value) > 255 {
+			return false
+		}
+		for _, c := range value {
+			if !(c == '-' || c == '_' || c == '.' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+				return false
+			}
+		}
+		return true
+	}
+	if !valid(system) || !valid(generations) || system == generations {
+		return "", "", &apiError{503, "STORAGE_CONFIG_INVALID", "Storage bucket configuration invalid"}
+	}
+	return system, generations, nil
+}
+
+func storageObjectDomain(bucket, key, system, generations string) string {
+	parts := strings.Split(key, "/")
+	namespace := parts[0]
+	if bucket == generations {
+		return "generations"
+	}
+	if bucket != system {
+		return ""
+	}
+	if namespace == "image" || namespace == "video" {
+		return "model"
+	}
+	if namespace == "logo" {
+		return "logo"
+	}
+	if namespace == "avatars" || (len(parts) == 1 && regexp.MustCompile(`^[A-Za-z0-9_-]+-[0-9]+\.(jpe?g|png|gif|webp)$`).MatchString(parts[0])) {
+		return "avatars"
+	}
+	return ""
+}
+
+func (b *backend) verifyStorageSignature(r *http.Request, bucket, key string) error {
+	sig := strings.TrimSpace(r.URL.Query().Get("sig"))
+	expRaw := strings.TrimSpace(r.URL.Query().Get("exp"))
+	exp, err := strconv.ParseInt(expRaw, 10, 64)
+	if sig == "" || err != nil || exp <= 0 {
+		return &apiError{403, "MISSING_SIGNATURE", "Missing signature"}
+	}
+	if time.Now().Unix() > exp {
+		return &apiError{403, "SIGNATURE_EXPIRED", "Signature expired"}
+	}
+	mac := hmac.New(sha256.New, []byte(b.config.authSecret))
+	_, _ = mac.Write([]byte(bucket + "/" + key + ":" + strconv.FormatInt(exp, 10)))
+	expected := mac.Sum(nil)
+	provided, decodeErr := hex.DecodeString(sig)
+	if decodeErr != nil || len(provided) != len(expected) || !hmac.Equal(provided, expected) {
+		return &apiError{403, "INVALID_SIGNATURE", "Invalid signature"}
+	}
+	return nil
+}
+
+func (b *backend) storageObjectOwned(r *http.Request, key string) bool {
+	session, err := b.requireSession(r)
+	if err != nil || session == nil {
+		return false
+	}
+	var owner string
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM generation WHERE storage_key=$1 LIMIT 1`, key).Scan(&owner); err == nil && owner == session.User.ID {
+		return true
+	}
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM video_generation WHERE storage_key=$1 LIMIT 1`, key).Scan(&owner); err == nil && owner == session.User.ID {
+		return true
+	}
+	return false
 }
 
 func (b *backend) handleStoragePut(w http.ResponseWriter, r *http.Request) error {
@@ -757,7 +876,11 @@ func (b *backend) handleStoragePut(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	bucket, key := r.PathValue("bucket"), r.PathValue("key")
-	if bucket != "generations" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || !strings.HasPrefix(key, "uploads/"+session.User.ID+"/") {
+	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+	if bucketErr != nil {
+		return bucketErr
+	}
+	if bucket != generationsBucket || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") || !strings.HasPrefix(key, "uploads/"+session.User.ID+"/") {
 		return &apiError{403, "FORBIDDEN", "Invalid upload path"}
 	}
 	file := filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key))
@@ -790,10 +913,14 @@ func (b *backend) handleStorageDelete(w http.ResponseWriter, r *http.Request) er
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	if in.Bucket == "" {
-		in.Bucket = "generations"
+	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+	if bucketErr != nil {
+		return bucketErr
 	}
-	if in.Bucket != "generations" || in.Key == "" || filepath.IsAbs(in.Key) || filepath.Clean(in.Key) != in.Key || strings.Contains(in.Key, "..") || !strings.HasPrefix(in.Key, "uploads/"+s.User.ID+"/") {
+	if in.Bucket == "" {
+		in.Bucket = generationsBucket
+	}
+	if in.Bucket != generationsBucket || in.Key == "" || filepath.IsAbs(in.Key) || filepath.Clean(in.Key) != in.Key || strings.Contains(in.Key, "..") || strings.Contains(in.Key, "\\") || !strings.HasPrefix(in.Key, "uploads/"+s.User.ID+"/") {
 		return forbidden()
 	}
 	err = os.Remove(filepath.Join(b.config.storagePath, in.Bucket, filepath.FromSlash(in.Key)))
@@ -804,6 +931,33 @@ func (b *backend) handleStorageDelete(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": in.Key})
+	return nil
+}
+
+// DELETE /api/storage/{bucket}/{key...} is the path-oriented counterpart of
+// the historical JSON delete action. It is used by migrated clients while the
+// action endpoint remains available for compatibility.
+func (b *backend) handleStorageDeletePath(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+	if bucketErr != nil {
+		return bucketErr
+	}
+	bucket, key := r.PathValue("bucket"), r.PathValue("key")
+	if bucket != generationsBucket || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") || !strings.HasPrefix(key, "uploads/"+s.User.ID+"/") {
+		return forbidden()
+	}
+	err = os.Remove(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": key})
 	return nil
 }
 func urlPathEscape(value string) string {
