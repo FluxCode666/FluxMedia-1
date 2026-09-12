@@ -559,6 +559,9 @@ func (b *backend) adminTopErrors(ctx context.Context, last7d, last24h time.Time)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["count"].(int64) > out[j]["count"].(int64) })
 	limited := n >= 10000
+	if len(out) > 8 {
+		out = out[:8]
+	}
 	returnAny := make([]any, len(out))
 	for i := range out {
 		returnAny[i] = out[i]
