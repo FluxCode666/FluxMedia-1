@@ -705,6 +705,10 @@ func (b *backend) handleUploadPresigned(w http.ResponseWriter, r *http.Request) 
 	if !strings.HasPrefix(contentType, "image/") && !strings.HasPrefix(contentType, "video/") {
 		return invalid("unsupported content type")
 	}
+	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+	if bucketErr != nil {
+		return bucketErr
+	}
 	fileKey := requestedKey
 	if fileKey != "" {
 		if filepath.IsAbs(fileKey) || filepath.Clean(fileKey) != fileKey || strings.Contains(fileKey, "..") || !strings.HasPrefix(fileKey, "uploads/"+session.User.ID+"/") {
@@ -713,8 +717,8 @@ func (b *backend) handleUploadPresigned(w http.ResponseWriter, r *http.Request) 
 	} else {
 		fileKey = fmt.Sprintf("uploads/%s/%s-%s", session.User.ID, newRequestID(), filename)
 	}
-	fileURL := "/api/storage/" + urlPathEscape("generations") + "/" + urlPathEscape(fileKey)
-	writeJSON(w, 200, map[string]any{"presignedUrl": fileURL, "uploadUrl": fileURL, "fileKey": fileKey, "fileUrl": fileURL, "key": fileKey, "bucket": "generations", "contentType": contentType, "expiresIn": 3600})
+	fileURL := "/api/storage/" + urlPathEscape(generationsBucket) + "/" + urlPathEscape(fileKey)
+	writeJSON(w, 200, map[string]any{"presignedUrl": fileURL, "uploadUrl": fileURL, "fileKey": fileKey, "fileUrl": fileURL, "key": fileKey, "bucket": generationsBucket, "contentType": contentType, "expiresIn": 3600})
 	return nil
 }
 
