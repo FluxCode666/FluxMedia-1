@@ -6,23 +6,24 @@
  * 客户端渲染旧版统一视觉的图片与视频工作区。
  */
 import { getCurrentUser } from "@repo/shared/auth/server";
-import { getCreditsBalance } from "@repo/shared/credits/core";
-import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
-import { isContentModerationEnabled } from "@repo/shared/moderation";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
+import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
-import {
-  getEffectiveDefaultImageBackendGroup,
-  getImageGenerationModelCatalog,
-} from "@/features/image-backend-pool/catalog-service";
+import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import { GeneratePageClient } from "@/features/image-generation/components/generate-page-client";
-import {
-  getRuntimeImageModelCreditPricing,
-  getRuntimeImageModerationCreditPricing,
-} from "@/features/image-generation/pricing-settings";
-import { getUserRecentGenerations } from "@/features/image-generation/queries";
+import { requestGoJson } from "@/server/go-backend-client";
+
+type GeneratePageData = {
+  balance: number;
+  recentGenerations: Array<{ id: string; prompt: string; status: string; imageUrl: string | null }>;
+  uploadLimits: { maxFileSizeBytes: number; maxUploadBytes: number; maxEditImages: number };
+  selectedBackendGroupId: string | null;
+  imageGenerationModelCatalog: ImageGenerationModelCatalog;
+  moderationEnabled: boolean;
+  imageModelPricing: ImageCreditOverrides;
+  imageModerationPricing: { imageModerationCredits: number; textModerationCredits: number };
+};
 
 /**
  * 渲染独立的图片与视频生成页面。
@@ -36,52 +37,20 @@ export default async function GeneratePage() {
   const locale = await getLocale();
   if (!user) redirect(`/${locale}/sign-in`);
 
-  const [creditsData, recentGenerations] = await Promise.all([
-    getCreditsBalance(user.id),
-    getUserRecentGenerations(user.id, 12),
-  ]);
-  const [
-    mediaLimits,
-    activeBackendGroup,
-    imageGenerationModelCatalog,
-    moderationEnabled,
-    imageModelPricing,
-    imageModerationPricing,
-  ] = await Promise.all([
-    getMediaLimitDefaults(),
-    getEffectiveDefaultImageBackendGroup(),
-    getImageGenerationModelCatalog(),
-    isContentModerationEnabled(),
-    getRuntimeImageModelCreditPricing(),
-    getRuntimeImageModerationCreditPricing(),
-  ]);
-  const recents = recentGenerations.map((generation) => ({
-    id: generation.id,
-    prompt: generation.prompt,
-    status: generation.status,
-    imageUrl:
-      generation.storageKey && generation.storageBucket
-        ? buildSignedStorageImageUrl(
-            generation.storageKey,
-            generation.storageBucket
-          )
-        : null,
-  }));
+  const pageData = await requestGoJson<GeneratePageData>(
+    "/api/image-generation/page-data"
+  );
 
   return (
     <GeneratePageClient
-      balance={creditsData?.balance ?? 0}
-      recentGenerations={recents}
-      uploadLimits={{
-        maxFileSizeBytes: mediaLimits.maxFileSizeBytes,
-        maxUploadBytes: mediaLimits.maxUploadSizeBytes,
-        maxEditImages: mediaLimits.maxEditReferenceImages,
-      }}
-      selectedBackendGroupId={activeBackendGroup?.id ?? null}
-      imageGenerationModelCatalog={imageGenerationModelCatalog}
-      moderationEnabled={moderationEnabled}
-      imageModelPricing={imageModelPricing}
-      imageModerationPricing={imageModerationPricing}
+      balance={pageData.balance}
+      recentGenerations={pageData.recentGenerations}
+      uploadLimits={pageData.uploadLimits}
+      selectedBackendGroupId={pageData.selectedBackendGroupId}
+      imageGenerationModelCatalog={pageData.imageGenerationModelCatalog}
+      moderationEnabled={pageData.moderationEnabled}
+      imageModelPricing={pageData.imageModelPricing}
+      imageModerationPricing={pageData.imageModerationPricing}
     />
   );
 }
