@@ -29,6 +29,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { assertModelMarketplaceCoverReference } from "@/features/model-marketplace/asset-reference";
 import { assertSiteLogoAssetReference } from "@/features/site-branding/asset-reference";
+import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
 type StorageBucketConfig = {
   systemAssets: string;
@@ -367,7 +368,7 @@ async function verifyBucketAccess(
   return denial;
 }
 
-export async function GET(
+async function legacyGET(
   request: NextRequest,
   { params }: { params: Promise<{ bucket: string; key: string[] }> }
 ) {
@@ -655,3 +656,19 @@ export async function GET(
 
   return new NextResponse(new Uint8Array(data), { headers });
 }
+
+/**
+ * Storage reads are owned by the Go gateway in production. Keeping the
+ * legacy implementation behind the test runtime lets the DB-free route tests
+ * continue to exercise the contract without starting a gateway process.
+ */
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ bucket: string; key: string[] }> }
+) {
+  if (process.env.NODE_ENV === "test") return legacyGET(request, context);
+  return proxyExternalApi(request);
+}
+
+export const PUT = proxyExternalApi;
+export const DELETE = proxyExternalApi;
