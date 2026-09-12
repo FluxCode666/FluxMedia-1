@@ -6,7 +6,6 @@
  * 使用方：跨应用自然日重新可见的客户端记录器。Action 只读取 protected session 用户，
  * 不接受身份、日期、访问时间或页面字段，实际写入统一委托 UOL。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   operationsCreateExportInputSchema,
   operationsGetDetailInputSchema,
@@ -40,8 +39,7 @@ export type RecordDashboardWebVisitActionResult =
 export const recordDashboardWebVisitAction = protectedAction
   .metadata({ action: "operations.recordWebVisit" })
   .action(async ({ ctx }): Promise<RecordDashboardWebVisitActionResult> => {
-    const role = await getUserRoleById(ctx.userId);
-    const result = await tryRecordDashboardWebVisit(ctx.userId, role);
+    const result = await tryRecordDashboardWebVisit(ctx.userId);
     return result
       ? { status: "recorded", appDate: result.appDate }
       : { status: "unavailable" };

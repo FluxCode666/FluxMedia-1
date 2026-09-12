@@ -3,8 +3,8 @@
 /**
  * 钱包 Server Action 薄传输适配器。
  *
- * 使用方：钱包页面。各 Action 只初始化 UOL、从 session 构造本人 Principal
- * 并调用 operation；不读取数据库、不合并错误，也不接受 userId。
+ * 使用方：钱包页面。各 Action 只把当前会话转发到 Go backend；不读取数据库、
+ * 不合并错误，也不接受 userId。
  */
 import type { UserPaymentOrderListOutput } from "@repo/shared/payment/user-order-contract";
 import { protectedAction } from "@repo/shared/safe-action";

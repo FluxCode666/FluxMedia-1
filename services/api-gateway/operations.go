@@ -16,12 +16,63 @@ import (
 )
 
 func (b *backend) registerOperationsRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/operations/web-visit", b.endpoint(b.handleRecordOperationsWebVisit))
 	mux.HandleFunc("POST /api/admin/operations/overview", b.endpoint(b.handleOperationsOverview))
 	mux.HandleFunc("POST /api/admin/operations/detail", b.endpoint(b.handleOperationsDetail))
 	mux.HandleFunc("POST /api/admin/operations/exports", b.endpoint(b.handleOperationsCreateExport))
 	mux.HandleFunc("GET /api/admin/operations/exports", b.endpoint(b.handleOperationsListExports))
 	mux.HandleFunc("POST /api/admin/operations/exports/retry", b.endpoint(b.handleOperationsRetryExport))
 	mux.HandleFunc("POST /api/admin/operations/exports/prepare-download", b.endpoint(b.handleOperationsPrepareDownload))
+}
+
+// handleRecordOperationsWebVisit records the authenticated user's first
+// dashboard visit for the current application day.  The application day and
+// visit timestamp are both derived by the backend so callers cannot spoof the
+// date or time; the composite primary key makes retries idempotent.
+func (b *backend) handleRecordOperationsWebVisit(w http.ResponseWriter, r *http.Request) error {
+	noStore(w)
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	// This endpoint intentionally accepts an empty JSON object only.  Parsing
+	// the body keeps the contract explicit while preventing accidental input
+	// fields from being treated as trusted metadata in the future.
+	var input map[string]any
+	if err := decodeBody(r, &input); err != nil {
+		return err
+	}
+	if input == nil || len(input) != 0 {
+		return invalid("请求参数必须为空")
+	}
+
+	timeZone, err := b.settingString(r.Context(), "APP_TIME_ZONE", "UTC")
+	if err != nil {
+		return err
+	}
+	location, err := time.LoadLocation(timeZone)
+	if err != nil {
+		return &apiError{http.StatusServiceUnavailable, "NOT_READY", "运营统计时区配置无效"}
+	}
+	visitedAt := time.Now().UTC()
+	appDate := visitedAt.In(location).Format("2006-01-02")
+	var recorded bool
+	err = b.db.QueryRow(r.Context(), `
+		INSERT INTO user_web_visit (user_id, app_date, first_visited_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, app_date) DO NOTHING
+		RETURNING user_id`, s.User.ID, appDate, visitedAt).Scan(new(string))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A same-day retry is a successful, idempotent operation.  Returning the
+		// stable date lets the client avoid another request until the next day.
+		recorded = false
+	} else if err != nil {
+		return err
+	} else {
+		recorded = true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"appDate": appDate, "recorded": recorded})
+	return nil
 }
 
 func (b *backend) handleOperationsOverview(w http.ResponseWriter, r *http.Request) error {

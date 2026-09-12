@@ -4,12 +4,9 @@
  * 使用方：dashboard 公共布局和跨自然日 Server Action。身份只由真实 session 构造，
  * 统计失败记录不含用户、会话、路径或浏览器信息的告警，并返回 null 让页面继续渲染。
  */
-import type { AppUserRole } from "@repo/shared/auth/roles";
 import { logWarn } from "@repo/shared/logger";
 import type { RecordWebVisitOutput } from "@repo/shared/operations-dashboard/facts-contracts";
-import { invokeOperation } from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /**
  * 为已验证 dashboard session 记录当日网页访问。
@@ -21,14 +18,16 @@ import { ensureUolInitialized } from "@/server/uol-init";
  */
 export async function tryRecordDashboardWebVisit(
   userId: string,
-  role: AppUserRole
+  _role?: unknown
 ): Promise<RecordWebVisitOutput | null> {
   try {
-    await ensureUolInitialized();
-    return await invokeOperation<RecordWebVisitOutput>(
-      "operations.recordWebVisit",
-      {},
-      { type: "user", userId, role }
+    // The Go endpoint derives identity from the forwarded session cookie. Keep
+    // the userId parameter for the existing layout contract, but never send it
+    // over the wire where it could be confused with caller-provided identity.
+    void userId;
+    return await requestGoJson<RecordWebVisitOutput>(
+      "/api/operations/web-visit",
+      { method: "POST", body: "{}" }
     );
   } catch (error) {
     logWarn("Dashboard web visit recording failed", {

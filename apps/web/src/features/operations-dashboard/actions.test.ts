@@ -98,10 +98,8 @@ describe("recordDashboardWebVisitAction", () => {
         ctx: { userId: "user-1" },
       })
     ).resolves.toEqual({ status: "recorded", appDate: "2026-08-15" });
-    expect(mocks.getUserRoleById).toHaveBeenCalledWith("user-1");
     expect(mocks.tryRecordDashboardWebVisit).toHaveBeenCalledWith(
-      "user-1",
-      "user"
+      "user-1"
     );
   });
 
