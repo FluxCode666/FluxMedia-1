@@ -1575,7 +1575,6 @@
     }
   ],
   "directDatabaseImports": [
-    "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/page.tsx",
     "apps/web/src/features/dashboard/analytics-service.ts",
     "apps/web/src/features/dashboard/output-usage-read-model.ts",
     "apps/web/src/features/data-dashboard/admin-data-dashboard-user-search.ts",
