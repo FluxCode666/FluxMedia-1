@@ -1,10 +1,8 @@
-import { db, user } from "@repo/database";
 import { getServerSession } from "@repo/shared/auth/server";
-import { getAppTimeZone } from "@repo/shared/time-zone/server";
-import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { SettingsProfileView } from "@/features/settings/components";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /**
  * 设置页面元数据
@@ -30,29 +28,24 @@ export default async function SettingsPage() {
     redirect(`/${locale}/sign-in`);
   }
 
-  const [[profile], defaultTimeZone] = await Promise.all([
-    db
-      .select({
-        name: user.name,
-        email: user.email,
-        image: user.image,
-        timeZone: user.timeZone,
-      })
-      .from(user)
-      .where(eq(user.id, session.user.id))
-      .limit(1),
-    getAppTimeZone(),
-  ]);
+  const profile = await requestGoJson<{
+    id: string;
+    name: string | null;
+    email: string;
+    image: string | null;
+    timeZone: string | null;
+    defaultTimeZone: string;
+  }>("/api/user/profile");
 
   return (
     <SettingsProfileView
       user={{
         id: session.user.id,
-        name: (profile?.name ?? session.user.name) || "",
-        email: (profile?.email ?? session.user.email) || "",
-        image: profile?.image ?? session.user.image,
-        timeZone: profile?.timeZone?.trim() || null,
-        defaultTimeZone,
+        name: (profile.name ?? session.user.name) || "",
+        email: (profile.email ?? session.user.email) || "",
+        image: profile.image ?? session.user.image,
+        timeZone: profile.timeZone?.trim() || null,
+        defaultTimeZone: profile.defaultTimeZone,
       }}
     />
   );

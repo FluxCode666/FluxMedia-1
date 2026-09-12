@@ -19,6 +19,23 @@ func (b *backend) handleProfile(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if r.Method == http.MethodGet {
+		var name, email string
+		var image, zone *string
+		if err := b.db.QueryRow(r.Context(), `SELECT name,email,image,time_zone FROM "user" WHERE id=$1`, s.User.ID).Scan(&name, &email, &image, &zone); err != nil {
+			return err
+		}
+		defaultZone, err := b.settingString(r.Context(), "APP_TIME_ZONE", "UTC")
+		if err != nil {
+			return err
+		}
+		zoneValue := ""
+		if zone != nil {
+			zoneValue = strings.TrimSpace(*zone)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": s.User.ID, "name": name, "email": email, "image": image, "timeZone": zoneValue, "defaultTimeZone": defaultZone})
+		return nil
+	}
 	var in struct {
 		Name  *string `json:"name"`
 		Image *string `json:"image"`
@@ -302,6 +319,7 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (b *backend) registerAccountRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("PATCH /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("GET /api/credits/balance", b.endpoint(b.handleCreditsBalance))
 	mux.HandleFunc("GET /api/credits/transactions", b.endpoint(b.handleCreditsTransactions))
