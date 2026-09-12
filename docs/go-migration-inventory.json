@@ -398,6 +398,18 @@
       ]
     },
     {
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "exports": [
+        "getMyUnreadAnnouncementCountAction",
+        "markAllAnnouncementsReadAction",
+        "markAnnouncementReadAction",
+        "createAnnouncementAction",
+        "updateAnnouncementAction",
+        "deleteAnnouncementAction",
+        "toggleAnnouncementPublishAction"
+      ]
+    },
+    {
       "source": "apps/web/src/features/dashboard/analytics-actions.ts",
       "exports": [
         "refreshDashboardSnapshotAction"
