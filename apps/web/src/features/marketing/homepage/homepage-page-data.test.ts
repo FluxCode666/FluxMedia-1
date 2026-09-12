@@ -204,7 +204,11 @@ describe("loadHomepagePageData", () => {
     for (const mock of Object.values(runtimeMocks)) mock.mockReset();
     runtimeMocks.ensureUolInitialized.mockResolvedValue(undefined);
     runtimeMocks.requestGoJson.mockImplementation(async (path: string) =>
-      path.includes("sla-visibility") ? { enabled: true } : READY_SLA_STATS
+      path.includes("sla-visibility")
+        ? { enabled: true }
+        : path.includes("sla-stats")
+          ? READY_SLA_STATS
+          : READY_CATALOG
     );
     runtimeMocks.invokeOperation.mockImplementation(
       async (operationName: string) => {
@@ -224,20 +228,9 @@ describe("loadHomepagePageData", () => {
 
     const result = await loadHomepagePageData();
 
-    expect(runtimeMocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "modelMarketplace.listPublicModels",
-      {},
-      { type: "system", reason: "homepage-model-marketplace" },
-      { requestId: expect.any(String) }
-    );
+    expect(runtimeMocks.ensureUolInitialized).not.toHaveBeenCalled();
     expect(runtimeMocks.requestGoJson).toHaveBeenCalledWith("/api/marketing/sla-visibility");
     expect(runtimeMocks.requestGoJson).toHaveBeenCalledWith("/api/marketing/sla-stats");
-    expect(
-      runtimeMocks.ensureUolInitialized.mock.invocationCallOrder[0] ?? 0
-    ).toBeLessThan(
-      runtimeMocks.invokeOperation.mock.invocationCallOrder[0] ?? 0
-    );
     expect(runtimeMocks.getUserRoleById).not.toHaveBeenCalled();
     expect(result.catalog).toEqual({
       status: "ready",

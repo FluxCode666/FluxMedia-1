@@ -10,13 +10,12 @@ import { isAdminRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logger } from "@repo/shared/logger";
 import { modelMarketplacePublicItemSchema } from "@repo/shared/model-marketplace";
-import { invokeOperation, OperationError, type OperationErrorCode } from "@repo/shared/uol";
+import { OperationError, type OperationErrorCode } from "@repo/shared/uol";
 import type {
   HomepageGenerationSlaStatsOutput,
   HomepageSlaVisibilityOutput,
 } from "@repo/shared/uol/operations";
 
-import { ensureUolInitialized } from "@/server/uol-init";
 import { requestGoJson } from "@/server/go-backend-client";
 
 /** 首页视觉模型格子所需的最小公开字段。 */
@@ -219,15 +218,10 @@ function reportHomepageFailure(event: HomepageFailureEvent): void {
   logger.error(event, "Homepage dependency unavailable");
 }
 
-/** 通过 system-only UOL operation 读取模型广场公开目录。 */
-async function loadCatalogThroughUol(requestId: string): Promise<unknown> {
-  await ensureUolInitialized();
-  return invokeOperation(
-    "modelMarketplace.listPublicModels",
-    {},
-    { type: "system", reason: "homepage-model-marketplace" },
-    { requestId }
-  );
+/** 通过 Go first-party endpoint 读取模型广场公开目录。 */
+async function loadCatalogThroughGo(requestId: string): Promise<unknown> {
+  void requestId;
+  return requestGoJson("/api/model-marketplace/public");
 }
 
 /**
@@ -265,7 +259,7 @@ async function loadSlaStatsThroughUol(
 
 const defaultLoaders: HomepagePageDataLoaders = {
   createRequestId: () => crypto.randomUUID(),
-  loadCatalog: loadCatalogThroughUol,
+  loadCatalog: loadCatalogThroughGo,
   loadSlaVisibility: loadSlaVisibilityThroughUol,
   loadSlaStats: loadSlaStatsThroughUol,
   loadSession: getServerSession,
