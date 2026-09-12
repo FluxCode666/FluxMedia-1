@@ -142,6 +142,13 @@ GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet
 docker compose up -d
 ```
 
+根 Compose 中 Go backend 容器固定监听容器内的 `8080`，宿主机映射端口由
+`GO_BACKEND_PORT` 配置，默认是 `3000`。如果需要使用 `3001`，在 Compose 使用的 env 文件中设置：
+
+```bash
+GO_BACKEND_PORT=3001
+```
+
 生产 Compose 会同时启动 backend、私有 script-runtime 和 Web；数据库迁移由 backend 容器
 entrypoint 执行。生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
 [deploy/README.md](deploy/README.md)。统一号池调度契约见
