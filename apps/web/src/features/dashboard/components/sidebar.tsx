@@ -1,6 +1,6 @@
 "use client";
 
-import { getMyUnreadAnnouncementCountAction } from "@repo/shared/announcements/actions";
+import { getMyUnreadAnnouncementCountAction } from "@/features/announcements/actions";
 import { signOut } from "@repo/shared/auth/client";
 import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { ModeToggle } from "@repo/shared/components";
