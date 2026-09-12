@@ -56,8 +56,8 @@ export const getMyWalletBalanceAction = protectedAction
 /** 读取当前用户有效充值能力。 */
 export const getMyWalletTopUpOptionsAction = protectedAction
   .metadata({ action: "credits.getTopUpOptions" })
-  .action(async ({ ctx }) =>
-    invokeMyWalletOperation("credits.getTopUpOptions", ctx.userId)
+  .action(async () =>
+    requestGoJson<WalletTopUpOptions>("/api/credits/top-up/options")
   );
 
 /** 读取当前用户最近创建的积分充值订单。 */

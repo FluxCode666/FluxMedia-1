@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ensureUolInitialized: vi.fn(),
   getUserRoleById: vi.fn(),
   invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
 }));
 
 vi.mock("@repo/shared/safe-action", () => ({
@@ -34,6 +35,10 @@ vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: mocks.ensureUolInitialized,
 }));
 
+vi.mock("@/server/go-backend-client", () => ({
+  requestGoJson: mocks.requestGoJson,
+}));
+
 import {
   getMyWalletBalanceAction,
   getMyWalletPageDataAction,
@@ -48,11 +53,10 @@ describe("wallet actions", () => {
     vi.clearAllMocks();
     mocks.ensureUolInitialized.mockResolvedValue(undefined);
     mocks.getUserRoleById.mockResolvedValue("user");
+    mocks.requestGoJson.mockResolvedValue({ marker: "credits.getTopUpOptions" });
   });
 
   it.each([
-    [getMyWalletBalanceAction, "credits.getMyBalance"],
-    [getMyWalletTopUpOptionsAction, "credits.getTopUpOptions"],
     [getMyWalletRecentPaymentOrdersAction, "payment.listMyRecentOrders"],
   ] as const)("%s 仅以本人 Principal 调用 %s", async (action, operation) => {
     const output = { marker: operation };
@@ -70,6 +74,34 @@ describe("wallet actions", () => {
         role: "user",
       }
     );
+  });
+
+  it("余额通过 Go backend 读取", async () => {
+    const output = { marker: "credits.getMyBalance" };
+    mocks.requestGoJson.mockResolvedValue(output);
+
+    await expect(
+      (getMyWalletBalanceAction as unknown as MockAction)({
+        ctx: { userId: "session-user" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/credits/balance");
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it("充值选项通过 Go backend 读取", async () => {
+    const output = { marker: "credits.getTopUpOptions" };
+    mocks.requestGoJson.mockResolvedValue(output);
+
+    await expect(
+      (getMyWalletTopUpOptionsAction as unknown as MockAction)({
+        ctx: { userId: "session-user" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/credits/top-up/options"
+    );
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
   it("首屏聚合只读取一次角色并隔离三块 UOL 结果", async () => {
