@@ -156,7 +156,152 @@ func (b *backend) handleAdminLogoUpload(w http.ResponseWriter, r *http.Request) 
 	return nil
 }
 
+// modelConfigurationRead returns the lightweight compatibility DTO used by the
+// migrated server actions. The authoritative value is MODEL_MARKETPLACE_CONFIG;
+// pricing/runtime discovery remains owned by the existing model catalog service.
+func (b *backend) modelConfigurationRead(r *http.Request, canEdit bool) (map[string]any, error) {
+	var raw []byte
+	err := b.db.QueryRow(r.Context(), `SELECT value FROM system_setting WHERE key='MODEL_MARKETPLACE_CONFIG'`).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		raw = []byte(`{"version":2,"imageByModel":{},"videoByFamily":{},"customModels":[]}`)
+	} else if err != nil {
+		return nil, err
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
+		cfg = map[string]any{}
+	}
+	entries := make([]map[string]any, 0, 128)
+	addCommon := func(key string, value map[string]any) map[string]any {
+		entry := map[string]any{
+			"configKey": key, "displayName": key, "marketplaceApplicable": true,
+			"enabled": true, "visible": true, "homepageVisible": false,
+			"homepagePriority": 0, "description": "", "coverUrl": nil,
+			"usesDefaultCover": true, "revision": int64(0),
+		}
+		for _, k := range []string{"displayName", "enabled", "visible", "homepageVisible", "homepagePriority", "description", "revision", "isCustom"} {
+			if v, ok := value[k]; ok {
+				entry[k] = v
+			}
+		}
+		if cover, ok := value["cover"].(map[string]any); ok {
+			if u, ok := cover["url"].(string); ok && u != "" {
+				entry["coverUrl"] = u
+				entry["usesDefaultCover"] = false
+			}
+		}
+		return entry
+	}
+	addSection := func(section, category string) {
+		items, _ := cfg[section].(map[string]any)
+		for key, value := range items {
+			obj, _ := value.(map[string]any)
+			if obj == nil {
+				obj = map[string]any{}
+			}
+			entry := addCommon(key, obj)
+			entry["category"] = category
+			if category == "image" {
+				if pricing, ok := obj["pricing"].(map[string]any); ok {
+					entry["pricingSource"] = "explicit"
+					entry["pricing"] = pricing
+					entry["minimumCredits"] = 1.0
+				} else {
+					entry["pricingSource"] = "unconfigured"
+				}
+			} else {
+				entry["billingMode"] = "per_second"
+				entry["creditsPerSecond"] = 1.0
+				entry["creditsPerSecondByResolution"] = map[string]any{"720p": 1.0}
+				entry["creditsPerItemByResolution"] = map[string]any{"720p": 1.0}
+				entry["supportedResolutions"] = []string{"720p"}
+				entry["minimumCredits"] = 1.0
+			}
+			entries = append(entries, entry)
+		}
+	}
+	addSection("imageByModel", "image")
+	addSection("videoByFamily", "video")
+	return map[string]any{"canEdit": canEdit, "runtimeCatalogStatus": "unavailable", "entries": entries}, nil
+}
+
+func (b *backend) handleModelConfigurationRead(w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) error {
+	s, err := b.requireAdmin(r, false)
+	if err != nil {
+		return err
+	}
+	canEdit := s.User.Role == "super_admin"
+	snapshot, err := b.modelConfigurationRead(r, canEdit)
+	if err != nil {
+		return err
+	}
+	if body == nil {
+		q := r.URL.Query()
+		if q.Get("page") == "" && q.Get("pageSize") == "" && q.Get("query") == "" && q.Get("category") == "" {
+			writeJSON(w, http.StatusOK, snapshot)
+			return nil
+		}
+		body = map[string]json.RawMessage{}
+		for _, key := range []string{"page", "pageSize", "query", "category"} {
+			if value := q.Get(key); value != "" {
+				body[key] = json.RawMessage(strconv.Quote(value))
+			}
+		}
+	}
+	page, pageSize := rawInt(body, "page"), rawInt(body, "pageSize")
+	if page < 1 {
+		page = 1
+	}
+	if pageSize != 10 && pageSize != 20 && pageSize != 50 {
+		pageSize = 20
+	}
+	query, category := strings.ToLower(strings.TrimSpace(rawString(body, "query"))), rawString(body, "category")
+	if category == "" {
+		category = "all"
+	}
+	all := snapshot["entries"].([]map[string]any)
+	filtered := make([]map[string]any, 0, len(all))
+	for _, e := range all {
+		if category != "all" && e["category"] != category {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(fmt.Sprint(e["configKey"])), query) && !strings.Contains(strings.ToLower(fmt.Sprint(e["displayName"])), query) {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	total := len(filtered)
+	pages := (total + pageSize - 1) / pageSize
+	if pages < 1 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	from := (page - 1) * pageSize
+	to := from + pageSize
+	if from > total {
+		from = total
+	}
+	if to > total {
+		to = total
+	}
+	returnJSON := map[string]any{"records": filtered[from:to], "page": page, "pageSize": pageSize, "totalCount": total, "totalPages": pages, "canEdit": canEdit, "runtimeCatalogStatus": snapshot["runtimeCatalogStatus"]}
+	writeJSON(w, http.StatusOK, returnJSON)
+	return nil
+}
+
 func (b *backend) handleModelConfiguration(w http.ResponseWriter, r *http.Request) error {
+	if r.Method == http.MethodGet {
+		return b.handleModelConfigurationRead(w, r, nil)
+	}
+	if r.Method == http.MethodPost && strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		body, err := decodeObject(r)
+		if err != nil {
+			return err
+		}
+		return b.handleModelConfigurationRead(w, r, body)
+	}
 	if _, err := b.requireAdmin(r, true); err != nil {
 		return err
 	}

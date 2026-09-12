@@ -90,6 +90,7 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/site-branding/logo", b.endpoint(b.handleAdminLogoUpload))
 	mux.HandleFunc("GET /api/admin/videos/reconciliation", b.endpoint(b.handleVideoReconciliation))
 	mux.HandleFunc("POST /api/admin/videos/reconciliation", b.endpoint(b.handleVideoReconciliation))
+	mux.HandleFunc("GET /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("POST /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("DELETE /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("GET /api/admin/operations/exports/{taskId}/download", b.endpoint(b.handleExportDownload))

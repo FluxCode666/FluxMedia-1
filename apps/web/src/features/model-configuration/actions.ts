@@ -13,9 +13,7 @@ import {
   modelConfigurationListInputSchema,
 } from "@repo/shared/model-marketplace";
 import { imageBackendPoolViewerAction } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /**
  * 读取当前管理员可见的规范化模型配置快照。
@@ -28,12 +26,8 @@ import { ensureUolInitialized } from "@/server/uol-init";
 export const getModelConfigurationAction = imageBackendPoolViewerAction
   .metadata({ action: "modelConfiguration.get" })
   .action(async ({ ctx }): Promise<ModelConfigurationSnapshot> => {
-    await ensureUolInitialized();
-    return invokeOperation<ModelConfigurationSnapshot>(
-      "settings.getModelConfiguration",
-      {},
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+    void ctx;
+    return requestGoJson<ModelConfigurationSnapshot>("/api/admin/model-configuration");
   });
 
 /**
@@ -48,11 +42,15 @@ export const listModelConfigurationsAction = imageBackendPoolViewerAction
   .schema(modelConfigurationListInputSchema)
   .action(
     async ({ parsedInput, ctx }): Promise<ModelConfigurationListOutput> => {
-      await ensureUolInitialized();
-      return invokeOperation<ModelConfigurationListOutput>(
-        "settings.listModelConfigurations",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
+      void ctx;
+      const query = new URLSearchParams({
+        page: String(parsedInput.page),
+        pageSize: String(parsedInput.pageSize),
+        query: parsedInput.query,
+        category: parsedInput.category,
+      });
+      return requestGoJson<ModelConfigurationListOutput>(
+        `/api/admin/model-configuration?${query.toString()}`
       );
     }
   );

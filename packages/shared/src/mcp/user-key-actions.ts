@@ -14,29 +14,41 @@
  * - 明文 key 仅在创建时返回一次，后续不可恢复
  * - 所有操作校验 userId 归属，防止越权
  */
-import { createHash, randomBytes } from "node:crypto";
+"use server";
 
-import { db } from "@repo/database";
-import { mcpApiKey } from "@repo/database/schema";
-import { and, eq } from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { cookies } from "next/headers";
 
-/** MCP key 前缀 - 用于快速区分 key 类型 */
-const MCP_KEY_PREFIX = "mcp_";
-
-/**
- * 生成随机 MCP API key 明文。
- * 格式：mcp_ + 48 字节随机 hex = "mcp_" + 96 字符
- */
-function generateMcpKeyPlaintext(): string {
-  return `${MCP_KEY_PREFIX}${randomBytes(48).toString("hex")}`;
+async function go<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const base = (process.env.GO_BACKEND_URL || process.env.BETTER_AUTH_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const cookie = (await cookies()).getAll().map((item) => `${item.name}=${item.value}`).join("; ");
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (cookie) headers.set("cookie", cookie);
+  const response = await fetch(base + path, { ...init, headers, cache: "no-store" });
+  const payload = (await response.json().catch(() => null)) as T & { error?: { message?: string } };
+  if (!response.ok) throw new Error(payload?.error?.message || `请求失败 (${response.status})`);
+  return payload;
 }
 
-/**
- * 对 key 明文进行 SHA-256 哈希（与 external API key 同算法）。
- */
-function hashKey(plaintext: string): string {
-  return createHash("sha256").update(plaintext).digest("hex");
+/** MCP key 前缀 - 用于快速区分 key 类型 */
+type MCPKeyListItem = {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  lastFour: string;
+  isActive: boolean;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
+function parseKeyDates(key: MCPKeyListItem) {
+  return {
+    ...key,
+    lastUsedAt: key.lastUsedAt ? new Date(key.lastUsedAt) : null,
+    revokedAt: key.revokedAt ? new Date(key.revokedAt) : null,
+    createdAt: new Date(key.createdAt),
+  };
 }
 
 /**
@@ -60,30 +72,18 @@ export async function createMcpKey(
   lastFour: string;
   createdAt: Date;
 }> {
-  const id = nanoid();
-  const plaintext = generateMcpKeyPlaintext();
-  const keyHash = hashKey(plaintext);
-  const lastFour = plaintext.slice(-4);
-  const keyName = name || "Default MCP key";
-
-  await db.insert(mcpApiKey).values({
-    id,
-    userId,
-    name: keyName,
-    keyPrefix: MCP_KEY_PREFIX,
-    keyHash,
-    lastFour,
-    isActive: true,
-  });
-
-  return {
-    id,
-    key: plaintext,
-    name: keyName,
-    keyPrefix: MCP_KEY_PREFIX,
-    lastFour,
-    createdAt: new Date(),
-  };
+  // userId is retained for source compatibility; Go derives ownership from
+  // the authenticated Better Auth session and never trusts this argument.
+  void userId;
+  const result = await go<{
+    id: string;
+    key: string;
+    name: string;
+    keyPrefix: string;
+    lastFour: string;
+    createdAt: string;
+  }>("/api/mcp/keys", { method: "POST", body: JSON.stringify({ name }) });
+  return { ...result, createdAt: new Date(result.createdAt) };
 }
 
 /**
@@ -104,22 +104,9 @@ export async function listMcpKeys(userId: string): Promise<
     createdAt: Date;
   }>
 > {
-  const keys = await db
-    .select({
-      id: mcpApiKey.id,
-      name: mcpApiKey.name,
-      keyPrefix: mcpApiKey.keyPrefix,
-      lastFour: mcpApiKey.lastFour,
-      isActive: mcpApiKey.isActive,
-      lastUsedAt: mcpApiKey.lastUsedAt,
-      revokedAt: mcpApiKey.revokedAt,
-      createdAt: mcpApiKey.createdAt,
-    })
-    .from(mcpApiKey)
-    .where(eq(mcpApiKey.userId, userId))
-    .orderBy(mcpApiKey.createdAt);
-
-  return keys;
+  void userId;
+  const keys = await go<MCPKeyListItem[]>("/api/mcp/keys");
+  return keys.map(parseKeyDates);
 }
 
 /**
@@ -136,24 +123,9 @@ export async function revokeMcpKey(
   userId: string,
   keyId: string,
 ): Promise<boolean> {
-  const result = await db
-    .update(mcpApiKey)
-    .set({
-      isActive: false,
-      revokedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(mcpApiKey.id, keyId),
-        eq(mcpApiKey.userId, userId),
-        eq(mcpApiKey.isActive, true),
-      ),
-    );
-
-  // drizzle pg driver: result.rowCount 表示受影响行数
-  const rowCount = (result as unknown as { rowCount: number }).rowCount;
-  return rowCount > 0;
+  void userId;
+  const result = await go<{ success: boolean }>(`/api/mcp/keys/${encodeURIComponent(keyId)}/revoke`, { method: "POST", body: "{}" });
+  return result.success;
 }
 
 /**
@@ -170,16 +142,7 @@ export async function deleteMcpKey(
   userId: string,
   keyId: string,
 ): Promise<boolean> {
-  const result = await db
-    .delete(mcpApiKey)
-    .where(
-      and(
-        eq(mcpApiKey.id, keyId),
-        eq(mcpApiKey.userId, userId),
-        eq(mcpApiKey.isActive, false),
-      ),
-    );
-
-  const rowCount = (result as unknown as { rowCount: number }).rowCount;
-  return rowCount > 0;
+  void userId;
+  const result = await go<{ success: boolean }>(`/api/mcp/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+  return result.success;
 }
