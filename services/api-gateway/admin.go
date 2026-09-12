@@ -1,0 +1,317 @@
+package main
+
+// Native implementations for the remaining administrative HTTP adapters.
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func (b *backend) requireAdmin(r *http.Request, super bool) (*sessionResponse, error) {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return nil, err
+	}
+	if super {
+		if s.User.Role != "super_admin" {
+			return nil, forbidden()
+		}
+	} else if s.User.Role != "admin" && s.User.Role != "super_admin" {
+		return nil, forbidden()
+	}
+	return s, nil
+}
+
+// handleVideoReconciliation preserves the removed endpoint's explicit contract.
+func (b *backend) handleVideoReconciliation(w http.ResponseWriter, r *http.Request) error {
+	return &apiError{http.StatusGone, "REMOVED", "视频人工核对入口已移除"}
+}
+
+// handleAdminSearch provides a small Fumadocs-compatible result set from local docs.
+func (b *backend) handleAdminSearch(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdmin(r, false); err != nil {
+		return err
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("query"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"results": []any{}})
+		return nil
+	}
+	type result struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Content string `json:"content"`
+		URL     string `json:"url"`
+	}
+	results := make([]result, 0, 20)
+	roots := []string{"docs", "../../docs", "../docs"}
+	seen := map[string]bool{}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil || d == nil || d.IsDir() || len(results) >= 20 {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".md" && ext != ".mdx" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if !strings.Contains(strings.ToLower(string(data)), strings.ToLower(q)) {
+				return nil
+			}
+			abs, _ := filepath.Abs(path)
+			if seen[abs] {
+				return nil
+			}
+			seen[abs] = true
+			textContent := strings.TrimSpace(string(data))
+			if len(textContent) > 500 {
+				textContent = textContent[:500]
+			}
+			results = append(results, result{ID: strings.TrimSuffix(filepath.ToSlash(path), ext), Type: "page", Content: textContent, URL: "/" + filepath.ToSlash(path)})
+			return nil
+		})
+		if len(results) >= 20 {
+			break
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].ID < results[j].ID })
+	out := make([]any, 0, len(results))
+	for _, item := range results {
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": out})
+	return nil
+}
+
+func (b *backend) handleAdminLogoUpload(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireAdmin(r, true)
+	if err != nil {
+		return err
+	}
+	if err := r.ParseMultipartForm(6 << 20); err != nil {
+		return invalid("Logo 上传表单无效")
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return invalid("Logo 上传表单缺少文件")
+	}
+	defer file.Close()
+	if header.Size > 5<<20 {
+		return invalid("Logo 文件不能超过 5 MB")
+	}
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return invalid("不支持的 Logo 类型")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 5<<20+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > 5<<20 {
+		return invalid("Logo 文件不能超过 5 MB")
+	}
+	hash := sha256.Sum256(data)
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext == "" {
+		ext = ".bin"
+	}
+	name := hex.EncodeToString(hash[:]) + ext
+	key := filepath.Join("site-assets", "logo", name)
+	path := filepath.Join(b.config.storagePath, key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		return err
+	}
+	url := "/api/storage/site-assets/" + strings.ReplaceAll(filepath.ToSlash(filepath.Join("logo", name)), " ", "%20")
+	value, _ := json.Marshal(url)
+	_, err = b.db.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_by,updated_at) VALUES('SITE_LOGO_URL',$1,false,$2,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, value, s.User.ID)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	writeJSON(w, http.StatusOK, map[string]any{"logoUrl": url, "replayed": false})
+	return nil
+}
+
+func (b *backend) handleModelConfiguration(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdmin(r, true); err != nil {
+		return err
+	}
+	if r.Method == http.MethodDelete {
+		body, err := decodeObject(r)
+		if err != nil {
+			return err
+		}
+		key := rawString(body, "configKey", "modelId")
+		if key == "" {
+			return invalid("configKey is required")
+		}
+		return b.mutateModelConfig(w, r, key, nil, true)
+	}
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		return invalid("Invalid multipart request")
+	}
+	category := r.FormValue("category")
+	key := strings.TrimSpace(r.FormValue("configKey"))
+	if key == "" || (category != "image" && category != "video") {
+		return invalid("模型配置参数无效")
+	}
+	entry := map[string]any{"configKey": key}
+	for _, field := range []string{"enabled", "visible", "homepageVisible", "homepagePriority", "description", "iconKey", "isCustom", "supportedResolutions", "supportsQuality", "maxReferenceImages", "billingMode", "creditsPerSecondByResolution", "creditsPerItemByResolution", "outputSizesByResolution"} {
+		if v := r.FormValue(field); v != "" {
+			var x any = v
+			if v == "true" || v == "false" {
+				x = v == "true"
+			} else if n, e := strconv.ParseInt(v, 10, 64); e == nil {
+				x = n
+			} else if strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[") {
+				_ = json.Unmarshal([]byte(v), &x)
+			}
+			entry[field] = x
+		}
+	}
+	entry["category"] = category
+	return b.mutateModelConfig(w, r, key, entry, false)
+}
+
+func (b *backend) mutateModelConfig(w http.ResponseWriter, r *http.Request, key string, entry map[string]any, remove bool) error {
+	var raw []byte
+	err := b.db.QueryRow(r.Context(), `SELECT value FROM system_setting WHERE key='MODEL_MARKETPLACE_CONFIG'`).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		raw = []byte(`{"version":2,"imageByModel":{},"videoByFamily":{},"customModels":[]}`)
+	} else if err != nil {
+		return err
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
+		cfg = map[string]any{"version": 2}
+	}
+	if _, ok := cfg["imageByModel"]; !ok {
+		cfg["imageByModel"] = map[string]any{}
+	}
+	if _, ok := cfg["videoByFamily"]; !ok {
+		cfg["videoByFamily"] = map[string]any{}
+	}
+	cat := "image"
+	if entry != nil {
+		if c, ok := entry["category"].(string); ok {
+			cat = c
+		}
+	}
+	section := "imageByModel"
+	if cat == "video" {
+		section = "videoByFamily"
+	}
+	items, ok := cfg[section].(map[string]any)
+	if !ok {
+		items = map[string]any{}
+	}
+	if remove {
+		delete(items, key)
+	} else {
+		previous, _ := items[key].(map[string]any)
+		if previous == nil {
+			previous = map[string]any{"revision": int64(0), "visible": true, "description": "", "cover": nil}
+		}
+		for k, v := range entry {
+			if k != "configKey" && k != "category" {
+				previous[k] = v
+			}
+		}
+		var rev int64
+		if n, ok := previous["revision"].(float64); ok {
+			rev = int64(n)
+		}
+		if n, ok := previous["revision"].(int64); ok {
+			rev = n
+		}
+		previous["revision"] = rev + 1
+		if _, ok := previous["visible"]; !ok {
+			previous["visible"] = true
+		}
+		if _, ok := previous["description"]; !ok {
+			previous["description"] = ""
+		}
+		if _, ok := previous["cover"]; !ok {
+			previous["cover"] = nil
+		}
+		items[key] = previous
+	}
+	cfg[section] = items
+	cfg["version"] = 2
+	updated, _ := json.Marshal(cfg)
+	_, err = b.db.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_at) VALUES('MODEL_MARKETPLACE_CONFIG',$1,false,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()`, updated)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	writeJSON(w, http.StatusOK, map[string]any{"category": cat, "configKey": key, "revision": time.Now().Unix()})
+	return nil
+}
+
+func (b *backend) handleExportDownload(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireAdmin(r, false)
+	if err != nil {
+		return err
+	}
+	id := r.PathValue("taskId")
+	if id == "" {
+		return invalid("taskId is required")
+	}
+	var owner, status, bucket, key, exportType string
+	var expires *time.Time
+	err = b.db.QueryRow(r.Context(), `SELECT created_by,status,COALESCE(object_bucket,''),COALESCE(object_key,''),export_type,expires_at FROM operations_export_task WHERE id=$1`, id).Scan(&owner, &status, &bucket, &key, &exportType, &expires)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &apiError{404, "NOT_FOUND", "任务不存在"}
+	}
+	if err != nil {
+		return err
+	}
+	if s.User.Role != "admin" && s.User.Role != "super_admin" && owner != s.User.ID {
+		return forbidden()
+	}
+	if status != "completed" || bucket == "" || key == "" || (expires != nil && expires.Before(time.Now())) {
+		return &apiError{409, "CONFLICT", "导出不可用"}
+	}
+	if filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") {
+		return &apiError{409, "CONFLICT", "导出不可用"}
+	}
+	data, err := os.ReadFile(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+	if os.IsNotExist(err) {
+		return &apiError{404, "NOT_FOUND", "导出文件不存在"}
+	}
+	if err != nil {
+		return err
+	}
+	filename := fmt.Sprintf("operations-%s-%s.csv", exportType, id)
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(data)
+	return err
+}

@@ -1598,7 +1598,6 @@
     "apps/web/src/features/payment/payment-fulfillment-service.ts",
     "apps/web/src/features/payment/payment-lifecycle-service.ts",
     "apps/web/src/features/payment/user-payment-orders.ts",
-    "apps/web/src/features/settings/actions/update-profile.ts",
     "apps/web/src/features/site-branding/service.ts",
     "apps/web/src/features/usage-log/repository.ts",
     "apps/web/src/server/internal-job-scheduler.ts",

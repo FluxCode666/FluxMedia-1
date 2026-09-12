@@ -8,21 +8,11 @@
  * 使用方：external-api-key-section.tsx。
  * 关键依赖：protectedAction、UOL invoke 网关和 Web UOL 初始化。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { ActionUserError, protectedAction } from "@repo/shared/safe-action";
-import {
-  invokeOperation,
-  OperationError,
-  type Principal,
-} from "@repo/shared/uol";
-import { revalidatePath } from "next/cache";
+import { protectedAction } from "@repo/shared/safe-action";
 import { z } from "zod";
+import { requestGoJson } from "@/server/go-backend-client";
 
-import type {
-  ExternalApiKeyListItem,
-  ExternalApiKeySummary,
-} from "@/features/external-api/key-management-service";
-import { ensureUolInitialized } from "@/server/uol-init";
+import type { ExternalApiKeyListItem, ExternalApiKeySummary } from "@/features/external-api/key-management-service";
 
 const createKeySchema = z
   .object({
@@ -76,39 +66,10 @@ type KeyOperationOutputs = {
 
 type KeyOperationName = keyof KeyOperationOutputs;
 
-/** 初始化 UOL 并从当前 session 构造唯一可信 user Principal。 */
-async function createApiKeyPrincipal(userId: string): Promise<Principal> {
-  await ensureUolInitialized();
-  return {
-    type: "user",
-    userId,
-    role: await getUserRoleById(userId),
-  };
-}
-
-/** 调用类型绑定的 Key operation，并把预期 UOL 错误安全展示给用户。 */
-async function invokeApiKeyOperation<N extends KeyOperationName>(
-  name: N,
-  input: unknown,
-  userId: string
-): Promise<KeyOperationOutputs[N]> {
-  try {
-    return await invokeOperation<KeyOperationOutputs[N]>(
-      name,
-      input,
-      await createApiKeyPrincipal(userId)
-    );
-  } catch (error) {
-    if (error instanceof OperationError) {
-      throw new ActionUserError(error.message);
-    }
-    throw error;
-  }
-}
-
-/** mutation 成功后刷新 API 密钥路由的服务端快照。 */
-function revalidateApiKeyPage(): void {
-  revalidatePath("/dashboard/external-api");
+async function invokeApiKeyOperation<N extends KeyOperationName>(name: N, input: any): Promise<KeyOperationOutputs[N]> {
+  const paths: Record<KeyOperationName,string> = {"externalApi.listKeys":"/api/external-api/keys","externalApi.createKey":"/api/external-api/keys","externalApi.revokeKey":"/api/external-api/keys/" + input.keyId,"externalApi.deleteKey":"/api/external-api/keys/" + input.keyId + "?hard=1","externalApi.updateKeyGroup":"/api/external-api/keys/" + input.keyId,"externalApi.updateKeyQuota":"/api/external-api/keys/" + input.keyId};
+  const method = name.endsWith("listKeys") ? "GET" : name.endsWith("createKey") ? "POST" : name.endsWith("deleteKey") || name.endsWith("revokeKey") ? "DELETE" : "PATCH";
+  return requestGoJson<KeyOperationOutputs[N]>(paths[name], { method, ...(method === "GET" ? {} : { body: JSON.stringify(input) }) });
 }
 
 /** 读取本人 API 密钥摘要与当前可编辑分组。 */
@@ -116,35 +77,27 @@ export const getExternalApiKeys = protectedAction
   .metadata({ action: "externalApi.listKeys" })
   .schema(listKeySchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<ExternalApiKeyListResult> =>
-      invokeApiKeyOperation("externalApi.listKeys", parsedInput, ctx.userId)
+    async ({ parsedInput }): Promise<ExternalApiKeyListResult> =>
+      invokeApiKeyOperation("externalApi.listKeys", parsedInput)
   );
 
 /** 创建 API 密钥；完整明文只存在于本次 Action 成功响应。 */
 export const createExternalApiKey = protectedAction
   .metadata({ action: "externalApi.createKey" })
   .schema(createKeySchema)
-  .action(async ({ parsedInput, ctx }): Promise<CreateExternalApiKeyResult> => {
-    const result = await invokeApiKeyOperation(
-      "externalApi.createKey",
-      parsedInput,
-      ctx.userId
-    );
-    revalidateApiKeyPage();
-    return result;
+  .action(async ({ parsedInput }): Promise<CreateExternalApiKeyResult> => {
+    return invokeApiKeyOperation("externalApi.createKey", parsedInput);
   });
 
 /** 原子撤销本人当前启用的 API 密钥。 */
 export const revokeExternalApiKey = protectedAction
   .metadata({ action: "externalApi.revokeKey" })
   .schema(keyIdSchema)
-  .action(async ({ parsedInput, ctx }): Promise<ExternalApiKeySummary> => {
+  .action(async ({ parsedInput }): Promise<ExternalApiKeySummary> => {
     const result = await invokeApiKeyOperation(
       "externalApi.revokeKey",
-      { keyId: parsedInput.id },
-      ctx.userId
+      { keyId: parsedInput.id }
     );
-    revalidateApiKeyPage();
     return result;
   });
 
@@ -152,13 +105,11 @@ export const revokeExternalApiKey = protectedAction
 export const deleteExternalApiKey = protectedAction
   .metadata({ action: "externalApi.deleteKey" })
   .schema(keyIdSchema)
-  .action(async ({ parsedInput, ctx }): Promise<{ id: string }> => {
+  .action(async ({ parsedInput }): Promise<{ id: string }> => {
     const result = await invokeApiKeyOperation(
       "externalApi.deleteKey",
-      { keyId: parsedInput.id },
-      ctx.userId
+      { keyId: parsedInput.id }
     );
-    revalidateApiKeyPage();
     return result;
   });
 
@@ -166,16 +117,11 @@ export const deleteExternalApiKey = protectedAction
 export const updateExternalApiKeyGroup = protectedAction
   .metadata({ action: "externalApi.updateKeyGroup" })
   .schema(updateKeyGroupSchema)
-  .action(async ({ parsedInput, ctx }): Promise<ExternalApiKeySummary> => {
+  .action(async ({ parsedInput }): Promise<ExternalApiKeySummary> => {
     const result = await invokeApiKeyOperation(
       "externalApi.updateKeyGroup",
-      {
-        keyId: parsedInput.id,
-        generationGroupId: parsedInput.generationGroupId,
-      },
-      ctx.userId
+      { keyId: parsedInput.id, generationGroupId: parsedInput.generationGroupId }
     );
-    revalidateApiKeyPage();
     return result;
   });
 
@@ -183,15 +129,10 @@ export const updateExternalApiKeyGroup = protectedAction
 export const updateExternalApiKeyQuota = protectedAction
   .metadata({ action: "externalApi.updateKeyQuota" })
   .schema(updateKeyQuotaSchema)
-  .action(async ({ parsedInput, ctx }): Promise<ExternalApiKeySummary> => {
+  .action(async ({ parsedInput }): Promise<ExternalApiKeySummary> => {
     const result = await invokeApiKeyOperation(
       "externalApi.updateKeyQuota",
-      {
-        keyId: parsedInput.id,
-        creditLimit: parsedInput.creditLimit,
-      },
-      ctx.userId
+      { keyId: parsedInput.id, creditLimit: parsedInput.creditLimit }
     );
-    revalidateApiKeyPage();
     return result;
   });

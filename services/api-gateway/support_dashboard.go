@@ -1,0 +1,539 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/support/tickets", b.endpoint(b.handleTicketList))
+	mux.HandleFunc("POST /api/support/tickets", b.endpoint(b.handleTicketCreate))
+	mux.HandleFunc("GET /api/support/tickets/{id}/messages", b.endpoint(b.handleTicketMessages))
+	mux.HandleFunc("POST /api/support/tickets/{id}/messages", b.endpoint(b.handleTicketAddMessage))
+	mux.HandleFunc("POST /api/support/tickets/{id}/seen", b.endpoint(b.handleTicketSeen))
+	mux.HandleFunc("PATCH /api/support/tickets/{id}/status", b.endpoint(b.handleTicketStatus))
+	mux.HandleFunc("GET /api/announcements", b.endpoint(b.handleAnnouncementList))
+	mux.HandleFunc("POST /api/announcements/read", b.endpoint(b.handleAnnouncementRead))
+	mux.HandleFunc("POST /api/announcements/read-all", b.endpoint(b.handleAnnouncementReadAll))
+	mux.HandleFunc("GET /api/announcements/unread-count", b.endpoint(b.handleAnnouncementUnread))
+	mux.HandleFunc("GET /api/admin/announcements", b.endpoint(b.handleAnnouncementAdminList))
+	mux.HandleFunc("POST /api/admin/announcements", b.endpoint(b.handleAnnouncementCreate))
+	mux.HandleFunc("PUT /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementUpdate))
+	mux.HandleFunc("DELETE /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementDelete))
+	mux.HandleFunc("POST /api/admin/announcements/{id}/toggle", b.endpoint(b.handleAnnouncementToggle))
+	mux.HandleFunc("GET /api/referrals/dashboard", b.endpoint(b.handleReferralDashboard))
+	mux.HandleFunc("POST /api/analytics/data-dashboard", b.endpoint(b.handleDataDashboard))
+	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
+	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
+}
+
+func (b *backend) handleTicketCreate(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	var in struct{ Subject, Category, Priority, Message string }
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	if strings.TrimSpace(in.Subject) == "" || strings.TrimSpace(in.Message) == "" {
+		return invalid("subject and message are required")
+	}
+	if in.Category == "" {
+		in.Category = "other"
+	}
+	if in.Priority == "" {
+		in.Priority = "medium"
+	}
+	id := supportRandomID()
+	now := time.Now()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket(id,user_id,subject,category,priority,status,user_last_seen_at,last_user_activity_at,updated_at) VALUES($1,$2,$3,$4,$5,'open',$6,$6,$6)`, id, s.User.ID, in.Subject, in.Category, in.Priority, now)
+	if e != nil {
+		return e
+	}
+	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,false)`, supportRandomID(), id, s.User.ID, in.Message)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 201, map[string]any{"message": "工单创建成功", "ticketId": id})
+	return nil
+}
+func (b *backend) handleTicketList(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if size != 10 && size != 20 && size != 50 {
+		size = 20
+	}
+	status := r.URL.Query().Get("status")
+	search := r.URL.Query().Get("search")
+	where := "t.user_id=$1"
+	args := []any{s.User.ID}
+	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+		where = "TRUE"
+		args = nil
+	}
+	if status != "" && status != "all" {
+		args = append(args, status)
+		where += " AND t.status=$" + strconv.Itoa(len(args))
+	}
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += " AND (t.subject ILIKE $" + strconv.Itoa(len(args)) + " OR u.email ILIKE $" + strconv.Itoa(len(args)) + " OR u.name ILIKE $" + strconv.Itoa(len(args)) + " )"
+	}
+	offset := (page - 1) * size
+	args = append(args, size, offset)
+	q := `SELECT t.id,t.user_id,t.subject,t.category,t.priority,t.status,t.user_last_seen_at,t.last_admin_activity_at,t.created_at,t.updated_at,u.name,u.email, count(*) OVER() FROM ticket t JOIN "user" u ON u.id=t.user_id WHERE ` + where + ` ORDER BY t.updated_at DESC LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
+	rows, e := b.db.Query(r.Context(), q, args...)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	items := []any{}
+	total := 0
+	for rows.Next() {
+		var id, uid, sub, cat, pri, st string
+		var ul, ca, ua time.Time
+		var la *time.Time
+		var n, em *string
+		var cnt int
+		if e = rows.Scan(&id, &uid, &sub, &cat, &pri, &st, &ul, &la, &ca, &ua, &n, &em, &cnt); e != nil {
+			return e
+		}
+		total = cnt
+		items = append(items, map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "unread": false, "createdAt": ca, "updatedAt": ua, "userName": n, "userEmail": em})
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "page": page, "pageSize": size, "total": total, "totalPages": (total + size - 1) / size})
+	return nil
+}
+func (b *backend) ticketAccess(ctx context.Context, s *sessionResponse, id string) (bool, error) {
+	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+		return true, nil
+	}
+	var ok bool
+	e := b.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ticket WHERE id=$1 AND user_id=$2)`, id, s.User.ID).Scan(&ok)
+	return ok, e
+}
+func (b *backend) handleTicketMessages(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	id := r.PathValue("id")
+	ok, e := b.ticketAccess(r.Context(), s, id)
+	if e != nil {
+		return e
+	}
+	if !ok {
+		return forbidden()
+	}
+	var sub, uid, cat, pri, st string
+	var ul, ca, ua time.Time
+	var la, al, lu *time.Time
+	e = b.db.QueryRow(r.Context(), `SELECT id,user_id,subject,category,priority,status,user_last_seen_at,last_admin_activity_at,admin_last_seen_at,last_user_activity_at,created_at,updated_at FROM ticket WHERE id=$1`, id).Scan(new(string), &uid, &sub, &cat, &pri, &st, &ul, &la, &al, &lu, &ca, &ua)
+	if e != nil {
+		if e == pgx.ErrNoRows {
+			return invalid("工单不存在")
+		}
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT m.id,m.content,m.is_admin_response,m.created_at,u.id,u.name,u.image FROM ticket_message m LEFT JOIN "user" u ON u.id=m.user_id WHERE m.ticket_id=$1 ORDER BY m.created_at ASC`, id)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	msgs := []any{}
+	for rows.Next() {
+		var mid, c string
+		var adm bool
+		var t time.Time
+		var xid, xn, xi *string
+		if e = rows.Scan(&mid, &c, &adm, &t, &xid, &xn, &xi); e != nil {
+			return e
+		}
+		msgs = append(msgs, map[string]any{"id": mid, "content": c, "isAdminResponse": adm, "createdAt": t, "user": map[string]any{"id": xid, "name": xn, "image": xi}})
+	}
+	writeJSON(w, 200, map[string]any{"ticket": map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "userLastSeenAt": ul, "lastAdminActivityAt": la, "adminLastSeenAt": al, "lastUserActivityAt": lu, "createdAt": ca, "updatedAt": ua}, "messages": map[string]any{"items": msgs, "page": 1, "pageSize": len(msgs), "total": len(msgs), "totalPages": 1}})
+	return nil
+}
+func (b *backend) handleTicketAddMessage(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	id := r.PathValue("id")
+	ok, e := b.ticketAccess(r.Context(), s, id)
+	if e != nil {
+		return e
+	}
+	if !ok {
+		return forbidden()
+	}
+	var in struct {
+		Content string `json:"content"`
+	}
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	if strings.TrimSpace(in.Content) == "" {
+		return invalid("content is required")
+	}
+	var st string
+	e = b.db.QueryRow(r.Context(), `SELECT status FROM ticket WHERE id=$1`, id).Scan(&st)
+	if e != nil {
+		return e
+	}
+	if st == "closed" {
+		return invalid("工单已关闭")
+	}
+	now := time.Now()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,$5)`, supportRandomID(), id, s.User.ID, in.Content, s.User.Role == "admin" || s.User.Role == "super_admin")
+	if e != nil {
+		return e
+	}
+	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+		_, e = b.db.Exec(r.Context(), `UPDATE ticket SET status=CASE WHEN status='open' THEN 'in_progress' ELSE status END,last_admin_activity_at=$1,admin_last_seen_at=$1,updated_at=$1 WHERE id=$2`, now, id)
+	} else {
+		_, e = b.db.Exec(r.Context(), `UPDATE ticket SET last_user_activity_at=$1,updated_at=$1 WHERE id=$2`, now, id)
+	}
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]string{"message": "消息发送成功"})
+	return nil
+}
+func (b *backend) handleTicketSeen(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	id := r.PathValue("id")
+	ok, e := b.ticketAccess(r.Context(), s, id)
+	if e != nil {
+		return e
+	}
+	if !ok {
+		return forbidden()
+	}
+	now := time.Now()
+	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+		_, e = b.db.Exec(r.Context(), `UPDATE ticket SET admin_last_seen_at=$1 WHERE id=$2`, now, id)
+	} else {
+		_, e = b.db.Exec(r.Context(), `UPDATE ticket SET user_last_seen_at=$1 WHERE id=$2`, now, id)
+	}
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]any{"seenAt": now})
+	return nil
+}
+func (b *backend) handleTicketStatus(w http.ResponseWriter, r *http.Request) error {
+	if _, e := b.requireAdmin(r, false); e != nil {
+		return e
+	}
+	var in struct {
+		Status string `json:"status"`
+	}
+	if e := decodeBody(r, &in); e != nil {
+		return e
+	}
+	if in.Status != "open" && in.Status != "in_progress" && in.Status != "resolved" && in.Status != "closed" {
+		return invalid("invalid status")
+	}
+	_, e := b.db.Exec(r.Context(), `UPDATE ticket SET status=$1,last_admin_activity_at=now(),admin_last_seen_at=now(),updated_at=now() WHERE id=$2`, in.Status, r.PathValue("id"))
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]string{"message": "状态更新成功"})
+	return nil
+}
+
+func (b *backend) handleAnnouncementList(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT a.id,a.title,a.content,a.severity,a.is_published,a.is_pinned,a.priority,a.published_at,a.expires_at,a.created_at,a.updated_at, ar.read_at FROM announcement a LEFT JOIN announcement_read ar ON ar.announcement_id=a.id AND ar.user_id=$1 WHERE a.is_published=true AND (a.published_at IS NULL OR a.published_at<=now()) AND (a.expires_at IS NULL OR a.expires_at>now()) ORDER BY a.is_pinned DESC,a.priority DESC,a.published_at DESC NULLS LAST,a.created_at DESC`, s.User.ID)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id, t, c, sev string
+		var pub, pin bool
+		var pr int
+		var pa, ea, ca, ua, ra *time.Time
+		if e = rows.Scan(&id, &t, &c, &sev, &pub, &pin, &pr, &pa, &ea, &ca, &ua, &ra); e != nil {
+			return e
+		}
+		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua, "isRead": ra != nil})
+	}
+	writeJSON(w, 200, map[string]any{"items": out})
+	return nil
+}
+func (b *backend) handleAnnouncementRead(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	var in struct {
+		ID string `json:"id"`
+	}
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	if in.ID == "" {
+		return invalid("id is required")
+	}
+	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=now()`, supportRandomID(), in.ID, s.User.ID)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]string{"message": "已标记为已读"})
+	return nil
+}
+func (b *backend) handleAnnouncementReadAll(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT id FROM announcement WHERE is_published=true`)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	count := int64(0)
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			return e
+		}
+		if _, e = b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=now()`, supportRandomID(), id, s.User.ID); e != nil {
+			return e
+		}
+		count++
+	}
+	writeJSON(w, 200, map[string]any{"count": count})
+	return nil
+}
+func (b *backend) handleAnnouncementUnread(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	var n int
+	e = b.db.QueryRow(r.Context(), `SELECT count(*) FROM announcement a LEFT JOIN announcement_read ar ON ar.announcement_id=a.id AND ar.user_id=$1 WHERE a.is_published=true AND (ar.id IS NULL OR ar.read_at<a.updated_at)`, s.User.ID).Scan(&n)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]int{"count": n})
+	return nil
+}
+
+func supportRandomID() string {
+	if s, e := randomToken(16); e == nil {
+		return s
+	}
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func (b *backend) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireAdmin(r, false)
+	if e != nil {
+		return e
+	}
+	var in struct {
+		Title, Content, Severity string
+		IsPublished, IsPinned    bool
+		Priority                 int
+		PublishedAt, ExpiresAt   *time.Time
+	}
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Content) == "" {
+		return invalid("title and content are required")
+	}
+	id := supportRandomID()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement(id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'info'),$5,$6,$7,$8,$9,$10,$10)`, id, in.Title, in.Content, in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 201, map[string]any{"id": id, "message": "公告已创建"})
+	return nil
+}
+func (b *backend) handleAnnouncementUpdate(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireAdmin(r, false)
+	if e != nil {
+		return e
+	}
+	id := r.PathValue("id")
+	var in struct {
+		Title, Content, Severity string
+		IsPublished, IsPinned    bool
+		Priority                 int
+		PublishedAt, ExpiresAt   *time.Time
+	}
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	_, e = b.db.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=now() WHERE id=$10`, in.Title, in.Content, in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, id)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]string{"message": "公告已更新"})
+	return nil
+}
+func (b *backend) handleAnnouncementDelete(w http.ResponseWriter, r *http.Request) error {
+	if _, e := b.requireAdmin(r, false); e != nil {
+		return e
+	}
+	_, e := b.db.Exec(r.Context(), `DELETE FROM announcement WHERE id=$1`, r.PathValue("id"))
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]string{"message": "公告已删除"})
+	return nil
+}
+func (b *backend) handleAnnouncementToggle(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireAdmin(r, false)
+	if e != nil {
+		return e
+	}
+	var p bool
+	e = b.db.QueryRow(r.Context(), `UPDATE announcement SET is_published=NOT is_published,published_at=CASE WHEN NOT is_published AND published_at IS NULL THEN now() ELSE published_at END,updated_by_user_id=$1,updated_at=now() WHERE id=$2 RETURNING is_published`, s.User.ID, r.PathValue("id")).Scan(&p)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]any{"isPublished": p})
+	return nil
+}
+func (b *backend) handleReferralDashboard(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	var code string
+	e = b.db.QueryRow(r.Context(), `SELECT code FROM referral_profile WHERE user_id=$1`, s.User.ID).Scan(&code)
+	if e != nil && e != pgx.ErrNoRows {
+		return e
+	}
+	if code == "" {
+		code = supportRandomID()[:12]
+		_, e = b.db.Exec(r.Context(), `INSERT INTO referral_profile(user_id,code) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, s.User.ID, code)
+		if e != nil {
+			return e
+		}
+	}
+	var invited, rewarded int
+	var total float64
+	e = b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE status='rewarded'),COALESCE(sum(inviter_reward_credits),0) FROM referral_relationship WHERE inviter_user_id=$1`, s.User.ID).Scan(&invited, &rewarded, &total)
+	if e != nil {
+		return e
+	}
+	base := b.config.authURL
+	if base == "" {
+		base = "/"
+	}
+	writeJSON(w, 200, map[string]any{"code": code, "inviteUrl": strings.TrimRight(base, "/") + "/?ref=" + code, "invitedCount": invited, "rewardedCount": rewarded, "totalRewardCredits": total, "rewardConfig": map[string]any{}})
+	return nil
+}
+
+func (b *backend) handleAnnouncementAdminList(w http.ResponseWriter, r *http.Request) error {
+	if _, e := b.requireAdmin(r, false); e != nil {
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_at,updated_at FROM announcement ORDER BY updated_at DESC`)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id, t, c, sev string
+		var pub, pin bool
+		var pr int
+		var pa, ea, ca, ua *time.Time
+		if e = rows.Scan(&id, &t, &c, &sev, &pub, &pin, &pr, &pa, &ea, &ca, &ua); e != nil {
+			return e
+		}
+		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPublished": pub, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua})
+	}
+	writeJSON(w, 200, map[string]any{"items": out})
+	return nil
+}
+
+func (b *backend) handleDataDashboard(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireSession(r)
+	if e != nil {
+		return e
+	}
+	var in map[string]any
+	_ = decodeBody(r, &in)
+	return b.writeDashboard(w, r, s.User.ID)
+}
+func (b *backend) handleAdminDataDashboard(w http.ResponseWriter, r *http.Request) error {
+	s, e := b.requireAdmin(r, false)
+	if e != nil {
+		return e
+	}
+	var in struct {
+		UserID string `json:"userId"`
+	}
+	if e = decodeBody(r, &in); e != nil {
+		return e
+	}
+	uid := in.UserID
+	if uid == "" {
+		uid = s.User.ID
+	}
+	return b.writeDashboard(w, r, uid)
+}
+func (b *backend) writeDashboard(w http.ResponseWriter, r *http.Request, uid string) error {
+	var images, videos int
+	var credits float64
+	e := b.db.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE lower(model) NOT LIKE '%video%'),count(*) FILTER (WHERE lower(model) LIKE '%video%'),COALESCE(sum(credits_consumed),0) FROM generation WHERE user_id=$1`, uid).Scan(&images, &videos, &credits)
+	if e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]any{"status": "ready", "snapshot": map[string]any{"imageCount": images, "videoCount": videos, "creditsConsumed": credits, "asOf": time.Now().UTC()}})
+	return nil
+}
+func (b *backend) handleAdminAnalyticsUsers(w http.ResponseWriter, r *http.Request) error {
+	if _, e := b.requireAdmin(r, false); e != nil {
+		return e
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("query"))
+	if q == "" {
+		writeJSON(w, 200, map[string]any{"users": []any{}})
+		return nil
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT id,name,email FROM "user" WHERE name ILIKE $1 OR email ILIKE $1 ORDER BY name LIMIT 20`, `%`+q+`%`)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id, n, em string
+		if e = rows.Scan(&id, &n, &em); e != nil {
+			return e
+		}
+		out = append(out, map[string]string{"id": id, "name": n, "email": em})
+	}
+	writeJSON(w, 200, map[string]any{"users": out})
+	return nil
+}

@@ -1,11 +1,8 @@
 "use server";
 
-import { eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
-
-import { db, user } from "@repo/database";
 import { updateProfileSchema } from "@/features/settings/schemas";
 import { protectedAction } from "@repo/shared/safe-action";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /**
  * 更新用户资料 Server Action
@@ -21,33 +18,9 @@ import { protectedAction } from "@repo/shared/safe-action";
 export const updateProfileAction = protectedAction
   .metadata({ action: "settings.updateProfile" })
   .schema(updateProfileSchema)
-  .action(async ({ parsedInput: data, ctx }) => {
-    // 构建更新对象
-    const updateData: {
-      name?: string;
-      image?: string;
-      updatedAt: Date;
-    } = {
-      updatedAt: new Date(),
-    };
-
-    // 如果提供了 name，添加到更新对象
-    if (data.name !== undefined) {
-      updateData.name = data.name;
-    }
-
-    // 如果提供了 image，添加到更新对象
-    if (data.image !== undefined) {
-      updateData.image = data.image;
-    }
-
-    // 使用 Drizzle 更新用户资料
-    await db.update(user).set(updateData).where(eq(user.id, ctx.userId));
-
-    // 刷新设置页面缓存，使 UI 更新
-    revalidatePath("/dashboard/settings");
-
-    return {
-      message: "资料更新成功",
-    };
+  .action(async ({ parsedInput: data }) => {
+    return requestGoJson<{message:string}>("/api/user/profile", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
   });

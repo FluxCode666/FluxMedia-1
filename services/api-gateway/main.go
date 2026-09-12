@@ -58,6 +58,8 @@ type config struct {
 	readyTimeout       time.Duration
 	scriptRuntimeURL   string
 	scriptRuntimeToken string
+	cronSecret         string
+	storagePath        string
 }
 
 type backend struct {
@@ -284,6 +286,8 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 		writeTimeout: writeTimeout, idleTimeout: idleTimeout, readyTimeout: readyTimeout,
 		scriptRuntimeURL:   scriptRuntimeURL,
 		scriptRuntimeToken: getString(getenv, "GO_SCRIPT_RUNTIME_TOKEN", ""),
+		cronSecret:         getString(getenv, "CRON_SECRET", ""),
+		storagePath:        getString(getenv, "LOCAL_STORAGE_PATH", "/app/storage"),
 	}, nil
 }
 
@@ -309,6 +313,9 @@ func (b *backend) router() *http.ServeMux {
 	mux := http.NewServeMux()
 	b.registerAuth(mux)
 	b.registerExternalAPI(mux)
+	b.registerAccountRoutes(mux)
+	b.registerMigratedRoutes(mux)
+	b.registerSupportDashboardRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)
 	mux.HandleFunc("/", b.handleNotMigrated)

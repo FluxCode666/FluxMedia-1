@@ -15,6 +15,8 @@ Next.js 渲染，但所有后端 API、认证、数据库访问、媒体任务�
 - 注册验证码、密码找回和一次性重置、邮箱验证、GitHub/Google OAuth（PKCE + 单次 state）。
 - `/api/v1/credits`、`/v1/credits`，保留账户余额、Key 额度和批次过期行为。
 - `/api/v1/models`、`/v1/models`，保留 Key 分组、成员启用状态和模型停用过滤。
+- `/api/v1/images/*`、`/v1/images/*`、`/api/v1/videos/*`、`/v1/videos/*` 及 Gemini 长任务入口已由 Go 注册；图片任务写入 `generation`/`image_async_task`，视频任务写入 `video_generation`，查询按用户或 API Key 做归属校验。
+- 站点 Logo、上传预签名/本地 PUT、存储读取、Cron 积分/图片清理和管理员搜索入口已由 Go 处理，并保留会话、角色及 Cron Secret 边界。
 - Go 读取原 Drizzle journal 与 SQL，在同一事务内迁移并沿用已有迁移记录；并发启动受数据库锁保护。
 - 先迁移后监听；`--healthcheck` 请求实际 HTTP `/readyz`，不会提前把迁移中的服务判为健康。
 
@@ -32,7 +34,7 @@ node scripts/audit-go-migration.mjs --write
 go -C services/api-gateway run . --route-audit
 ```
 
-当前检查结果：覆盖 29 个展开后的 HTTP 方法，仍缺 70 个，前端仍有 79 个静态数据库导入。
+当前检查结果：Go ServeMux 已覆盖清单中的 99 个展开 HTTP 方法（不再有缺失路由）；前端仍有 79 个静态数据库导入，媒体 worker、对象存储和后台业务的行为迁移仍需完成，因此生产发布门仍失败。
 路由覆盖只证明有 handler，不替代权限、数据和业务行为测试。
 
 本地验证：`make test-go-integration` 通过，使用独立 `fluxmedia_go_test_local` 数据库，

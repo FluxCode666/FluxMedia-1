@@ -16,6 +16,7 @@ import type {
   WalletTopUpOptions,
 } from "./wallet-page-data";
 import { loadWalletPageData } from "./wallet-page-data";
+import { requestGoJson } from "@/server/go-backend-client";
 
 type WalletOperationOutputs = {
   "credits.getMyBalance": WalletBalanceSnapshot;
@@ -50,9 +51,7 @@ async function invokeMyWalletOperation<N extends WalletOperationName>(
 /** 读取当前用户钱包余额快照。 */
 export const getMyWalletBalanceAction = protectedAction
   .metadata({ action: "credits.getMyBalance" })
-  .action(async ({ ctx }) =>
-    invokeMyWalletOperation("credits.getMyBalance", ctx.userId)
-  );
+  .action(async () => requestGoJson<WalletBalanceSnapshot>("/api/credits/balance"));
 
 /** 读取当前用户有效充值能力。 */
 export const getMyWalletTopUpOptionsAction = protectedAction
