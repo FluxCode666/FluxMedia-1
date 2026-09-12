@@ -13,6 +13,7 @@ import (
 
 func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/support/tickets", b.endpoint(b.handleTicketList))
+	mux.HandleFunc("GET /api/support/tickets/unread-count", b.endpoint(b.handleTicketUnreadCount))
 	mux.HandleFunc("POST /api/support/tickets", b.endpoint(b.handleTicketCreate))
 	mux.HandleFunc("GET /api/support/tickets/{id}/messages", b.endpoint(b.handleTicketMessages))
 	mux.HandleFunc("POST /api/support/tickets/{id}/messages", b.endpoint(b.handleTicketAddMessage))
@@ -32,6 +33,24 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
 	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
 	mux.HandleFunc("GET /api/analytics/summary", b.endpoint(b.handleAnalyticsSummary))
+}
+
+func (b *backend) handleTicketUnreadCount(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	var n int
+	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+		err = b.db.QueryRow(r.Context(), `SELECT count(*) FROM ticket WHERE last_user_activity_at IS NOT NULL AND (admin_last_seen_at IS NULL OR last_user_activity_at>admin_last_seen_at)`).Scan(&n)
+	} else {
+		err = b.db.QueryRow(r.Context(), `SELECT count(*) FROM ticket WHERE user_id=$1 AND last_admin_activity_at IS NOT NULL AND (user_last_seen_at IS NULL OR last_admin_activity_at>user_last_seen_at)`, s.User.ID).Scan(&n)
+	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": n})
+	return nil
 }
 
 // handleAnalyticsSummary serves the dashboard's immutable usage summary directly from

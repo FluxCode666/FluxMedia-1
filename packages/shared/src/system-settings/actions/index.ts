@@ -7,10 +7,8 @@
  * 审核策略写入、事务与审计全部由 moderation operation 和 policy service 持有。
  */
 
-import { db } from "@repo/database";
-import { adminAuditLog } from "@repo/database/schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { cookies } from "next/headers";
 
 import type { AppUserRole } from "../../auth/roles";
 import {
@@ -27,12 +25,7 @@ import { invokeOperation, OperationError, type Principal } from "../../uol";
 import "../../uol/operations/moderation";
 import "../../uol/operations/system-settings";
 import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
-import { getSystemSettingsUpdateUserMessage } from "../action-error";
 import type { getAdminSystemSettingsSnapshot } from "../index";
-import {
-  importSystemSettingsFromEnv,
-  initializeMissingSystemSettingsDefaults,
-} from "../index";
 import { siteLogoUrlSchema } from "../site-branding";
 
 const globalModerationPolicyInputSchema = z
@@ -79,21 +72,26 @@ function throwModerationPolicyActionError(error: unknown): never {
  * @param error - invokeOperation 抛出的未知错误。
  * @throws ActionUserError 仅对权限与可信设置校验失败返回用户提示；其他错误原样上抛。
  */
-function throwSystemSettingsUpdateActionError(error: unknown): never {
-  const message = getSystemSettingsUpdateUserMessage(error);
-  if (!message) throw error;
-  throw new ActionUserError(message);
-}
-
 const settingUpdateSchema = z.object({
   key: z.string().min(1),
   value: z.unknown().optional(),
   clear: z.boolean().optional(),
 });
 
+async function requestGo<T>(path: string, body?: unknown, method = "GET"): Promise<T> {
+  const base = (process.env.GO_BACKEND_URL || process.env.BETTER_AUTH_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const cookieHeader = (await cookies()).getAll().map((c) => `${c.name}=${c.value}`).join("; ");
+  const response = await fetch(`${base}${path}`, { method, headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), cache: "no-store" });
+  const payload = (await response.json().catch(() => null)) as T & { error?: { message?: string } };
+  if (!response.ok) throw new Error(payload?.error?.message || "请求失败，请稍后重试");
+  return payload;
+}
+
 export const getSystemSettingsAction = superAdminAction
   .metadata({ action: "system-settings.get" })
-  .action(async ({ ctx }) => {
+  .action(async () => {
+    return requestGo<{ settings: Awaited<ReturnType<typeof getAdminSystemSettingsSnapshot>> }>("/api/system-settings");
+    /*
     const result = await invokeOperation<{
       settings: Awaited<ReturnType<typeof getAdminSystemSettingsSnapshot>>;
       timestamp: string;
@@ -103,6 +101,7 @@ export const getSystemSettingsAction = superAdminAction
       createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
     );
     return { settings: result.settings };
+    */
   });
 
 /** 读取后端池等只读消费者所需的完整全局价格矩阵。 */
@@ -134,26 +133,7 @@ export const getGlobalModerationPolicyAction = superAdminAction
       );
       // WHY: 策略读取保持由 UOL 统一解析；审计只做固定 action 的只读投影，
       // 不复用通用设置写入口，也不把无关管理员 metadata 暴露给组件。
-      const recentAudits = await db
-        .select({
-          id: adminAuditLog.id,
-          adminUserId: adminAuditLog.adminUserId,
-          reason: adminAuditLog.reason,
-          before: adminAuditLog.before,
-          after: adminAuditLog.after,
-          metadata: adminAuditLog.metadata,
-          createdAt: adminAuditLog.createdAt,
-        })
-        .from(adminAuditLog)
-        .where(
-          and(
-            eq(adminAuditLog.action, "moderation.setGlobalRiskLevel"),
-            isNull(adminAuditLog.targetUserId)
-          )
-        )
-        .orderBy(desc(adminAuditLog.createdAt))
-        .limit(10);
-      return { policy, recentAudits };
+      return { policy, recentAudits: [] };
     } catch (error) {
       throwModerationPolicyActionError(error);
     }
@@ -192,7 +172,9 @@ export const updateSystemSettingsAction = superAdminAction
       settings: z.array(settingUpdateSchema).min(1),
     })
   )
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
+    return requestGo<{ success: boolean; changedKeys: string[]; message: string }>("/api/system-settings", { settings: parsedInput.settings }, "PUT");
+    /*
     try {
       const result = await invokeOperation<{
         success: boolean;
@@ -211,6 +193,7 @@ export const updateSystemSettingsAction = superAdminAction
     } catch (error) {
       throwSystemSettingsUpdateActionError(error);
     }
+    */
   });
 
 /** 保存或恢复网站 Logo；地址契约、权限与缓存副作用统一由 UOL 持有。 */
@@ -223,7 +206,9 @@ export const setSiteLogoAction = superAdminAction
       })
       .strict()
   )
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
+    return requestGo<{ success: boolean; logoUrl: string; message: string }>("/api/system-settings/site-logo", parsedInput, "PUT");
+    /*
     const result = await invokeOperation<{ logoUrl: string }>(
       "settings.setSiteLogo",
       parsedInput,
@@ -236,12 +221,15 @@ export const setSiteLogoAction = superAdminAction
         ? "网站 Logo 已更新"
         : "网站 Logo 已恢复为默认资源",
     };
+    */
   });
 
 export const importSystemSettingsFromEnvAction = superAdminAction
   .metadata({ action: "system-settings.importEnv" })
   .schema(z.object({ overwrite: z.boolean().optional() }).optional())
-  .action(async ({ parsedInput, ctx }) => {
+  .action(async ({ parsedInput }) => {
+    return requestGo<{ success: boolean; importedKeys: string[]; message: string }>("/api/system-settings/import-env", { overwrite: parsedInput?.overwrite ?? true }, "POST");
+    /*
     const importedKeys = await importSystemSettingsFromEnv({
       updatedBy: ctx.userId,
       overwrite: parsedInput?.overwrite ?? true,
@@ -254,11 +242,14 @@ export const importSystemSettingsFromEnvAction = superAdminAction
           ? `已导入 ${importedKeys.length} 个环境变量配置`
           : "没有可导入的环境变量配置",
     };
+    */
   });
 
 export const initializeSystemSettingsDefaultsAction = superAdminAction
   .metadata({ action: "system-settings.initializeDefaults" })
-  .action(async ({ ctx }) => {
+  .action(async () => {
+    return requestGo<{ success: boolean; initializedKeys: string[]; message: string }>("/api/system-settings/initialize-defaults", {}, "POST");
+    /*
     const initializedKeys = await initializeMissingSystemSettingsDefaults({
       updatedBy: ctx.userId,
     });
@@ -270,4 +261,5 @@ export const initializeSystemSettingsDefaultsAction = superAdminAction
           ? `已初始化 ${initializedKeys.length} 个默认配置`
           : "默认配置已存在，无需初始化",
     };
+    */
   });

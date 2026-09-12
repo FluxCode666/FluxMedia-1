@@ -127,11 +127,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   } = useAction(getMyUnreadAnnouncementCountAction);
   const unreadTicketCount = Math.max(
     0,
-    Number(unreadTicketsResult.data?.count ?? 0)
+    Number((unreadTicketsResult.data as unknown as { count?: number } | undefined)?.count ?? 0)
   );
   const unreadAnnouncementCount = Math.max(
     0,
-    Number(unreadAnnouncementsResult.data?.count ?? 0)
+    Number((unreadAnnouncementsResult.data as unknown as { count?: number } | undefined)?.count ?? 0)
   );
 
   useEffect(() => {

@@ -16,6 +16,7 @@ import { protectedAction } from "@repo/shared/safe-action";
 import { invokeOperation } from "@repo/shared/uol";
 
 import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 const topUpCheckoutSchema = z.object({
   clientRequestId: z.string().uuid(),
@@ -27,10 +28,8 @@ const topUpCheckoutSchema = z.object({
 /** 获取当前用户可见的充值选项。 */
 export const getCreditTopUpOptionsAction = protectedAction
   .metadata({ action: "credits.getTopUpOptions" })
-  .action(async ({ ctx }) => {
-    await ensureUolInitialized();
-    const role = await getUserRoleById(ctx.userId);
-    return invokeOperation<{
+  .action(async () => {
+    return requestGoJson<{
       enabled: boolean;
       defaultCurrency: string;
       currencies: Array<{
@@ -40,15 +39,7 @@ export const getCreditTopUpOptionsAction = protectedAction
         maxAmountMinor: number;
         providers: Array<"alipay_f2f">;
       }>;
-    }>(
-      "credits.getTopUpOptions",
-      {},
-      {
-        type: "user",
-        userId: ctx.userId,
-        role,
-      }
-    );
+    }>("/api/credits/top-up/options");
   });
 
 /** 创建按金额积分充值二维码订单。 */

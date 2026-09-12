@@ -315,6 +315,8 @@ func (b *backend) router() *http.ServeMux {
 	b.registerExternalAPI(mux)
 	b.registerAccountRoutes(mux)
 	b.registerMigratedRoutes(mux)
+	b.registerSystemSettingsRoutes(mux)
+	b.registerNewsletterRoutes(mux)
 	b.registerSupportDashboardRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)

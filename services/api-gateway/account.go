@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -113,6 +114,96 @@ func (b *backend) handleTopUpOptions(w http.ResponseWriter, r *http.Request) err
 	return nil
 }
 
+func (b *backend) handleCreditsResource(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	switch r.URL.Path {
+	case "/api/credits/active-batches":
+		rows, err := b.db.Query(r.Context(), `SELECT id,amount,remaining,issued_at,expires_at,source_type FROM credits_batch WHERE user_id=$1 AND status='active' AND remaining>0 ORDER BY issued_at`, s.User.ID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []any{}
+		for rows.Next() {
+			var id, src string
+			var amount, rem float64
+			var issued time.Time
+			var exp *time.Time
+			if err := rows.Scan(&id, &amount, &rem, &issued, &exp, &src); err != nil {
+				return err
+			}
+			out = append(out, map[string]any{"id": id, "amount": amount, "remaining": rem, "issuedAt": issued, "expiresAt": exp, "sourceType": src})
+		}
+		writeJSON(w, 200, out)
+		return nil
+	case "/api/credits/check":
+		var in struct {
+			Amount float64 `json:"amount"`
+		}
+		if err := decodeBody(r, &in); err != nil {
+			return err
+		}
+		var bal float64
+		var status string
+		if err := b.db.QueryRow(r.Context(), `SELECT balance,status FROM credits_balance WHERE user_id=$1`, s.User.ID).Scan(&bal, &status); err != nil {
+			return err
+		}
+		writeJSON(w, 200, map[string]any{"available": in.Amount > 0 && bal >= in.Amount && status == "active", "currentBalance": bal, "required": in.Amount, "status": status})
+		return nil
+	case "/api/credits/use":
+		var in struct {
+			Amount      float64        `json:"amount"`
+			ServiceName string         `json:"serviceName"`
+			Description string         `json:"description"`
+			Metadata    map[string]any `json:"metadata"`
+		}
+		if err := decodeBody(r, &in); err != nil {
+			return err
+		}
+		if in.Amount <= 0 || strings.TrimSpace(in.ServiceName) == "" {
+			return invalid("积分数量和服务名不能为空")
+		}
+		tx, err := b.db.Begin(r.Context())
+		if err != nil {
+			return err
+		}
+		defer rollback(tx)
+		if _, err = tx.Exec(r.Context(), `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), s.User.ID); err != nil {
+			return err
+		}
+		var bal float64
+		var st string
+		if err = tx.QueryRow(r.Context(), `SELECT balance,status FROM credits_balance WHERE user_id=$1 FOR UPDATE`, s.User.ID).Scan(&bal, &st); err != nil {
+			return err
+		}
+		if st != "active" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "account_frozen", "message": "积分账户已冻结"})
+			return nil
+		}
+		if bal < in.Amount {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "insufficient_credits", "message": "积分不足", "required": in.Amount, "available": bal})
+			return nil
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE credits_balance SET balance=balance-$2,total_spent=total_spent+$2,updated_at=now() WHERE user_id=$1`, s.User.ID, in.Amount); err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(in.Metadata)
+		id := newRequestID()
+		if _, err = tx.Exec(r.Context(), `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,metadata) VALUES($1,$2,'consumption',$3,$4,$5,$6,$7)`, id, s.User.ID, in.Amount, "WALLET:"+s.User.ID, "SERVICE:"+in.ServiceName, in.Description, raw); err != nil {
+			return err
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "consumedAmount": in.Amount, "remainingBalance": bal - in.Amount, "transactionId": id})
+		return nil
+	}
+	return invalid("unknown credits resource")
+}
+
 func randomAPIKey() (string, error) {
 	b := make([]byte, 32)
 	if _, e := rand.Read(b); e != nil {
@@ -215,6 +306,9 @@ func (b *backend) registerAccountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/credits/balance", b.endpoint(b.handleCreditsBalance))
 	mux.HandleFunc("GET /api/credits/transactions", b.endpoint(b.handleCreditsTransactions))
 	mux.HandleFunc("GET /api/credits/top-up/options", b.endpoint(b.handleTopUpOptions))
+	mux.HandleFunc("POST /api/credits/use", b.endpoint(b.handleCreditsResource))
+	mux.HandleFunc("POST /api/credits/check", b.endpoint(b.handleCreditsResource))
+	mux.HandleFunc("GET /api/credits/active-batches", b.endpoint(b.handleCreditsResource))
 	mux.HandleFunc("GET /api/external-api/keys", b.endpoint(b.handleAPIKeys))
 	mux.HandleFunc("POST /api/external-api/keys", b.endpoint(b.handleAPIKeys))
 	mux.HandleFunc("PATCH /api/external-api/keys/{id}", b.endpoint(b.handleAPIKeys))
