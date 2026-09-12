@@ -7,8 +7,8 @@
 // 直接从各模块导入(不经 barrel index.ts):barrel re-export 多个卡片组件,经它导入会把
 // 这些组件及其依赖一并拖进每页必载的公共 bundle(tree-shaking 被 barrel 破坏)。
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { getServerSession } from "@repo/shared/auth/server";
+import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { logError } from "@repo/shared/logger";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import type { CurrentSession } from "@/features/auth/hooks/use-current-session";
@@ -35,7 +35,7 @@ async function loadInitialDashboardState(): Promise<InitialDashboardState> {
     if (!serverSession?.user?.id) {
       return { session: null, recordedAppDate: null };
     }
-    const role = await getUserRoleById(serverSession.user.id);
+    const role = normalizeUserRole((serverSession.user as { role?: string | null }).role);
     const visit = await tryRecordDashboardWebVisit(serverSession.user.id, role);
     return {
       session: {

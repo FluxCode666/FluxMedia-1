@@ -5,7 +5,7 @@
  * dashboard feature 承担。摘要固定为滚动近 24 小时与累计口径，并附带当前积分余额。
  */
 import { auth } from "@repo/shared/auth";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { logError } from "@repo/shared/logger";
 import { getAvatarUrl } from "@repo/shared/storage";
 import {
@@ -82,7 +82,7 @@ export default async function DashboardPage() {
   );
 
   try {
-    const role = await getUserRoleById(session.user.id);
+    const role = normalizeUserRole((session.user as { role?: string | null }).role);
     supportConfigurationPromise = loadDashboardSupportConfiguration({
       userId: session.user.id,
       role,
