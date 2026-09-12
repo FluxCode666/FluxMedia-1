@@ -1,7 +1,9 @@
 # FluxMedia 生产部署
 
-本目录提供 `media.flux-code.cc` 的生产部署配置。Go backend 监听宿主机回环地址
-`127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`），web 只在 Docker 网络内暴露。backend entrypoint 在同一服务中执行
+本目录提供 `media.flux-code.cc` 的生产部署配置。Nginx 将页面和未迁移的 Next.js API
+转发到 web，将已迁移的 Go API 转发到 backend。两个容器只监听宿主机回环地址：web
+使用 `127.0.0.1:${WEB_PORT}`（默认 `3000`），Go backend 使用
+`127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`）。backend entrypoint 在同一服务中执行
 数据库迁移，然后启动 Go 进程；Compose 不再定义独立 migrate 服务。
 
 ## 文件
@@ -40,9 +42,9 @@ sudo editor /root/flux-media/.env
 缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL
 或 Redis。
 
-backend 容器内固定监听 `8080`，宿主机端口由 `GO_BACKEND_PORT` 配置，默认是 `3001`。
-如果宿主机的 `3001` 已被占用，可在服务器 `.env` 中改为其他端口，并同步修改 Nginx
-配置中的 upstream 地址。
+web 容器内固定监听 `3000`，宿主机端口由 `WEB_PORT` 配置；backend 容器内固定监听
+`8080`，宿主机端口由 `GO_BACKEND_PORT` 配置。修改任一端口后，必须同步修改
+`nginx/conf.d/fluxmedia.conf` 中对应的 upstream 地址，然后执行 `nginx -t` 并 reload。
 
 ## Redis MQ 运行要求
 
