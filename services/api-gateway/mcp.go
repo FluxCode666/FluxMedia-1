@@ -294,10 +294,38 @@ func (b *backend) handleMCPAdmin(w http.ResponseWriter, r *http.Request) error {
 		if !ok {
 			writeJSON(w, 400, mcpError(q.ID, -32601, "Tool not available: "+name))
 		} else {
-			writeJSON(w, 200, mcpResult(q.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": "{}"}}}))
+			var out any
+			var err error
+			switch name {
+			case "modelMarketplace_listPublicModels":
+				out, err = b.modelConfigurationRead(r, false)
+			case "analytics_getAdminDataDashboard":
+				out, err = b.mcpAdminAnalytics(r)
+			}
+			if err != nil {
+				writeJSON(w, 200, mcpResult(q.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": `{"error":"internal_error","message":"Unable to read admin data"}`}}, "isError": true}))
+			} else {
+				bts, _ := json.MarshalIndent(out, "", "  ")
+				writeJSON(w, 200, mcpResult(q.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": string(bts)}}, "isError": false}))
+			}
 		}
 	default:
 		writeJSON(w, 400, mcpError(q.ID, -32601, "Unknown method: "+q.Method))
 	}
 	return nil
+}
+
+// mcpAdminAnalytics provides the small, read-only aggregate exposed to the
+// secret-authenticated MCP admin client without requiring a browser session.
+func (b *backend) mcpAdminAnalytics(r *http.Request) (map[string]any, error) {
+	end := time.Now().UTC()
+	start := end.Add(-24 * time.Hour)
+	var images, videos int
+	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM generation WHERE created_at >= $1 AND created_at < $2 AND status='completed'`, start, end).Scan(&images); err != nil {
+		return nil, err
+	}
+	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM video_generation WHERE created_at >= $1 AND created_at < $2 AND status='completed'`, start, end).Scan(&videos); err != nil {
+		return nil, err
+	}
+	return map[string]any{"asOf": end.Format(time.RFC3339Nano), "last24Hours": map[string]any{"imageCount": images, "videoCount": videos}}, nil
 }
