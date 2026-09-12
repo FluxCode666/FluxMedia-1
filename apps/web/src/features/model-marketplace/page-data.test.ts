@@ -6,24 +6,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runtimeMocks = vi.hoisted(() => ({
-  ensureUolInitialized: vi.fn(),
-  getServerSession: vi.fn(),
-  getUserRoleById: vi.fn(),
-  invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@repo/shared/auth/role-server", () => ({
-  getUserRoleById: runtimeMocks.getUserRoleById,
-}));
-vi.mock("@repo/shared/auth/server", () => ({
-  getServerSession: runtimeMocks.getServerSession,
-}));
-vi.mock("@repo/shared/uol", () => ({
-  invokeOperation: runtimeMocks.invokeOperation,
-}));
-vi.mock("@/server/uol-init", () => ({
-  ensureUolInitialized: runtimeMocks.ensureUolInitialized,
+vi.mock("@/server/go-backend-client", () => ({
+  requestGoJson: runtimeMocks.requestGoJson,
 }));
 
 import { loadModelMarketplacePageData } from "./page-data";
@@ -51,13 +39,10 @@ const PUBLIC_IMAGE = {
 describe("loadModelMarketplacePageData", () => {
   beforeEach(() => {
     for (const mock of Object.values(runtimeMocks)) mock.mockReset();
-    runtimeMocks.ensureUolInitialized.mockResolvedValue(undefined);
-    runtimeMocks.getServerSession.mockResolvedValue(null);
-    runtimeMocks.getUserRoleById.mockResolvedValue("user");
   });
 
-  it("匿名生产路径以 system Principal 调用公开目录 operation", async () => {
-    runtimeMocks.invokeOperation.mockResolvedValueOnce({
+  it("生产路径通过 Go 公开目录 endpoint 读取模型", async () => {
+    runtimeMocks.requestGoJson.mockResolvedValueOnce({
       items: [PUBLIC_IMAGE],
     });
 
@@ -65,34 +50,8 @@ describe("loadModelMarketplacePageData", () => {
       status: "ready",
       models: [PUBLIC_IMAGE],
     });
-    expect(runtimeMocks.getServerSession).toHaveBeenCalledTimes(1);
-    expect(runtimeMocks.getUserRoleById).not.toHaveBeenCalled();
-    expect(runtimeMocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "modelMarketplace.listPublicModels",
-      {},
-      { type: "system", reason: "public-model-marketplace-page" },
-      { requestId: expect.any(String) }
-    );
-  });
-
-  it("登录生产路径读取真实角色并以 user Principal 调用公开目录", async () => {
-    runtimeMocks.getServerSession.mockResolvedValueOnce({
-      user: { id: "user-1" },
-    });
-    runtimeMocks.getUserRoleById.mockResolvedValueOnce("admin");
-    runtimeMocks.invokeOperation.mockResolvedValueOnce({ items: [] });
-
-    await expect(loadModelMarketplacePageData()).resolves.toEqual({
-      status: "ready",
-      models: [],
-    });
-    expect(runtimeMocks.getUserRoleById).toHaveBeenCalledWith("user-1");
-    expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "modelMarketplace.listPublicModels",
-      {},
-      { type: "user", userId: "user-1", role: "admin" },
-      { requestId: expect.any(String) }
+    expect(runtimeMocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/model-marketplace/public"
     );
   });
 

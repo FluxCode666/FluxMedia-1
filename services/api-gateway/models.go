@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf16"
 )
@@ -182,4 +183,154 @@ func (b *backend) handleExternalModels(w http.ResponseWriter, r *http.Request) e
 	}
 	writeJSON(w, 200, map[string]any{"object": "list", "data": data})
 	return nil
+}
+
+// handlePublicModelMarketplace exposes the read-only catalog consumed by the
+// marketing models page.  The page is intentionally anonymous, while the
+// source of truth remains the same backend member and marketplace settings
+// used by the authenticated model configuration endpoint.
+func (b *backend) handlePublicModelMarketplace(w http.ResponseWriter, r *http.Request) error {
+	snapshot, err := b.modelConfigurationRead(r, false)
+	if err != nil {
+		return err
+	}
+	entries, _ := snapshot["entries"].([]map[string]any)
+	items := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		if entry["enabled"] == false || entry["visible"] == false {
+			continue
+		}
+		key := strings.TrimSpace(fmt.Sprint(entry["configKey"]))
+		if key == "" {
+			continue
+		}
+		category := strings.TrimSpace(fmt.Sprint(entry["category"]))
+		if category != "image" && category != "video" {
+			continue
+		}
+		description := strings.TrimSpace(fmt.Sprint(entry["description"]))
+		if description == "<nil>" {
+			description = ""
+		}
+		item := map[string]any{
+			"configKey":        key,
+			"modelId":          key,
+			"displayName":      fmt.Sprint(entry["displayName"]),
+			"iconKey":          marketplaceIconKey(key),
+			"description":      description,
+			"coverUrl":         fmt.Sprintf("/model-marketplace/default-%s.webp", category),
+			"minimumCredits":   positiveNumber(entry["minimumCredits"], 1),
+			"homepageVisible":  boolOrDefault(entry["homepageVisible"], false),
+			"homepagePriority": intOrDefault(entry["homepagePriority"], 0),
+		}
+		if category == "image" {
+			pricing, ok := entry["pricing"].(map[string]any)
+			if !ok || pricing == nil {
+				// Unpriced models are intentionally hidden from the public catalog.
+				continue
+			}
+			item["category"] = "image"
+			item["priceUnit"] = "per_image"
+			item["pricing"] = normalizedImagePricing(pricing)
+			for _, field := range []string{"supportedResolutions", "supportsQuality", "maxReferenceImages"} {
+				if value, exists := entry[field]; exists {
+					item[field] = value
+				}
+			}
+		} else {
+			item["category"] = "video"
+			item["supportedDurations"] = []int{5, 10}
+			item["supportedAspectRatios"] = []string{"1:1", "16:9", "9:16"}
+			resolutions := []string{"720p"}
+			if values, ok := entry["supportedResolutions"].([]string); ok && len(values) > 0 {
+				resolutions = values
+			}
+			item["supportedResolutions"] = resolutions
+			item["input"] = map[string]any{"frames": "none", "referenceImages": map[string]any{"maxCount": 0, "configurable": false}, "framesAndReferencesMutuallyExclusive": true}
+			item["audio"] = map[string]any{"supported": false, "defaultEnabled": false}
+			item["configuredReachable"] = true
+			item["infrastructureLimits"] = map[string]any{"maxMediaInputCount": 256, "maxMediaInputBytes": 512 * 1024 * 1024}
+			mode := strings.TrimSpace(fmt.Sprint(entry["billingMode"]))
+			if mode == "per_item" {
+				item["billingMode"], item["priceUnit"] = "per_item", "per_item"
+				item["creditsPerItem"] = positiveNumber(entry["minimumCredits"], 1)
+				item["creditsPerItemByResolution"] = map[string]any{"720p": positiveNumber(entry["minimumCredits"], 1)}
+			} else {
+				item["billingMode"], item["priceUnit"] = "per_second", "per_second"
+				item["creditsPerSecond"] = positiveNumber(entry["creditsPerSecond"], 1)
+				item["creditsPerSecondByResolution"] = map[string]any{"720p": positiveNumber(entry["creditsPerSecond"], 1)}
+			}
+		}
+		items = append(items, item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return fmt.Sprint(items[i]["configKey"]) < fmt.Sprint(items[j]["configKey"])
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	return nil
+}
+
+func marketplaceIconKey(key string) string {
+	lower := strings.ToLower(key)
+	switch {
+	case strings.Contains(lower, "gpt-image"):
+		return "openai"
+	case strings.HasPrefix(lower, "veo"):
+		return "google"
+	case strings.HasPrefix(lower, "seedance"):
+		return "bytedance"
+	case strings.HasPrefix(lower, "kling"):
+		return "kling"
+	case strings.HasPrefix(lower, "runway"):
+		return "runway"
+	case strings.HasPrefix(lower, "grok"), strings.HasPrefix(lower, "xai"):
+		return "xai"
+	default:
+		return "generic"
+	}
+}
+
+func positiveNumber(value any, fallback float64) float64 {
+	switch n := value.(type) {
+	case float64:
+		if n > 0 {
+			return n
+		}
+	case int:
+		if n > 0 {
+			return float64(n)
+		}
+	case int64:
+		if n > 0 {
+			return float64(n)
+		}
+	}
+	return fallback
+}
+
+func boolOrDefault(value any, fallback bool) bool {
+	if v, ok := value.(bool); ok {
+		return v
+	}
+	return fallback
+}
+
+func intOrDefault(value any, fallback int) int {
+	switch n := value.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return fallback
+}
+
+func normalizedImagePricing(pricing map[string]any) map[string]any {
+	result := map[string]any{}
+	for _, key := range []string{"base1024Credits", "base1kCredits", "base2kCredits", "base4kCredits", "base8kCredits"} {
+		result[key] = positiveNumber(pricing[key], 1)
+	}
+	return result
 }
