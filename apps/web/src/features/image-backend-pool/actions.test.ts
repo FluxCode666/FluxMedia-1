@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   ensureUolInitialized: vi.fn(),
   invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -49,6 +50,9 @@ vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: mocks.ensureUolInitialized,
 }));
+vi.mock("@/server/go-backend-client", () => ({
+  requestGoJson: mocks.requestGoJson,
+}));
 
 import {
   getApiUpstreamRuntimeDiagnosticsAction,
@@ -84,6 +88,8 @@ function expectBackendPoolManagementPagesRevalidated(): void {
 describe("image backend pool actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.requestGoJson.mockReset();
+    mocks.invokeOperation.mockReset();
     mocks.ensureUolInitialized.mockResolvedValue(undefined);
   });
 
@@ -96,7 +102,7 @@ describe("image backend pool actions", () => {
       totalCount: 0,
       totalPages: 1,
     };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (listAdminImageBackendGroupsAction as unknown as MockAction)({
@@ -104,10 +110,9 @@ describe("image backend pool actions", () => {
         ctx: { userId: "admin-1", role: "admin" },
       })
     ).resolves.toBe(output);
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.listAdminGroups",
-      input,
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      expect.stringContaining("/api/admin/image-backend/groups?"),
+      expect.objectContaining({ method: "GET" })
     );
   });
 
@@ -170,7 +175,7 @@ describe("image backend pool actions", () => {
   it("修改成员启用状态只调用对应 UOL operation 并刷新两个管理页", async () => {
     const input = { id: "member-a", isEnabled: false };
     const output = { id: "member-a", isEnabled: false };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (setImageBackendMemberEnabledAction as unknown as MockAction)({
@@ -178,16 +183,15 @@ describe("image backend pool actions", () => {
         ctx: { userId: "admin-1", role: "admin" },
       })
     ).resolves.toEqual({ success: true, ...output });
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.setMemberEnabled",
-      input,
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/members/member-a/enabled",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ isEnabled: false }) })
     );
     expectBackendPoolManagementPagesRevalidated();
   });
 
   it("分组与成员成功写入均刷新两个相互影响的管理页", async () => {
-    mocks.invokeOperation.mockResolvedValue({ id: "created-id" });
+    mocks.requestGoJson.mockResolvedValue({ id: "created-id" });
 
     await expect(
       (saveImageBackendGroupAction as unknown as MockAction)({
@@ -195,15 +199,14 @@ describe("image backend pool actions", () => {
         ctx: { userId: "admin-1", role: "admin" },
       })
     ).resolves.toEqual({ success: true, id: "created-id" });
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.saveGroup",
-      { name: "primary" },
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/groups",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "primary" }) })
     );
     expectBackendPoolManagementPagesRevalidated();
 
     vi.clearAllMocks();
-    mocks.invokeOperation.mockResolvedValue({ id: "member-id" });
+    mocks.requestGoJson.mockResolvedValue({ id: "member-id" });
 
     await expect(
       (saveImageBackendMemberAction as unknown as MockAction)({
@@ -211,16 +214,15 @@ describe("image backend pool actions", () => {
         ctx: { userId: "admin-1", role: "admin" },
       })
     ).resolves.toEqual({ success: true, id: "member-id" });
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.saveMember",
-      { name: "supplier" },
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/members",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "supplier" }) })
     );
     expectBackendPoolManagementPagesRevalidated();
   });
 
   it("写入失败时不会伪造双路由刷新", async () => {
-    mocks.invokeOperation.mockRejectedValue(new Error("保存失败"));
+    mocks.requestGoJson.mockRejectedValue(new Error("保存失败"));
 
     await expect(
       (saveImageBackendGroupAction as unknown as MockAction)({
@@ -233,7 +235,7 @@ describe("image backend pool actions", () => {
   });
 
   it("批量导入逐条校验并只为成功条目刷新管理页", async () => {
-    mocks.invokeOperation.mockResolvedValue({ id: "member-imported" });
+    mocks.requestGoJson.mockResolvedValue({ id: "member-imported" });
     const member = {
       id: "member-imported",
       name: "纳米 AI",
@@ -286,10 +288,9 @@ describe("image backend pool actions", () => {
         },
       ],
     });
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.saveMember",
-      member,
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/members",
+      expect.objectContaining({ method: "POST" })
     );
     expectBackendPoolManagementPagesRevalidated();
   });
