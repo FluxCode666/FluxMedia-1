@@ -481,9 +481,14 @@ func (b *backend) handleDataDashboard(w http.ResponseWriter, r *http.Request) er
 	if e != nil {
 		return e
 	}
-	var in map[string]any
-	_ = decodeBody(r, &in)
-	return b.writeDashboard(w, r, s.User.ID)
+	var in struct {
+		StartDate string `json:"startDate"`
+		EndDate   string `json:"endDate"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	return b.writeDataDashboard(w, r, s.User.ID, in.StartDate, in.EndDate)
 }
 func (b *backend) handleAdminDataDashboard(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireAdmin(r, false)
@@ -491,7 +496,9 @@ func (b *backend) handleAdminDataDashboard(w http.ResponseWriter, r *http.Reques
 		return e
 	}
 	var in struct {
-		UserID string `json:"userId"`
+		UserID    string `json:"userId"`
+		StartDate string `json:"startDate"`
+		EndDate   string `json:"endDate"`
 	}
 	if e = decodeBody(r, &in); e != nil {
 		return e
@@ -500,16 +507,125 @@ func (b *backend) handleAdminDataDashboard(w http.ResponseWriter, r *http.Reques
 	if uid == "" {
 		uid = s.User.ID
 	}
-	return b.writeDashboard(w, r, uid)
+	return b.writeDataDashboard(w, r, uid, in.StartDate, in.EndDate)
 }
-func (b *backend) writeDashboard(w http.ResponseWriter, r *http.Request, uid string) error {
-	var images, videos int
-	var credits float64
-	e := b.db.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE lower(model) NOT LIKE '%video%'),count(*) FILTER (WHERE lower(model) LIKE '%video%'),COALESCE(sum(credits_consumed),0) FROM generation WHERE user_id=$1`, uid).Scan(&images, &videos, &credits)
-	if e != nil {
-		return e
+func (b *backend) writeDataDashboard(w http.ResponseWriter, r *http.Request, uid, startDate, endDate string) error {
+	asOf := time.Now().UTC()
+	today := asOf.Format("2006-01-02")
+	if startDate == "" {
+		d := asOf.AddDate(0, 0, -6)
+		startDate = d.Format("2006-01-02")
 	}
-	writeJSON(w, 200, map[string]any{"status": "ready", "snapshot": map[string]any{"imageCount": images, "videoCount": videos, "creditsConsumed": credits, "asOf": time.Now().UTC()}})
+	if endDate == "" {
+		endDate = today
+	}
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return invalid("日期格式无效")
+	}
+	endDay, err := time.Parse("2006-01-02", endDate)
+	if err != nil || endDay.Before(start) {
+		return invalid("日期范围无效")
+	}
+	days := int(endDay.Sub(start).Hours()/24) + 1
+	if days < 1 || days > 30 || endDate > today {
+		return invalid("日期范围必须为 1 至 30 天且不能处于未来")
+	}
+	rangeEnd := endDay.AddDate(0, 0, 1)
+	if endDate == today {
+		rangeEnd = asOf
+	}
+	type bucket struct {
+		imageCount, imageTasks, videoCount, videoSeconds int
+		credits                                          float64
+	}
+	bs := make([]bucket, days)
+	idx := func(t time.Time) int { return int(t.UTC().Truncate(24*time.Hour).Sub(start.UTC()) / (24 * time.Hour)) }
+	rows, err := b.db.Query(r.Context(), `SELECT created_at,status,COALESCE(credits_consumed,0),COALESCE(model,'') FROM generation WHERE user_id=$1 AND created_at >= $2 AND created_at < $3`, uid, start.UTC(), rangeEnd)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var created time.Time
+		var status, model string
+		var c float64
+		if err = rows.Scan(&created, &status, &c, &model); err != nil {
+			rows.Close()
+			return err
+		}
+		i := idx(created)
+		if i < 0 || i >= days {
+			continue
+		}
+		if status == "completed" {
+			bs[i].imageCount++
+			bs[i].imageTasks++
+			bs[i].credits += c
+		}
+	}
+	rows.Close()
+	rows, err = b.db.Query(r.Context(), `SELECT created_at,status,COALESCE(duration_seconds,0),COALESCE(credits_consumed,0) FROM video_generation WHERE user_id=$1 AND created_at >= $2 AND created_at < $3`, uid, start.UTC(), rangeEnd)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var created time.Time
+		var status string
+		var sec int
+		var c float64
+		if err = rows.Scan(&created, &status, &sec, &c); err != nil {
+			rows.Close()
+			return err
+		}
+		i := idx(created)
+		if i < 0 || i >= days {
+			continue
+		}
+		if status == "completed" {
+			bs[i].videoCount++
+			bs[i].videoSeconds += sec
+			bs[i].credits += c
+		}
+	}
+	rows.Close()
+	buckets := make([]any, days)
+	var images, imageTasks, videos, seconds int
+	var credits float64
+	active := 0
+	for i := 0; i < days; i++ {
+		d := start.AddDate(0, 0, i)
+		e := d.AddDate(0, 0, 1)
+		if d.Format("2006-01-02") == today {
+			e = asOf
+		}
+		x := bs[i]
+		if x.imageTasks > 0 || x.videoCount > 0 {
+			active++
+		}
+		images += x.imageCount
+		imageTasks += x.imageTasks
+		videos += x.videoCount
+		seconds += x.videoSeconds
+		credits += x.credits
+		buckets[i] = map[string]any{"date": d.Format("2006-01-02"), "start": d.UTC().Format(time.RFC3339Nano), "end": e.UTC().Format(time.RFC3339Nano), "imageCount": x.imageCount, "imageTaskCount": x.imageTasks, "videoCount": x.videoCount, "videoSeconds": x.videoSeconds, "creditsConsumed": x.credits}
+	}
+	// Successful model distribution is intentionally bounded to the selected range.
+	var mostModel *map[string]any
+	var model string
+	var modelCount int
+	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(NULLIF(TRIM(model),''),'unknown'),count(*) FROM generation WHERE user_id=$1 AND status='completed' AND created_at >= $2 AND created_at < $3 GROUP BY 1 ORDER BY count(*) DESC,1 LIMIT 1`, uid, start.UTC(), rangeEnd).Scan(&model, &modelCount)
+	if modelCount > 0 {
+		m := map[string]any{"model": model, "taskCount": modelCount}
+		mostModel = &m
+	}
+	terminal := imageTasks + videos
+	snapshot := map[string]any{"asOf": asOf.Format(time.RFC3339Nano), "timeZone": "UTC", "today": today, "range": map[string]any{"startDate": startDate, "endDate": endDate, "start": start.UTC().Format(time.RFC3339Nano), "end": rangeEnd.UTC().Format(time.RFC3339Nano)}, "metrics": map[string]any{"imageCount": images, "videoSeconds": seconds, "creditsConsumed": credits, "successRate": map[string]any{"succeeded": terminal, "failed": 0, "terminal": terminal, "rate": func() any {
+		if terminal == 0 {
+			return nil
+		}
+		return float64(terminal) / float64(terminal)
+	}()}, "activeDays": active, "mostUsedModel": mostModel}, "buckets": buckets, "taskComposition": map[string]any{"imageTaskCount": imageTasks, "videoCount": videos, "totalTasks": terminal}}
+	writeJSON(w, 200, map[string]any{"status": "ready", "snapshot": snapshot})
 	return nil
 }
 func (b *backend) handleAdminAnalyticsUsers(w http.ResponseWriter, r *http.Request) error {

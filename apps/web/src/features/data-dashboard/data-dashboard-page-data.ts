@@ -9,8 +9,8 @@ import type {
   DataDashboardOutput,
 } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
-import { invokeOperation, type Principal } from "@repo/shared/uol";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
+import type { Principal } from "@repo/shared/uol";
 
 /** 首屏与 action 共用的当前用户和未经二次解释的 strict 日期输入。 */
 export type DataDashboardPageDataInput = {
@@ -33,15 +33,15 @@ async function invokeDashboardThroughUol(
   input: DataDashboardInput,
   principal: Principal
 ): Promise<DataDashboardOutput> {
-  return invokeOperation<DataDashboardOutput>(
-    "analytics.getMyDataDashboard",
-    input,
-    principal
-  );
+  void principal;
+  return requestGoJson<{ status: "ready"; snapshot: DataDashboardOutput }>(
+    "/api/analytics/data-dashboard",
+    { method: "POST", body: JSON.stringify(input) }
+  ).then((result) => result.snapshot);
 }
 
 const defaultDependencies: DataDashboardPageDataDependencies = {
-  ensureInitialized: ensureUolInitialized,
+  ensureInitialized: async () => undefined,
   invokeDashboard: invokeDashboardThroughUol,
 };
 

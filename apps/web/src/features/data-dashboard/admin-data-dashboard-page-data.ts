@@ -10,9 +10,8 @@ import type {
   DataDashboardOutput,
 } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
-import { invokeOperation, type Principal } from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
+import type { Principal } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 管理员首屏与 action 共用的 session 身份和 strict 日期输入。 */
 export type AdminDataDashboardPageDataInput = {
@@ -46,11 +45,12 @@ async function invokeAdminDashboardThroughUol(
   input: AdminDataDashboardInput,
   principal: Principal
 ): Promise<DataDashboardOutput> {
-  return invokeOperation<DataDashboardOutput>(
-    "analytics.getAdminDataDashboard",
-    input,
-    principal
+  void principal;
+  const result = await requestGoJson<{ status: "ready"; snapshot: DataDashboardOutput }>(
+    "/api/admin/analytics/data-dashboard",
+    { method: "POST", body: JSON.stringify(input) }
   );
+  return result.snapshot;
 }
 
 /** 通过统一接口层查询首屏已选用户的显示信息。 */
@@ -58,15 +58,14 @@ async function searchAdminDashboardUsersThroughUol(
   input: { query: string; limit: number; selectedUserId?: string },
   principal: Principal
 ): Promise<{ users: AdminDataDashboardUserOption[] }> {
-  return invokeOperation<{ users: AdminDataDashboardUserOption[] }>(
-    "analytics.searchAdminDataDashboardUsers",
-    input,
-    principal
-  );
+  void principal;
+  const query = new URLSearchParams({ query: input.query, limit: String(input.limit) });
+  if (input.selectedUserId) query.set("selectedUserId", input.selectedUserId);
+  return requestGoJson<{ users: AdminDataDashboardUserOption[] }>(`/api/admin/analytics/users?${query.toString()}`);
 }
 
 const defaultDependencies: AdminDataDashboardPageDataDependencies = {
-  ensureInitialized: ensureUolInitialized,
+  ensureInitialized: async () => undefined,
   invokeDashboard: invokeAdminDashboardThroughUol,
   searchUsers: searchAdminDashboardUsersThroughUol,
 };

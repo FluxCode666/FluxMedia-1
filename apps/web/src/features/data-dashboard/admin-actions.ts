@@ -14,9 +14,8 @@ import {
 } from "@repo/shared/analytics/contracts";
 import { logError } from "@repo/shared/logger";
 import { adminAction } from "@repo/shared/safe-action";
-import { invokeOperation, OperationError } from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
+import { OperationError } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 客户端可区分且不携带数据库详情的刷新结果。 */
 export type AdminDataDashboardActionResult =
@@ -49,15 +48,13 @@ export const refreshAdminDataDashboardAction = adminAction
   .metadata({ action: "analytics.getAdminDataDashboard" })
   .schema(adminDataDashboardInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<AdminDataDashboardActionResult> => {
+    async ({ parsedInput }): Promise<AdminDataDashboardActionResult> => {
       try {
-        await ensureUolInitialized();
-        const snapshot = await invokeOperation<DataDashboardOutput>(
-          "analytics.getAdminDataDashboard",
-          parsedInput,
-          { type: "user", userId: ctx.userId, role: ctx.role }
+        const snapshot = await requestGoJson<{ status: "ready"; snapshot: DataDashboardOutput }>(
+          "/api/admin/analytics/data-dashboard",
+          { method: "POST", body: JSON.stringify(parsedInput) }
         );
-        return { status: "ready", snapshot };
+        return { status: "ready", snapshot: snapshot.snapshot };
       } catch (error) {
         if (error instanceof OperationError) {
           const result = mapOperationError(error);
@@ -81,11 +78,9 @@ export const searchAdminDataDashboardUsersAction = adminAction
       parsedInput,
       ctx,
     }): Promise<AdminDataDashboardUserSearchOutput> => {
-      await ensureUolInitialized();
-      return invokeOperation<AdminDataDashboardUserSearchOutput>(
-        "analytics.searchAdminDataDashboardUsers",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
+      void ctx;
+      const query = new URLSearchParams({ query: parsedInput.query, limit: String(parsedInput.limit) });
+      if (parsedInput.selectedUserId) query.set("selectedUserId", parsedInput.selectedUserId);
+      return requestGoJson<AdminDataDashboardUserSearchOutput>(`/api/admin/analytics/users?${query.toString()}`);
     }
   );
