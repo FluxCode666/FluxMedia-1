@@ -592,6 +592,15 @@
       ]
     },
     {
+      "source": "packages/shared/src/mcp/user-key-actions.ts",
+      "exports": [
+        "createMcpKey",
+        "listMcpKeys",
+        "revokeMcpKey",
+        "deleteMcpKey"
+      ]
+    },
+    {
       "source": "packages/shared/src/storage/actions.ts",
       "exports": [
         "getSignedUploadUrlAction",
@@ -1626,7 +1635,6 @@
     "packages/shared/src/credits/usage-read-model.ts",
     "packages/shared/src/database-errors.ts",
     "packages/shared/src/generation-maintenance.ts",
-    "packages/shared/src/mcp/user-key-actions.ts",
     "packages/shared/src/payment/epay.ts",
     "packages/shared/src/referrals/service.ts",
     "packages/shared/src/support/admin-user-list-service.ts",
