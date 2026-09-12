@@ -334,6 +334,22 @@ func (b *backend) handleAdminHistory(w http.ResponseWriter, r *http.Request) err
 		}
 		out = append(out, publicGeneration(v))
 	}
+	// Global history includes video tasks as well. Project the shared fields into
+	// the same browser DTO so the admin page does not silently omit all videos.
+	videoRows, videoErr := b.db.Query(r.Context(), `SELECT id,user_id,prompt,model,resolution,status,storage_key,storage_bucket,credits_consumed,error,metadata,created_at,completed_at FROM video_generation ORDER BY created_at DESC LIMIT $1`, in.Limit)
+	if videoErr != nil {
+		return videoErr
+	}
+	defer videoRows.Close()
+	for videoRows.Next() {
+		var v generationDTO
+		var resolution string
+		if err := videoRows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.Model, &resolution, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
+			return err
+		}
+		v.Size = resolution
+		out = append(out, publicGeneration(v))
+	}
 	writeJSON(w, 200, map[string]any{"records": out, "items": out, "nextCursor": nil, "totalCount": len(out)})
 	return rows.Err()
 }
