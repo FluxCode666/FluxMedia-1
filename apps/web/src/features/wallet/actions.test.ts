@@ -106,10 +106,13 @@ describe("wallet actions", () => {
 
   it("首屏聚合只读取一次角色并隔离三块 UOL 结果", async () => {
     mocks.invokeOperation.mockImplementation(async (operation: string) => {
-      if (operation === "credits.getTopUpOptions") {
+      return { operation };
+    });
+    mocks.requestGoJson.mockImplementation(async (path: string) => {
+      if (path === "/api/credits/top-up/options") {
         throw new Error("top-up unavailable");
       }
-      return { operation };
+      return { operation: path };
     });
 
     const result = await (getMyWalletPageDataAction as unknown as MockAction)({
@@ -118,7 +121,7 @@ describe("wallet actions", () => {
 
     expect(mocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
     expect(mocks.getUserRoleById).toHaveBeenCalledTimes(1);
-    expect(mocks.invokeOperation).toHaveBeenCalledTimes(3);
+    expect(mocks.invokeOperation).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       balance: { status: "ready" },
       recentOrders: { status: "ready" },
