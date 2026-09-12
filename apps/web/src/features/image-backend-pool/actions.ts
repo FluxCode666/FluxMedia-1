@@ -12,12 +12,10 @@ import {
   apiUpstreamJsonValueSchema,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
-  type BackendGroupInput,
   type BackendGroupSummary,
   backendGroupInputSchema,
 } from "@repo/shared/image-backend/group-contract";
 import {
-  type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
 import { logError } from "@repo/shared/logger";
@@ -33,9 +31,7 @@ import {
   type Principal,
 } from "@repo/shared/uol";
 import {
-  type AdminPoolGroupListInput,
   type AdminPoolGroupListOutput,
-  type AdminPoolMemberListInput,
   type AdminPoolMemberListOutput,
   type ImageSizeConfigOutput,
   adminPoolGroupListInputSchema,
@@ -109,6 +105,13 @@ type PoolOperationOutputs = {
 
 type PoolOperationName = keyof PoolOperationOutputs;
 
+async function requestPool<T>(path: string, method: string, body?: unknown): Promise<T> {
+  return requestGoJson<T>(path, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
 const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
 
 const setMemberEnabledSchema = idSchema
@@ -175,13 +178,8 @@ function restoreMemberDiscriminant(
 /** 读取通用号池快照，并补齐 API 账号统一的空凭据健康状态字段。 */
 export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.list" })
-  .action(async ({ ctx }): Promise<BackendPoolAdminSnapshot> => {
-    const principal = {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    } as const satisfies Principal;
-    const pool = await invokePoolOperation("pool.getAdminPool", {}, principal);
+  .action(async (): Promise<BackendPoolAdminSnapshot> => {
+    const pool = await requestPool<BackendPoolBaseAdminSnapshot>("/api/admin/image-backend/pool", "GET");
     return buildBackendPoolAdminSnapshot(pool);
   });
 
@@ -190,12 +188,9 @@ export const listAdminImageBackendMembersAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.listMembers" })
   .schema(adminPoolMemberListInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<BackendPoolAdminMemberListOutput> => {
-      const result = await invokePoolOperation(
-        "pool.listAdminMembers",
-        parsedInput satisfies AdminPoolMemberListInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
+    async ({ parsedInput }): Promise<BackendPoolAdminMemberListOutput> => {
+      const query = new URLSearchParams(Object.entries(parsedInput).map(([key, value]) => [key, String(value)]));
+      const result = await requestPool<AdminPoolMemberListOutput>(`/api/admin/image-backend/members?${query}`, "GET");
       return {
         ...result,
         records: result.records.map(restoreMemberDiscriminant),
@@ -208,12 +203,10 @@ export const listAdminImageBackendGroupsAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.listGroups" })
   .schema(adminPoolGroupListInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<AdminPoolGroupListOutput> =>
-      invokePoolOperation(
-        "pool.listAdminGroups",
-        parsedInput satisfies AdminPoolGroupListInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      )
+    async ({ parsedInput }): Promise<AdminPoolGroupListOutput> => {
+      const query = new URLSearchParams(Object.entries(parsedInput).map(([key, value]) => [key, String(value)]));
+      return requestPool<AdminPoolGroupListOutput>(`/api/admin/image-backend/groups?${query}`, "GET");
+    }
   );
 
 /** 读取图片尺寸配置集，供供应商表单和独立管理页使用。 */
@@ -253,12 +246,8 @@ export const deleteImageSizeConfigAction = adminAction
 export const saveImageBackendGroupAction = adminAction
   .metadata({ action: "imageBackendPool.saveGroup" })
   .schema(backendGroupInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.saveGroup",
-      parsedInput satisfies BackendGroupInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }) => {
+    const result = await requestPool<{ id: string }>("/api/admin/image-backend/groups", "POST", parsedInput);
     revalidateBackendPoolPage();
     return { success: true, id: result.id };
   });
@@ -267,12 +256,8 @@ export const saveImageBackendGroupAction = adminAction
 export const deleteImageBackendGroupAction = adminAction
   .metadata({ action: "imageBackendPool.deleteGroup" })
   .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation("pool.deleteGroup", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
+  .action(async ({ parsedInput }) => {
+    await requestPool(`/api/admin/image-backend/groups/${encodeURIComponent(parsedInput.id)}`, "DELETE");
     revalidateBackendPoolPage();
     return { success: true };
   });
@@ -281,12 +266,8 @@ export const deleteImageBackendGroupAction = adminAction
 export const saveImageBackendMemberAction = adminAction
   .metadata({ action: "imageBackendPool.saveMember" })
   .schema(backendMemberInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.saveMember",
-      parsedInput satisfies BackendMemberInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }) => {
+    const result = await requestPool<{ id: string }>("/api/admin/image-backend/members", "POST", parsedInput);
     revalidateBackendPoolPage();
     return { success: true, id: result.id };
   });
@@ -301,12 +282,7 @@ export const saveImageBackendMemberAction = adminAction
 export const importImageBackendMembersAction = adminAction
   .metadata({ action: "imageBackendPool.importMembers" })
   .schema(backendMemberExportDocumentSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const principal = {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    } as const satisfies Principal;
+  .action(async ({ parsedInput }) => {
     const imported: Array<{ index: number; id: string; name: string }> = [];
     const failed: Array<{
       index: number;
@@ -333,11 +309,7 @@ export const importImageBackendMembersAction = adminAction
       }
 
       try {
-        const result = await invokePoolOperation(
-          "pool.saveMember",
-          memberResult.data,
-          principal
-        );
+        const result = await requestPool<{ id: string }>("/api/admin/image-backend/members", "POST", memberResult.data);
         imported.push({ index, id: result.id, name: memberResult.data.name });
       } catch (error) {
         if (!(error instanceof ActionUserError)) {
@@ -367,12 +339,8 @@ export const importImageBackendMembersAction = adminAction
 export const resetImageBackendMemberStatusAction = adminAction
   .metadata({ action: "imageBackendPool.resetMemberStatus" })
   .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation("pool.resetMemberStatus", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
+  .action(async ({ parsedInput }) => {
+    await requestPool(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}/reset-status`, "POST");
     revalidateBackendPoolPage();
     return { success: true };
   });
@@ -382,15 +350,7 @@ export const setImageBackendMemberEnabledAction = adminAction
   .metadata({ action: "imageBackendPool.setMemberEnabled" })
   .schema(setMemberEnabledSchema)
   .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.setMemberEnabled",
-      parsedInput,
-      {
-        type: "user",
-        userId: ctx.userId,
-        role: ctx.role,
-      }
-    );
+    const result = await requestPool<{ id: string; isEnabled: boolean }>(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}/enabled`, "POST", { isEnabled: parsedInput.isEnabled });
     revalidateBackendPoolPage();
     return { success: true, ...result };
   });
@@ -400,11 +360,7 @@ export const deleteImageBackendMemberAction = adminAction
   .metadata({ action: "imageBackendPool.deleteMember" })
   .schema(idSchema)
   .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation("pool.deleteMember", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
+    await requestPool(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}`, "DELETE");
     revalidateBackendPoolPage();
     return { success: true };
   });
