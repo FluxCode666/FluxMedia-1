@@ -17,9 +17,6 @@ import {
 } from "@repo/shared/operations-dashboard/contracts";
 import type { OperationsDetailOutput } from "@repo/shared/operations-dashboard/output-contracts";
 import { adminAction, protectedAction } from "@repo/shared/safe-action";
-import { invokeOperation } from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
 
 import {
   mapOperationsActionError,
@@ -27,6 +24,7 @@ import {
 } from "./action-result";
 import { tryRecordDashboardWebVisit } from "./dashboard-web-visit";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 客户端可安全消费的访问记录结果，不携带内部异常详情。 */
 export type RecordDashboardWebVisitActionResult =
@@ -61,14 +59,12 @@ export const getOperationsOverviewAction = adminAction
   .action(
     async ({
       parsedInput,
-      ctx,
+      
     }): Promise<OperationsDashboardOverviewActionResult> => {
       try {
-        await ensureUolInitialized();
-        const snapshot = await invokeOperation<OperationsDashboardOverview>(
-          "operations.getOverview",
-          parsedInput,
-          { type: "user", userId: ctx.userId, role: ctx.role }
+        const snapshot = await requestGoJson<OperationsDashboardOverview>(
+          "/api/admin/operations/overview",
+          { method: "POST", body: JSON.stringify(parsedInput) }
         );
         return { status: "ready", snapshot };
       } catch (error) {
@@ -81,25 +77,19 @@ export const getOperationsOverviewAction = adminAction
 export const getOperationsDetailAction = adminAction
   .metadata({ action: "operations.getDetail" })
   .schema(operationsGetDetailInputSchema)
-  .action(async ({ parsedInput, ctx }): Promise<OperationsDetailOutput> => {
-    await ensureUolInitialized();
-    return invokeOperation<OperationsDetailOutput>(
-      "operations.getDetail",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }): Promise<OperationsDetailOutput> => {
+    return requestGoJson<OperationsDetailOutput>("/api/admin/operations/detail", {
+      method: "POST", body: JSON.stringify(parsedInput),
+    });
   });
 
 /** 异步创建 CSV 导出；U6 接入后 action API 无需变更。 */
 export const createOperationsExportAction = adminAction
   .metadata({ action: "operations.createExport" })
   .schema(operationsCreateExportInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation("operations.createExport", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
+  .action(async ({ parsedInput }) => {
+    return requestGoJson("/api/admin/operations/exports", {
+      method: "POST", body: JSON.stringify(parsedInput),
     });
   });
 
@@ -107,25 +97,19 @@ export const createOperationsExportAction = adminAction
 export const listOperationsExportsAction = adminAction
   .metadata({ action: "operations.listExports" })
   .schema(operationsListExportsInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation("operations.listExports", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
+  .action(async ({ parsedInput }) => {
+    const query = new URLSearchParams({ limit: String(parsedInput.limit) });
+    if (parsedInput.cursor) query.set("cursor", parsedInput.cursor);
+    return requestGoJson(`/api/admin/operations/exports?${query.toString()}`);
   });
 
 /** 重试失败导出；幂等键由页面生成并由 UOL 网关强制校验。 */
 export const retryOperationsExportAction = adminAction
   .metadata({ action: "operations.retryExport" })
   .schema(operationsRetryExportInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation("operations.retryExport", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
+  .action(async ({ parsedInput }) => {
+    return requestGoJson("/api/admin/operations/exports/retry", {
+      method: "POST", body: JSON.stringify(parsedInput),
     });
   });
 
@@ -133,12 +117,9 @@ export const retryOperationsExportAction = adminAction
 export const prepareOperationsExportDownloadAction = adminAction
   .metadata({ action: "operations.prepareExportDownload" })
   .schema(operationsPrepareExportDownloadInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await ensureUolInitialized();
-    return invokeOperation("operations.prepareExportDownload", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
+  .action(async ({ parsedInput }) => {
+    return requestGoJson("/api/admin/operations/exports/prepare-download", {
+      method: "POST", body: JSON.stringify(parsedInput),
     });
   });
 
