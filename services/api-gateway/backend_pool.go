@@ -321,7 +321,18 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	}
 	apiKey, _ := config["apiKey"].(string)
 	baseURL, _ := config["baseUrl"].(string)
-	useStream, _ := config["useStream"].(bool)
+	credentialScope, _ := config["credentialScope"].(string)
+	if credentialScope == "" {
+		credentialScope = baseURL
+	}
+	if credentialScope == "" {
+		return invalid("API 成员缺少上游地址")
+	}
+	delete(config, "apiKey")
+	configuration, err := json.Marshal(config)
+	if err != nil {
+		return invalid("API 成员配置无效")
+	}
 	tx, err := b.db.Begin(r.Context())
 	if err != nil {
 		return err
@@ -331,11 +342,14 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
-	var scope string
-	if baseURL != "" {
-		scope = baseURL
+	var previousRevision int
+	_ = tx.QueryRow(r.Context(), `SELECT COALESCE(v.revision,0) FROM image_backend_member_api_config a LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id WHERE a.member_id=$1`, id).Scan(&previousRevision)
+	versionID := newRequestID()
+	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_adapter_version(id,member_id_snapshot,revision,credential_scope,configuration,created_at) VALUES($1,$2,$3,$4,$5,now())`, versionID, id, previousRevision+1, credentialScope, configuration)
+	if err != nil {
+		return err
 	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_config(member_id,base_url,api_key,use_stream,created_at,updated_at) VALUES($1,$2,$3,$4,now(),now()) ON CONFLICT(member_id) DO UPDATE SET base_url=EXCLUDED.base_url,api_key=COALESCE(NULLIF(EXCLUDED.api_key,''),image_backend_member_api_config.api_key),use_stream=EXCLUDED.use_stream,updated_at=now()`, id, scope, apiKey, useStream)
+	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_config(member_id,api_key,current_adapter_version_id,credential_scope,created_at,updated_at) VALUES($1,$2,$3,$4,now(),now()) ON CONFLICT(member_id) DO UPDATE SET api_key=COALESCE(NULLIF(EXCLUDED.api_key,''),image_backend_member_api_config.api_key),current_adapter_version_id=EXCLUDED.current_adapter_version_id,credential_scope=EXCLUDED.credential_scope,updated_at=now()`, id, apiKey, versionID, credentialScope)
 	if err != nil {
 		return err
 	}
