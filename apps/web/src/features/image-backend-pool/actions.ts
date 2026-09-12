@@ -26,11 +26,6 @@ import {
   protectedAction,
 } from "@repo/shared/safe-action";
 import {
-  invokeOperation,
-  OperationError,
-  type Principal,
-} from "@repo/shared/uol";
-import {
   type AdminPoolGroupListOutput,
   type AdminPoolMemberListOutput,
   type ImageSizeConfigOutput,
@@ -43,7 +38,6 @@ import {
 } from "@repo/shared/image-backend/image-size-config";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { ensureUolInitialized } from "@/server/uol-init";
 import { requestGoJson } from "@/server/go-backend-client";
 import type { BackendMemberAdminSummary } from "./member-service";
 import { backendMemberExportDocumentSchema } from "./member-transfer";
@@ -103,8 +97,6 @@ type PoolOperationOutputs = {
   };
 };
 
-type PoolOperationName = keyof PoolOperationOutputs;
-
 async function requestPool<T>(path: string, method: string, body?: unknown): Promise<T> {
   return requestGoJson<T>(path, {
     method,
@@ -126,27 +118,6 @@ const apiUpstreamAdapterTestInputSchema = z
     sample: apiUpstreamJsonValueSchema,
   })
   .strict();
-
-/** 初始化 UOL 并调用类型绑定的号池 operation。 */
-async function invokePoolOperation<N extends PoolOperationName>(
-  name: N,
-  input: unknown,
-  principal: Principal
-): Promise<PoolOperationOutputs[N]> {
-  await ensureUolInitialized();
-  try {
-    return await invokeOperation<PoolOperationOutputs[N]>(
-      name,
-      input,
-      principal
-    );
-  } catch (error) {
-    if (error instanceof OperationError) {
-      throw new ActionUserError(error.message);
-    }
-    throw error;
-  }
-}
 
 /**
  * mutation 成功后刷新供应商与分组管理入口的服务端快照。
@@ -218,12 +189,8 @@ export const listImageSizeConfigsAction = imageBackendPoolViewerAction
 export const saveImageSizeConfigAction = adminAction
   .metadata({ action: "imageBackendPool.saveImageSizeConfig" })
   .schema(imageSizeConfigInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.saveImageSizeConfig",
-      parsedInput satisfies ImageSizeConfigInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }) => {
+    const result = await requestPool<{ id: string }>("/api/admin/image-backend/size-configs", "POST", parsedInput satisfies ImageSizeConfigInput);
     revalidateBackendPoolPage();
     return { success: true, id: result.id };
   });
@@ -232,12 +199,8 @@ export const saveImageSizeConfigAction = adminAction
 export const deleteImageSizeConfigAction = adminAction
   .metadata({ action: "imageBackendPool.deleteImageSizeConfig" })
   .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.deleteImageSizeConfig",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async ({ parsedInput }) => {
+    const result = await requestPool<{ success: boolean }>(`/api/admin/image-backend/size-configs/${encodeURIComponent(parsedInput.id)}`, "DELETE");
     revalidateBackendPoolPage();
     return result;
   });

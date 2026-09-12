@@ -82,6 +82,8 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/site-logo", b.endpoint(b.handleSiteLogo))
 	mux.HandleFunc("GET /api/image-backend/groups/options", b.endpoint(b.handleBackendPoolRead))
 	mux.HandleFunc("GET /api/admin/image-backend/size-configs", b.endpoint(b.handleBackendPoolRead))
+	mux.HandleFunc("POST /api/admin/image-backend/size-configs", b.endpoint(b.handleBackendPoolSizeConfigWrite))
+	mux.HandleFunc("DELETE /api/admin/image-backend/size-configs/{id}", b.endpoint(b.handleBackendPoolSizeConfigDelete))
 	mux.HandleFunc("GET /api/admin/image-backend/pool", b.endpoint(b.handleBackendPoolAdmin))
 	mux.HandleFunc("GET /api/admin/image-backend/groups", b.endpoint(b.handleBackendPoolAdmin))
 	mux.HandleFunc("POST /api/admin/image-backend/groups", b.endpoint(b.handleBackendPoolAdmin))

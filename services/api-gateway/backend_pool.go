@@ -488,3 +488,72 @@ func (b *backend) handleBackendPoolRead(w http.ResponseWriter, r *http.Request) 
 	}
 	return invalid("unknown backend pool resource")
 }
+
+func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdminViewer(r); err != nil {
+		return err
+	}
+	var in struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Mappings []struct {
+			Resolution  string `json:"resolution"`
+			AspectRatio string `json:"aspectRatio"`
+			Size        string `json:"size"`
+		} `json:"mappings"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	if strings.TrimSpace(in.Name) == "" || len(in.Mappings) == 0 {
+		return invalid("name and mappings are required")
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		id = "size_" + newRequestID()
+	}
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	_, err = tx.Exec(r.Context(), `INSERT INTO image_size_config(id,name,created_at,updated_at) VALUES($1,$2,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,updated_at=now()`, id, strings.TrimSpace(in.Name))
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `DELETE FROM image_size_config_mapping WHERE config_id=$1`, id); err != nil {
+		return err
+	}
+	for _, m := range in.Mappings {
+		if strings.TrimSpace(m.Resolution) == "" || strings.TrimSpace(m.AspectRatio) == "" || strings.TrimSpace(m.Size) == "" {
+			return invalid("mapping values are required")
+		}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO image_size_config_mapping(id,config_id,resolution,aspect_ratio,size) VALUES($1,$2,$3,$4,$5)`, newRequestID(), id, strings.TrimSpace(m.Resolution), strings.TrimSpace(m.AspectRatio), strings.TrimSpace(m.Size)); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+	return nil
+}
+
+func (b *backend) handleBackendPoolSizeConfigDelete(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdminViewer(r); err != nil {
+		return err
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		return invalid("id is required")
+	}
+	result, err := b.db.Exec(r.Context(), `DELETE FROM image_size_config WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return &apiError{404, "NOT_FOUND", "尺寸配置不存在"}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	return nil
+}
