@@ -15,6 +15,9 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   assetPrefix: process.env.NEXT_PUBLIC_ASSET_PREFIX || "",
+  // 本地开发常用 127.0.0.1 访问；允许其连接 Turbopack HMR，避免客户端组件
+  // 在模型配置等页面停留在初始 loading 状态。
+  allowedDevOrigins: ["127.0.0.1"],
   async rewrites() {
     return [
       {

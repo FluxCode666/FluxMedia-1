@@ -5,8 +5,14 @@ package main
 // session and querying PostgreSQL directly.
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +65,18 @@ func generationURL(key, bucket *string) *string {
 		b = *bucket
 	}
 	u := "/api/storage/" + b + "/" + *key
+	// Storage routes require HMAC signatures for private buckets. Keep the URL
+	// usable by the browser and thumbnail loader while preserving public bucket
+	// paths when no signing secret is configured in a test process.
+	if b != "avatars" {
+		secret := os.Getenv("BETTER_AUTH_SECRET")
+		if secret != "" {
+			exp := time.Now().Add(time.Hour).Unix()
+			mac := hmac.New(sha256.New, []byte(secret))
+			_, _ = mac.Write([]byte(b + "/" + *key + ":" + strconv.FormatInt(exp, 10)))
+			u += "?sig=" + url.QueryEscape(hex.EncodeToString(mac.Sum(nil))) + "&exp=" + strconv.FormatInt(exp, 10)
+		}
+	}
 	return &u
 }
 func publicGeneration(v generationDTO) map[string]any {
@@ -315,13 +333,15 @@ func (b *backend) handleAdminHistory(w http.ResponseWriter, r *http.Request) err
 		return forbidden()
 	}
 	var in struct {
-		Limit int `json:"limit"`
+		Limit    int `json:"limit"`
+		Page     int `json:"page"`
+		PageSize int `json:"pageSize"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	if in.Limit <= 0 || in.Limit > 100 {
 		in.Limit = 50
 	}
-	rows, err := b.db.Query(r.Context(), `SELECT g.id,g.user_id,g.prompt,g.revised_prompt,g.model,g.size,g.status,g.storage_key,g.storage_bucket,g.credits_consumed,g.error,g.metadata,g.created_at,g.completed_at FROM generation g ORDER BY g.created_at DESC LIMIT $1`, in.Limit)
+	rows, err := b.db.Query(r.Context(), `SELECT g.id,g.user_id,u.email,g.prompt,g.revised_prompt,g.model,g.size,g.status,g.storage_key,g.storage_bucket,g.credits_consumed,g.error,g.metadata,g.created_at,g.completed_at FROM generation g INNER JOIN "user" u ON u.id=g.user_id ORDER BY g.created_at DESC LIMIT $1`, in.Limit)
 	if err != nil {
 		return err
 	}
@@ -329,29 +349,200 @@ func (b *backend) handleAdminHistory(w http.ResponseWriter, r *http.Request) err
 	out := []any{}
 	for rows.Next() {
 		v := generationDTO{}
-		if err := rows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.RevisedPrompt, &v.Model, &v.Size, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
+		var userEmail string
+		if err := rows.Scan(&v.ID, &v.UserID, &userEmail, &v.Prompt, &v.RevisedPrompt, &v.Model, &v.Size, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
 			return err
 		}
-		out = append(out, publicGeneration(v))
+		out = append(out, adminImageHistoryRecord(v, userEmail))
 	}
 	// Global history includes video tasks as well. Project the shared fields into
 	// the same browser DTO so the admin page does not silently omit all videos.
-	videoRows, videoErr := b.db.Query(r.Context(), `SELECT id,user_id,prompt,model,resolution,status,storage_key,storage_bucket,credits_consumed,error,metadata,created_at,completed_at FROM video_generation ORDER BY created_at DESC LIMIT $1`, in.Limit)
+	videoRows, videoErr := b.db.Query(r.Context(), `SELECT v.id,v.user_id,u.email,v.prompt,v.model,v.duration_seconds,v.aspect_ratio,v.resolution,v.status,v.storage_key,v.storage_bucket,v.credits_consumed,v.error,v.metadata,v.input_manifest,v.created_at,v.completed_at FROM video_generation v INNER JOIN "user" u ON u.id=v.user_id ORDER BY v.created_at DESC LIMIT $1`, in.Limit)
 	if videoErr != nil {
 		return videoErr
 	}
 	defer videoRows.Close()
 	for videoRows.Next() {
 		var v generationDTO
-		var resolution string
-		if err := videoRows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.Model, &resolution, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
+		var userEmail, resolution, aspectRatio string
+		var duration int
+		var inputManifest any
+		if err := videoRows.Scan(&v.ID, &v.UserID, &userEmail, &v.Prompt, &v.Model, &duration, &aspectRatio, &resolution, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &inputManifest, &v.CreatedAt, &v.CompletedAt); err != nil {
 			return err
 		}
-		v.Size = resolution
-		out = append(out, publicGeneration(v))
+		out = append(out, adminVideoHistoryRecord(v, userEmail, duration, aspectRatio, resolution, inputManifest))
 	}
-	writeJSON(w, 200, map[string]any{"records": out, "items": out, "nextCursor": nil, "totalCount": len(out)})
+	// Keep the merged media stream stable by creation time, then ID. The frontend
+	// relies on this ordering for cursor/page transitions.
+	sort.SliceStable(out, func(i, j int) bool {
+		left, lok := out[i].(map[string]any)
+		right, rok := out[j].(map[string]any)
+		if !lok || !rok {
+			return false
+		}
+		lt, _ := left["createdAt"].(string)
+		rt, _ := right["createdAt"].(string)
+		if lt == rt {
+			li, _ := left["id"].(string)
+			ri, _ := right["id"].(string)
+			return li > ri
+		}
+		return lt > rt
+	})
+	page := in.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := in.PageSize
+	if pageSize <= 0 {
+		pageSize = in.Limit
+	}
+	if pageSize <= 0 || pageSize > 50 {
+		pageSize = 50
+	}
+	if len(out) > pageSize {
+		out = out[:pageSize]
+	}
+	modelOptions := make([]string, 0, len(out))
+	users := make([]map[string]any, 0, len(out))
+	seenModels := map[string]struct{}{}
+	seenUsers := map[string]struct{}{}
+	for _, item := range out {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if model, ok := row["model"].(string); ok && model != "" {
+			if _, exists := seenModels[model]; !exists {
+				seenModels[model] = struct{}{}
+				modelOptions = append(modelOptions, model)
+			}
+		}
+		uid, _ := row["userId"].(string)
+		email, _ := row["userEmail"].(string)
+		if uid != "" && email != "" {
+			if _, exists := seenUsers[uid]; !exists {
+				seenUsers[uid] = struct{}{}
+				users = append(users, map[string]any{"id": uid, "email": email})
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"asOf": time.Now().UTC().Format(time.RFC3339Nano), "page": page, "pageSize": pageSize,
+		"totalCount": len(out), "records": out, "modelOptions": modelOptions, "userOptions": users,
+		"nextCursor": nil, "previousCursor": nil,
+	})
 	return rows.Err()
+}
+
+func historyStatusImage(status string) string {
+	if status == "pending" {
+		return "processing"
+	}
+	return status
+}
+
+func historyStatusVideo(status string) string {
+	switch status {
+	case "pending", "queued":
+		return "queued"
+	case "running", "in_progress", "processing":
+		return "in_progress"
+	default:
+		return status
+	}
+}
+
+func processingSeconds(created time.Time, completed *time.Time) any {
+	if completed == nil || completed.Before(created) {
+		return nil
+	}
+	return int(completed.Sub(created).Seconds())
+}
+
+func metadataMap(value any) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		return v
+	case []byte:
+		var out map[string]any
+		if json.Unmarshal(v, &out) == nil {
+			return out
+		}
+	case json.RawMessage:
+		var out map[string]any
+		if json.Unmarshal(v, &out) == nil {
+			return out
+		}
+	}
+	return map[string]any{}
+}
+
+func metadataBool(value any, key string, fallback bool) bool {
+	if v, ok := metadataMap(value)[key].(bool); ok {
+		return v
+	}
+	return fallback
+}
+
+func videoInputSummary(manifest any) map[string]any {
+	m := metadataMap(manifest)
+	count := 0
+	mode := "none"
+	if _, ok := m["firstFrame"]; ok {
+		count++
+	}
+	if _, ok := m["lastFrame"]; ok {
+		count++
+	}
+	for _, key := range []string{"referenceImages", "referenceVideos", "referenceAudios"} {
+		if values, ok := m[key].([]any); ok {
+			count += len(values)
+		}
+	}
+	if count == 1 {
+		mode = "first-frame"
+	} else if count == 2 && m["firstFrame"] != nil && m["lastFrame"] != nil {
+		mode = "first-last-frames"
+	} else if count > 0 {
+		mode = "mixed"
+	}
+	return map[string]any{"mode": mode, "count": count}
+}
+
+func adminImageHistoryRecord(v generationDTO, userEmail string) map[string]any {
+	return map[string]any{
+		"kind": "image", "id": v.ID, "userId": v.UserID, "userEmail": userEmail,
+		"prompt": v.Prompt, "model": v.Model, "status": historyStatusImage(v.Status),
+		"creditsConsumed": v.CreditsConsumed, "error": v.Error, "createdAt": v.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"completedAt": func() any {
+			if v.CompletedAt == nil {
+				return nil
+			}
+			return v.CompletedAt.UTC().Format(time.RFC3339Nano)
+		}(),
+		"processingDurationSeconds": processingSeconds(v.CreatedAt, v.CompletedAt), "revisedPrompt": v.RevisedPrompt,
+		"size": v.Size, "creditDetails": nil, "promptRepairNotice": nil, "referenceImages": []any{},
+		"imageUrl": generationURL(v.StorageKey, v.StorageBucket), "backendAccount": nil,
+	}
+}
+
+func adminVideoHistoryRecord(v generationDTO, userEmail string, duration int, aspectRatio, resolution string, inputManifest any) map[string]any {
+	return map[string]any{
+		"kind": "video", "id": v.ID, "userId": v.UserID, "userEmail": userEmail,
+		"prompt": v.Prompt, "model": v.Model, "status": historyStatusVideo(v.Status),
+		"creditsConsumed": v.CreditsConsumed, "error": v.Error, "createdAt": v.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"completedAt": func() any {
+			if v.CompletedAt == nil {
+				return nil
+			}
+			return v.CompletedAt.UTC().Format(time.RFC3339Nano)
+		}(),
+		"processingDurationSeconds": processingSeconds(v.CreatedAt, v.CompletedAt), "resolution": resolution,
+		"duration": duration, "aspectRatio": aspectRatio, "generateAudio": metadataBool(v.Metadata, "generateAudio", false),
+		"input": videoInputSummary(inputManifest), "billing": map[string]any{"kind": "legacy", "mode": "per_second", "unit": "second", "unitPrice": nil, "creditsPerSecond": nil, "quotedCredits": nil, "actualCredits": v.CreditsConsumed},
+		"submissionAttempts": []any{}, "videoUrl": generationURL(v.StorageKey, v.StorageBucket), "backendAccount": nil,
+	}
 }
 
 func (b *backend) handleVideoInputs(w http.ResponseWriter, r *http.Request) error {
