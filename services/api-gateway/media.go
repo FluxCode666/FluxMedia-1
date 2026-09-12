@@ -22,6 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -760,17 +764,15 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 			}
 		}
 	}
-	root := filepath.Join(b.config.storagePath, bucket)
-	file := filepath.Join(root, filepath.FromSlash(key))
-	data, err := os.ReadFile(file)
-	if os.IsNotExist(err) {
-		return &apiError{404, "NOT_FOUND", "File not found"}
-	}
+	data, err := b.readStorageObject(r.Context(), bucket, key)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(strings.ToLower(err.Error()), "status code: 404") || strings.Contains(strings.ToLower(err.Error()), "nosuchkey") {
+			return &apiError{404, "NOT_FOUND", "File not found"}
+		}
 		return err
 	}
 	contentType := "application/octet-stream"
-	switch strings.ToLower(filepath.Ext(file)) {
+	switch strings.ToLower(filepath.Ext(key)) {
 	case ".png":
 		contentType = "image/png"
 	case ".jpg", ".jpeg":
@@ -793,9 +795,54 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
+	if contentType == "application/octet-stream" && domain != "logo" && domain != "model" {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	if domain == "logo" && contentType == "image/svg+xml" {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
 	w.WriteHeader(200)
 	_, err = w.Write(data)
 	return err
+}
+
+// readStorageObject reads from the configured S3-compatible provider when an
+// endpoint is configured, otherwise from the local storage root. Credentials
+// are loaded at request time so admin key rotation takes effect immediately.
+func (b *backend) readStorageObject(ctx context.Context, bucket, key string) ([]byte, error) {
+	endpoint, err := b.settingString(ctx, "STORAGE_ENDPOINT", "")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(endpoint) == "" {
+		return os.ReadFile(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+	}
+	access, err := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
+	if err != nil {
+		return nil, err
+	}
+	secret, err := b.settingString(ctx, "STORAGE_SECRET_ACCESS_KEY", "")
+	if err != nil {
+		return nil, err
+	}
+	if access == "" || secret == "" {
+		return nil, &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+	}
+	region, err := b.settingString(ctx, "STORAGE_REGION", "auto")
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+	if err != nil {
+		return nil, err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
 
 // storageBuckets resolves the runtime bucket settings used by the Next route.
