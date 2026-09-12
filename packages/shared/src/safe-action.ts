@@ -3,13 +3,13 @@ import { createSafeActionClient } from "next-safe-action";
 import { z } from "zod";
 
 import { auth } from "./auth/index";
-import { getUserRoleById } from "./auth/role-server";
 import {
   canAccessAdminArea,
   canManageUserPermissions,
   canViewGlobalUsageRecords,
   canViewImageBackendPool,
 } from "./auth/roles";
+import { normalizeUserRole } from "./auth/roles";
 import {
   DATABASE_QUERY_TIMEOUT_MESSAGE,
   DATABASE_QUERY_UNAVAILABLE_MESSAGE,
@@ -181,6 +181,7 @@ export const protectedAction = actionClient.use(async ({ next }) => {
     ctx: {
       userId: session.user.id,
       user: session.user,
+      role: normalizeUserRole((session.user as { role?: string | null }).role),
     },
   });
 });
@@ -192,7 +193,7 @@ export const protectedAction = actionClient.use(async ({ next }) => {
  * 在 protectedAction 基础上增加角色验证
  */
 export const adminAction = protectedAction.use(async ({ next, ctx }) => {
-  const role = await getUserRoleById(ctx.userId);
+  const role = ctx.role;
   if (!canAccessAdminArea(role)) {
     throw new Error("此操作需要管理员权限");
   }
@@ -207,7 +208,7 @@ export const adminAction = protectedAction.use(async ({ next, ctx }) => {
 });
 
 export const superAdminAction = protectedAction.use(async ({ next, ctx }) => {
-  const role = await getUserRoleById(ctx.userId);
+  const role = ctx.role;
   if (!canManageUserPermissions(role)) {
     throw new Error("此操作需要超管权限");
   }
@@ -224,7 +225,7 @@ export const superAdminAction = protectedAction.use(async ({ next, ctx }) => {
 
 export const imageBackendPoolViewerAction = protectedAction.use(
   async ({ next, ctx }) => {
-    const role = await getUserRoleById(ctx.userId);
+    const role = ctx.role;
     if (!canViewImageBackendPool(role)) {
       throw new Error("此操作需要账号池查看权限");
     }
@@ -242,7 +243,7 @@ export const imageBackendPoolViewerAction = protectedAction.use(
 /** 为现有三档管理员提供只读全局使用记录 Action 边界。 */
 export const globalUsageRecordsViewerAction = protectedAction.use(
   async ({ next, ctx }) => {
-    const role = await getUserRoleById(ctx.userId);
+    const role = ctx.role;
     if (!canViewGlobalUsageRecords(role)) {
       throw new Error("此操作需要全局使用记录查看权限");
     }
