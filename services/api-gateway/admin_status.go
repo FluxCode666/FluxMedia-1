@@ -248,16 +248,24 @@ func adminStatusErrorCategory(message *string) string {
 	if message == nil {
 		return "platform"
 	}
-	v := strings.ToLower(*message)
-	if strings.Contains(v, "moderation") || strings.Contains(v, "审核") || strings.Contains(v, "safety") {
-		return "moderation"
+	v := strings.ToLower(strings.NewReplacer("’", "'", "‘", "'", string(rune(96)), "'").Replace(*message))
+	for _, pattern := range []string{"aliyun moderation timed out", "aliyun moderation failed", "content moderation failed", "moderation skipped unexpectedly", "moderation timed out", "moderation failed", "socket hang up", "socket closed", "connection reset", "econnreset", "operation was aborted", "temporarily unavailable", "service unavailable"} {
+		if strings.Contains(v, pattern) {
+			return "platform"
+		}
 	}
-	if strings.Contains(v, "invalid") || strings.Contains(v, "参数") || strings.Contains(v, "prompt") {
-		return "user_request"
+	for _, pattern := range []string{"content failed moderation", "content blocked", "content policy", "content policy violation", "violates our content policy", "policy violation", "policy_violation", "safety policy", "safety system", "safety violation", "safety_violations", "request was rejected by the safety system", "rejected by the safety system", "blocked by the safety system", "flagged by the safety system", "image_unsafe", "not allowed to generate", "unsafe content", "未能通过安全", "安全系统", "安全限制", "安全过滤器", "系统拦截", "系统拒绝", "内容审查", "露骨", "性暗示", "裸露", "自伤", "未成年人", "受版权保护", "拒绝", "拦截"} {
+		if strings.Contains(v, pattern) {
+			return "moderation"
+		}
+	}
+	for _, pattern := range []string{"prompt_too_long", "提示词过长", "prompt too long", "too_many_images", "参考图最多", "too many reference images", "image_too_large", "image dimensions exceed", "decompression bomb", "invalid image data", "invalid image file", "invalid image format", "unsupported image format", "unable to decode", "invalid_mask_image_format", "积分不足", "insufficient credits", "insufficient_credits", "api key quota exceeded", "api key credit limit", "api_key_quota_exceeded", "invalid model", "unsupported model", "prompt exceeds", "invalid quality", "invalid moderation", "invalid thinking", "invalid display size", "invalid resolution", "transparent background is not supported", "must be between", "total pixels", "no more than", "at least one source image", "source images must be", "reference images must be", "mask must be", "total upload size", "upload is too large", "invalid or missing api key", "account frozen", "image_generation_user_error", "user_error"} {
+		if strings.Contains(v, pattern) {
+			return "user_request"
+		}
 	}
 	return "platform"
 }
-
 func (b *backend) handleAdminStatusErrors(w http.ResponseWriter, r *http.Request) error {
 	if _, err := b.requireAdmin(r, false); err != nil {
 		return err
