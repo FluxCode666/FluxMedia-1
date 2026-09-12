@@ -10,13 +10,8 @@ import type {
   OperationsDashboardQueryInput,
   OperationsExportTask,
 } from "@repo/shared/operations-dashboard/contracts";
-import {
-  invokeOperation,
-  OperationError,
-  type Principal,
-} from "@repo/shared/uol";
-
-import { ensureUolInitialized } from "@/server/uol-init";
+import { OperationError, type Principal } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 
 import {
   mapOperationsActionError,
@@ -52,11 +47,8 @@ async function invokeOverviewThroughUol(
   input: OperationsDashboardQueryInput,
   principal: Principal
 ): Promise<OperationsDashboardOverview> {
-  return invokeOperation<OperationsDashboardOverview>(
-    "operations.getOverview",
-    input,
-    principal
-  );
+  void principal;
+  return requestGoJson<OperationsDashboardOverview>("/api/admin/operations/overview", { method: "POST", body: JSON.stringify(input) });
 }
 
 /** 通过统一接口层读取当前管理员的导出记录。 */
@@ -64,14 +56,15 @@ async function listExportsThroughUol(
   input: { limit: number },
   principal: Principal
 ): Promise<{ tasks: OperationsExportTask[]; nextCursor: string | null }> {
-  return invokeOperation<{
+  void principal;
+  return requestGoJson<{
     tasks: OperationsExportTask[];
     nextCursor: string | null;
-  }>("operations.listExports", input, principal);
+  }>(`/api/admin/operations/exports?limit=${input.limit}`);
 }
 
 const defaultDependencies: OperationsDashboardPageDataDependencies = {
-  ensureInitialized: ensureUolInitialized,
+  ensureInitialized: async () => undefined,
   invokeOverview: invokeOverviewThroughUol,
   listExports: listExportsThroughUol,
 };

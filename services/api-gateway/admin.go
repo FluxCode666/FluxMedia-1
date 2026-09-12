@@ -171,6 +171,41 @@ func (b *backend) modelConfigurationRead(r *http.Request, canEdit bool) (map[str
 	if json.Unmarshal(raw, &cfg) != nil {
 		cfg = map[string]any{}
 	}
+	// MODEL_MARKETPLACE_CONFIG stores overrides only. The visible model catalog is
+	// discovered from enabled backend members, so an empty override must not make
+	// the admin page appear empty after migration.
+	for _, section := range []string{"imageByModel", "videoByFamily"} {
+		if _, ok := cfg[section].(map[string]any); !ok {
+			cfg[section] = map[string]any{}
+		}
+	}
+	if rows, queryErr := b.db.Query(r.Context(), `SELECT supported_model_ids FROM image_backend_member WHERE is_enabled AND status <> 'error'`); queryErr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var encoded []byte
+			if rows.Scan(&encoded) != nil {
+				continue
+			}
+			var ids []string
+			if json.Unmarshal(encoded, &ids) != nil {
+				continue
+			}
+			for _, id := range ids {
+				key := normalizeModelID(id)
+				if key == "" || strings.EqualFold(key, "default") || isLegacyVideoModel(key) {
+					continue
+				}
+				section := "imageByModel"
+				if isVideoModel(strings.ToLower(key)) {
+					section = "videoByFamily"
+				}
+				items := cfg[section].(map[string]any)
+				if _, exists := items[key]; !exists {
+					items[key] = map[string]any{}
+				}
+			}
+		}
+	}
 	entries := make([]map[string]any, 0, 128)
 	addCommon := func(key string, value map[string]any) map[string]any {
 		entry := map[string]any{
