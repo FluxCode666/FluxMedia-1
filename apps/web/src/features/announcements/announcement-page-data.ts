@@ -24,17 +24,28 @@ export async function loadMyAnnouncementPage(
   _principal: AnnouncementPrincipalInput,
   input: UserAnnouncementListInput
 ): Promise<UserAnnouncementListOutput> {
-  const raw = await requestGoJson<{ items: UserAnnouncementListOutput["records"] }>("/api/announcements");
+  const raw = await requestGoJson<{
+    items: UserAnnouncementListOutput["records"];
+  }>("/api/announcements");
   const items = raw.items ?? [];
   const start = (input.page - 1) * input.pageSize;
-  return { records: items.slice(start, start + input.pageSize), page: input.page, pageSize: input.pageSize, totalCount: items.length, totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)) };
+  return {
+    records: items.slice(start, start + input.pageSize),
+    page: input.page,
+    pageSize: input.pageSize,
+    totalCount: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)),
+  };
 }
 
 /** 打开用户公告页后独立标记全部活跃公告已读。 */
 export async function markAllMyAnnouncementsRead(
   _principal: AnnouncementPrincipalInput
 ): Promise<number> {
-  const result = await requestGoJson<{ count?: number }>("/api/announcements/read-all", { method: "POST", body: "{}" });
+  const result = await requestGoJson<{ count?: number }>(
+    "/api/announcements/read-all",
+    { method: "POST", body: "{}" }
+  );
   return result.count ?? 0;
 }
 
@@ -43,12 +54,23 @@ export async function loadAdminAnnouncementPage(
   _principal: AnnouncementPrincipalInput,
   input: AdminAnnouncementListInput
 ): Promise<AdminAnnouncementListOutput> {
-  const raw = await requestGoJson<{ items: AdminAnnouncementListOutput["records"] }>("/api/admin/announcements");
+  const raw = await requestGoJson<{
+    items: AdminAnnouncementListOutput["records"];
+  }>("/api/admin/announcements");
   let items = raw.items ?? [];
-  if (input.published === "published") items = items.filter((item) => item.isPublished);
-  if (input.published === "unpublished") items = items.filter((item) => !item.isPublished);
+  if (input.published === "published")
+    items = items.filter((item) => item.isPublished);
+  if (input.published === "unpublished")
+    items = items.filter((item) => !item.isPublished);
   const start = (input.page - 1) * input.pageSize;
   const active = (raw.items ?? []).filter((item) => item.isPublished).length;
   const pinned = (raw.items ?? []).filter((item) => item.isPinned).length;
-  return { records: items.slice(start, start + input.pageSize), page: input.page, pageSize: input.pageSize, totalCount: items.length, totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)), stats: { active, drafts: (raw.items ?? []).length - active, pinned } };
+  return {
+    records: items.slice(start, start + input.pageSize),
+    page: input.page,
+    pageSize: input.pageSize,
+    totalCount: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)),
+    stats: { active, drafts: (raw.items ?? []).length - active, pinned },
+  };
 }

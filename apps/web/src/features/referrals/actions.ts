@@ -12,4 +12,6 @@ export type ReferralDashboardOutput = z.infer<
 
 export const getMyReferralDashboardAction = protectedAction
   .metadata({ action: "referral.getMyDashboard" })
-  .action(async () => requestGoJson<ReferralDashboardOutput>("/api/referrals/dashboard"));
+  .action(async () =>
+    requestGoJson<ReferralDashboardOutput>("/api/referrals/dashboard")
+  );

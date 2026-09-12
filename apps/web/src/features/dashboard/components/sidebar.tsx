@@ -1,6 +1,5 @@
 "use client";
 
-import { getMyUnreadAnnouncementCountAction } from "@/features/announcements/actions";
 import { signOut } from "@repo/shared/auth/client";
 import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { ModeToggle } from "@repo/shared/components";
@@ -32,6 +31,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect, useState } from "react";
+import { getMyUnreadAnnouncementCountAction } from "@/features/announcements/actions";
 import {
   type CurrentSession,
   useCurrentSession,
