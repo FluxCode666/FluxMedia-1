@@ -12,6 +12,7 @@ import (
 )
 
 func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/support/dashboard-configuration", b.endpoint(b.handleDashboardSupportConfiguration))
 	mux.HandleFunc("GET /api/support/tickets", b.endpoint(b.handleTicketList))
 	mux.HandleFunc("GET /api/support/tickets/unread-count", b.endpoint(b.handleTicketUnreadCount))
 	mux.HandleFunc("POST /api/support/tickets", b.endpoint(b.handleTicketCreate))
@@ -33,6 +34,47 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
 	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
 	mux.HandleFunc("GET /api/analytics/summary", b.endpoint(b.handleAnalyticsSummary))
+}
+
+// handleDashboardSupportConfiguration returns the small, explicitly public subset of
+// system settings rendered by the dashboard support card. Authentication is still
+// required, while the setting itself is read-only for ordinary users.
+func (b *backend) handleDashboardSupportConfiguration(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireSession(r); err != nil {
+		return err
+	}
+	value, err := b.setting(r.Context(), "DASHBOARD_SUPPORT_CONFIG", defaultDashboardSupportConfiguration())
+	if err != nil {
+		return err
+	}
+	// A malformed historical value must not break every dashboard page. The shared
+	// TypeScript operation applies the same safe-default behavior after schema parsing.
+	if _, ok := value.(map[string]any); !ok {
+		value = defaultDashboardSupportConfiguration()
+	}
+	writeJSON(w, http.StatusOK, value)
+	return nil
+}
+
+func defaultDashboardSupportConfiguration() map[string]any {
+	localized := func(zh, en string) map[string]any {
+		return map[string]any{"zh": zh, "en": en}
+	}
+	return map[string]any{
+		"version": 1,
+		"officialSupport": map[string]any{
+			"enabled":     true,
+			"channel":     localized("官方支持中心", "Official support center"),
+			"description": localized("通过站内工单联系官方支持，处理账户、积分、支付与服务接入问题。", "Contact the official team for account, credits, billing, and service integration help."),
+			"actionLabel": localized("联系支持", "Contact support"),
+			"actionUrl":   "/dashboard/support/new",
+		},
+		"services": []any{
+			map[string]any{"id": "system-docs", "enabled": true, "icon": "documentation", "title": localized("API 文档", "API docs"), "description": localized("查看图像 API 接口和使用说明", "Explore image APIs and usage guides"), "actionLabel": localized("查看", "Open"), "url": "/dashboard/api-docs"},
+			map[string]any{"id": "support-tickets", "enabled": true, "icon": "support", "title": localized("支持工单", "Support tickets"), "description": localized("查看问题进度并与支持团队沟通", "Track requests and communicate with the support team"), "actionLabel": localized("进入", "Open"), "url": "/dashboard/support"},
+			map[string]any{"id": "announcements", "enabled": true, "icon": "website", "title": localized("平台公告", "Announcements"), "description": localized("了解服务更新、维护与重要通知", "Read service updates, maintenance notes, and notices"), "actionLabel": localized("查看", "Open"), "url": "/dashboard/announcements"},
+		},
+	}
 }
 
 func (b *backend) handleTicketUnreadCount(w http.ResponseWriter, r *http.Request) error {
@@ -343,7 +385,29 @@ func (b *backend) handleAnnouncementList(w http.ResponseWriter, r *http.Request)
 		}
 		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua, "isRead": ra != nil})
 	}
-	writeJSON(w, 200, map[string]any{"items": out})
+	// Keep the legacy `items` envelope for the full announcement page while also
+	// exposing the compact shape used by the dashboard support card.
+	selected := out
+	if rawSize := r.URL.Query().Get("pageSize"); rawSize != "" {
+		size, _ := strconv.Atoi(rawSize)
+		if size > 0 {
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			if page < 1 {
+				page = 1
+			}
+			start := (page - 1) * size
+			if start >= len(out) {
+				selected = []any{}
+			} else {
+				end := start + size
+				if end > len(out) {
+					end = len(out)
+				}
+				selected = out[start:end]
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"items": out, "announcements": selected, "total": len(out)})
 	return nil
 }
 func (b *backend) handleAnnouncementRead(w http.ResponseWriter, r *http.Request) error {

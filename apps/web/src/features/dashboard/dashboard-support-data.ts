@@ -10,7 +10,7 @@ import {
   type DashboardSupportConfig,
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
 } from "@repo/shared/support/dashboard-config";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** Dashboard 右侧公告卡所需的最小只读字段。 */
 export type DashboardAnnouncement = {
@@ -40,32 +40,42 @@ type DashboardAnnouncementsDependencies = {
 };
 
 /** 通过统一操作层读取当前登录用户可见的支持配置。 */
-async function loadConfigurationThroughUol(input: {
+async function loadConfigurationThroughGo(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<DashboardSupportConfig> {
-  const { invokeOperation } = await import("@repo/shared/uol");
-  return invokeOperation<DashboardSupportConfig>(
-    "support.getDashboardConfiguration",
-    {},
-    { type: "user", userId: input.userId, role: input.role }
+  void input;
+  return requestGoJson<DashboardSupportConfig>(
+    "/api/support/dashboard-configuration"
   );
 }
 
 /** 通过统一操作层读取当前登录用户可见的最新公告。 */
-async function loadAnnouncementsThroughUol(input: {
+async function loadAnnouncementsThroughGo(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<DashboardAnnouncement[]> {
-  const { invokeOperation } = await import("@repo/shared/uol");
-  const result = await invokeOperation<{
-    announcements: DashboardAnnouncement[];
-  }>(
-    "support.listAnnouncements",
-    { page: 1, pageSize: 3 },
-    { type: "user", userId: input.userId, role: input.role }
-  );
-  return result.announcements;
+  void input;
+  type RawAnnouncement = {
+    id: string;
+    title: string;
+    content: string;
+    publishedAt?: string | null;
+    createdAt?: string | null;
+    isRead: boolean;
+  };
+  const result = await requestGoJson<{
+    announcements?: RawAnnouncement[];
+    items?: RawAnnouncement[];
+  }>("/api/announcements?page=1&pageSize=3");
+  return (result.announcements ?? result.items ?? []).map((announcement) => ({
+    id: announcement.id,
+    title: announcement.title,
+    content: announcement.content,
+    publishedAt:
+      announcement.publishedAt ?? announcement.createdAt ?? new Date().toISOString(),
+    isRead: announcement.isRead,
+  }));
 }
 
 /** 记录不包含数据库错误、配置正文或用户标识的降级事件。 */
@@ -76,14 +86,14 @@ function reportDashboardSupportFailure(): void {
 }
 
 const defaultDependencies: DashboardSupportDependencies = {
-  ensureInitialized: ensureUolInitialized,
-  loadConfiguration: loadConfigurationThroughUol,
+  ensureInitialized: async () => {},
+  loadConfiguration: loadConfigurationThroughGo,
   reportFailure: reportDashboardSupportFailure,
 };
 
 const defaultAnnouncementsDependencies: DashboardAnnouncementsDependencies = {
-  ensureInitialized: ensureUolInitialized,
-  loadAnnouncements: loadAnnouncementsThroughUol,
+  ensureInitialized: async () => {},
+  loadAnnouncements: loadAnnouncementsThroughGo,
   reportFailure: reportDashboardSupportFailure,
 };
 
