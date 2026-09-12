@@ -58,6 +58,8 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/videos/{taskId}", b.endpoint(b.handleVideoStatusSession))
 	mux.HandleFunc("GET /api/videos/capabilities", b.endpoint(b.handleVideoCapabilitiesSession))
 	mux.HandleFunc("GET /api/site-logo", b.endpoint(b.handleSiteLogo))
+	mux.HandleFunc("GET /api/image-backend/groups/options", b.endpoint(b.handleBackendPoolRead))
+	mux.HandleFunc("GET /api/admin/image-backend/size-configs", b.endpoint(b.handleBackendPoolRead))
 	mux.HandleFunc("POST /api/upload/presigned", b.endpoint(b.handleUploadPresigned))
 	mux.HandleFunc("GET /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageGet))
 	mux.HandleFunc("PUT /api/storage/{bucket}/{key...}", b.endpoint(b.handleStoragePut))

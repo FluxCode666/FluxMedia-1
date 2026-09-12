@@ -7,7 +7,6 @@
  * 并刷新管理页面。数据库、凭据和分组不变量全部由 operation
  * binding 后的领域服务负责。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   apiUpstreamAdapterOperationIdSchema,
   apiUpstreamJsonValueSchema,
@@ -49,6 +48,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 import type { BackendMemberAdminSummary } from "./member-service";
 import { backendMemberExportDocumentSchema } from "./member-transfer";
 
@@ -219,13 +219,7 @@ export const listAdminImageBackendGroupsAction = imageBackendPoolViewerAction
 /** 读取图片尺寸配置集，供供应商表单和独立管理页使用。 */
 export const listImageSizeConfigsAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.listImageSizeConfigs" })
-  .action(async ({ ctx }) =>
-    invokePoolOperation("pool.listImageSizeConfigs", {}, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    })
-  );
+  .action(async () => requestGoJson<{ configs: ImageSizeConfigOutput[] }>("/api/admin/image-backend/size-configs"));
 
 /** 保存图片尺寸配置集及其映射。 */
 export const saveImageSizeConfigAction = adminAction
@@ -441,14 +435,4 @@ export const getApiUpstreamRuntimeDiagnosticsAction = adminAction
 /** 获取用户可选择的启用分组。 */
 export const getImageBackendGroupOptionsAction = protectedAction
   .metadata({ action: "imageBackendPool.groupOptions" })
-  .action(async ({ ctx }) => {
-    return invokePoolOperation(
-      "pool.getGroupOptions",
-      {},
-      {
-        type: "user",
-        userId: ctx.userId,
-        role: await getUserRoleById(ctx.userId),
-      }
-    );
-  });
+  .action(async () => requestGoJson<{ options: Array<{ id: string; name: string }> }>("/api/image-backend/groups/options"));
