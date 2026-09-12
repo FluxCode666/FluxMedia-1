@@ -175,6 +175,10 @@ func (b *backend) handleMCPUserCall(w http.ResponseWriter, r *http.Request, q mc
 // omits storage keys, metadata and other internal fields from the response.
 func (b *backend) mcpUserHistory(r *http.Request, userID string, args map[string]json.RawMessage) (map[string]any, error) {
 	limit := 20
+	var modelFilter, statusFilter, typeFilter string
+	_ = json.Unmarshal(args["model"], &modelFilter)
+	_ = json.Unmarshal(args["status"], &statusFilter)
+	_ = json.Unmarshal(args["type"], &typeFilter)
 	for _, key := range []string{"pageSize", "limit"} {
 		var n int
 		if raw, ok := args[key]; ok && json.Unmarshal(raw, &n) == nil && n > 0 {
@@ -223,6 +227,19 @@ func (b *backend) mcpUserHistory(r *http.Request, userID string, args map[string
 		return nil, err
 	}
 	videoRows.Close()
+	if modelFilter != "" || statusFilter != "" || typeFilter != "" {
+		filtered := imageRows[:0]
+		for _, row := range imageRows {
+			kind, _ := row["kind"].(string)
+			model, _ := row["model"].(string)
+			status, _ := row["status"].(string)
+			if modelFilter != "" && model != modelFilter || statusFilter != "" && status != statusFilter || typeFilter != "" && kind != typeFilter {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		imageRows = filtered
+	}
 	sort.SliceStable(imageRows, func(i, j int) bool {
 		li, _ := imageRows[i]["createdAt"].(string)
 		lj, _ := imageRows[j]["createdAt"].(string)
