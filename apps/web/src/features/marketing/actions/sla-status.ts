@@ -47,8 +47,8 @@ const defaultDependencies: MarketingSlaVisibilityUpdateDependencies = {
  *
  * @param input - 已通过 Server Action schema 校验的布尔开关。
  * @param userId - protectedAction 会话提供的真实用户 ID。
- * @param dependencies - UOL 初始化、角色读取、网关调用与安全日志依赖。
- * @returns UOL 返回的最小开关 DTO。
+ * @param dependencies - Go 后端调用与安全日志依赖。
+ * @returns Go 后端返回的最小开关 DTO。
  * @sideEffects 调用 Go 设置接口；失败时记录固定字段。
  * @failure 权限错误映射为稳定管理员提示，其他错误映射为通用重试提示；原始异常不会
  * 进入日志或用户消息。
@@ -86,7 +86,7 @@ export async function runMarketingSlaVisibilityUpdate(
  * @returns next-safe-action 编码的成功结果或稳定用户错误。
  * @sideEffects 由 runMarketingSlaVisibilityUpdate 声明。
  * @failure schema 拒绝非布尔值或额外字段；core 失败时只返回管理员权限提示或通用
- * 重试提示，不暴露 UOL 和设置服务内部错误。
+ * 重试提示，不暴露后端设置服务内部错误。
  */
 export const updateMarketingSlaStatusVisibilityAction = protectedAction
   .metadata({ action: "marketing.slaStatus.visibility" })
