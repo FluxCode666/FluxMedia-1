@@ -192,7 +192,64 @@ func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) 
 			txs = append(txs, map[string]any{"id": i, "type": t, "amount": a, "description": d, "metadata": m, "createdAt": c})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"user": u, "creditsBalance": map[string]any{"balance": bal, "totalEarned": earned, "totalSpent": spent, "status": st}, "transactions": txs, "activeBatches": []any{}, "generations": []any{}, "apiKeys": []any{}, "auditLogs": []any{}, "generationSummary": map[string]any{"total": 0, "completed": 0, "failed": 0, "creditsConsumed": 0}})
+	activeBatches := []any{}
+	brs, _ := b.db.Query(r.Context(), `SELECT id,amount,remaining,issued_at,expires_at,source_type FROM credits_batch WHERE user_id=$1 AND status='active' AND remaining>0 ORDER BY issued_at DESC LIMIT 10`, id)
+	if brs != nil {
+		defer brs.Close()
+		for brs.Next() {
+			var i, src string
+			var amount, rem float64
+			var issued time.Time
+			var exp *time.Time
+			if brs.Scan(&i, &amount, &rem, &issued, &exp, &src) == nil {
+				activeBatches = append(activeBatches, map[string]any{"id": i, "amount": amount, "remaining": rem, "issuedAt": issued, "expiresAt": exp, "sourceType": src})
+			}
+		}
+	}
+	gens := []any{}
+	var gt, gc, gf int
+	var gcredit float64
+	gr, _ := b.db.Query(r.Context(), `SELECT id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,file_size,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT 12`, id)
+	if gr != nil {
+		defer gr.Close()
+		for gr.Next() {
+			var i, p, model, size, stt string
+			var rev, sk, sb, er *string
+			var fs *int64
+			var cc float64
+			var md any
+			var ca time.Time
+			var done *time.Time
+			if gr.Scan(&i, &p, &rev, &model, &size, &stt, &sk, &sb, &fs, &cc, &er, &md, &ca, &done) == nil {
+				gens = append(gens, map[string]any{"id": i, "prompt": p, "revisedPrompt": rev, "model": model, "size": size, "status": stt, "storageKey": sk, "storageBucket": sb, "fileSize": fs, "creditsConsumed": cc, "error": er, "metadata": md, "createdAt": ca, "completedAt": done})
+				gt++
+				if stt == "completed" {
+					gc++
+				}
+				if stt == "failed" {
+					gf++
+				}
+				gcredit += cc
+			}
+		}
+	}
+	_ = b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE status='completed'),count(*) FILTER(WHERE status='failed'),COALESCE(sum(credits_consumed),0) FROM generation WHERE user_id=$1`, id).Scan(&gt, &gc, &gf, &gcredit)
+	keys := []any{}
+	kr, _ := b.db.Query(r.Context(), `SELECT id,name,key_prefix,last_four,credit_limit,credits_used,last_used_at,is_active,created_at,updated_at FROM external_api_key WHERE user_id=$1 ORDER BY created_at DESC`, id)
+	if kr != nil {
+		defer kr.Close()
+		for kr.Next() {
+			var i, n, kp, lf string
+			var cl, cu float64
+			var lu *time.Time
+			var active bool
+			var ca, ua time.Time
+			if kr.Scan(&i, &n, &kp, &lf, &cl, &cu, &lu, &active, &ca, &ua) == nil {
+				keys = append(keys, map[string]any{"id": i, "name": n, "keyPrefix": kp, "lastFour": lf, "creditLimit": cl, "creditsUsed": cu, "lastUsedAt": lu, "isActive": active, "createdAt": ca, "updatedAt": ua})
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"user": u, "creditsBalance": map[string]any{"balance": bal, "totalEarned": earned, "totalSpent": spent, "status": st}, "transactions": txs, "activeBatches": activeBatches, "generations": gens, "apiKeys": keys, "auditLogs": []any{}, "generationSummary": map[string]any{"total": gt, "completed": gc, "failed": gf, "creditsConsumed": gcredit}})
 	return nil
 }
 func (b *backend) handleAdminUserCreate(w http.ResponseWriter, r *http.Request) error {
