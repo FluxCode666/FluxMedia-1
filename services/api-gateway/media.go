@@ -70,6 +70,15 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/site-logo", b.endpoint(b.handleSiteLogo))
 	mux.HandleFunc("GET /api/image-backend/groups/options", b.endpoint(b.handleBackendPoolRead))
 	mux.HandleFunc("GET /api/admin/image-backend/size-configs", b.endpoint(b.handleBackendPoolRead))
+	mux.HandleFunc("GET /api/admin/image-backend/pool", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("GET /api/admin/image-backend/groups", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("POST /api/admin/image-backend/groups", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("DELETE /api/admin/image-backend/groups/{id}", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("GET /api/admin/image-backend/members", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("POST /api/admin/image-backend/members", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("DELETE /api/admin/image-backend/members/{id}", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("POST /api/admin/image-backend/members/{id}/enabled", b.endpoint(b.handleBackendPoolAdmin))
+	mux.HandleFunc("POST /api/admin/image-backend/members/{id}/reset-status", b.endpoint(b.handleBackendPoolAdmin))
 	mux.HandleFunc("POST /api/upload/presigned", b.endpoint(b.handleUploadPresigned))
 	mux.HandleFunc("GET /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageGet))
 	mux.HandleFunc("PUT /api/storage/{bucket}/{key...}", b.endpoint(b.handleStoragePut))
@@ -824,10 +833,16 @@ func storageObjectDomain(bucket, key, system, generations string) string {
 		return ""
 	}
 	if namespace == "image" || namespace == "video" {
-		return "model"
+		if len(parts) == 3 && regexp.MustCompile(`^(image|video)/[a-f0-9]{64}/[a-f0-9]{64}\.webp$`).MatchString(key) && strings.HasPrefix(key, namespace+"/") {
+			return "model"
+		}
+		return ""
 	}
 	if namespace == "logo" {
-		return "logo"
+		if regexp.MustCompile(`^logo/[a-f0-9]{64}\.(png|svg|ico)$`).MatchString(key) {
+			return "logo"
+		}
+		return ""
 	}
 	if namespace == "avatars" || (len(parts) == 1 && regexp.MustCompile(`^[A-Za-z0-9_-]+-[0-9]+\.(jpe?g|png|gif|webp)$`).MatchString(parts[0])) {
 		return "avatars"
