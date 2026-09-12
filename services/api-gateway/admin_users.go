@@ -26,6 +26,48 @@ func (b *backend) registerAdminUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/adjust", b.endpoint(b.handleAdminUserAdjust))
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/status", b.endpoint(b.handleAdminUserCreditsStatus))
 	mux.HandleFunc("POST /api/admin/api-keys/{keyId}/status", b.endpoint(b.handleAdminUserKeyStatus))
+	mux.HandleFunc("POST /api/moderation/users/{id}/policy", b.endpoint(b.handleAdminUserModeration))
+	mux.HandleFunc("POST /api/admin/users/{id}/concurrency", b.endpoint(b.handleAdminUserConcurrency))
+}
+
+func (b *backend) handleAdminUserModeration(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.adminTarget(r, false, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Level  *string `json:"level"`
+		Reason string  `json:"reason"`
+	}
+	if err = decodeBody(r, &in); err != nil {
+		return err
+	}
+	_, err = b.db.Exec(r.Context(), `UPDATE "user" SET moderation_block_risk_level_override=$1,updated_at=now() WHERE id=$2`, r.PathValue("id"), in.Level, s.User.ID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"success": true, "after": in.Level, "changed": true})
+	return nil
+}
+func (b *backend) handleAdminUserConcurrency(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.adminTarget(r, false, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Override *int   `json:"override"`
+		Reason   string `json:"reason"`
+	}
+	if err = decodeBody(r, &in); err != nil {
+		return err
+	}
+	_, err = b.db.Exec(r.Context(), `UPDATE "user" SET image_generation_concurrency_override=$1,updated_at=now() WHERE id=$2`, in.Override, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"success": true, "after": in.Override, "changed": true, "message": "用户生图并发限制已更新"})
+	_ = s
+	return nil
 }
 func (b *backend) adminTarget(r *http.Request, super bool, id string) (*sessionResponse, error) {
 	s, e := b.requireAdmin(r, super)
