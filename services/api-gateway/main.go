@@ -324,6 +324,7 @@ func (b *backend) router() *http.ServeMux {
 	b.registerAdminStatusRoutes(mux)
 	b.registerOperationsRoutes(mux)
 	b.registerMCPKeyRoutes(mux)
+	b.registerImageBackendScriptRuntimeRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)
 	mux.HandleFunc("/", b.handleNotMigrated)

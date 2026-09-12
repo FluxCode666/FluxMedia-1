@@ -369,23 +369,15 @@ export const deleteImageBackendMemberAction = adminAction
 export const testApiUpstreamAdapterAction = adminAction
   .metadata({ action: "imageBackendPool.testApiUpstreamAdapter" })
   .schema(apiUpstreamAdapterTestInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    return invokePoolOperation("pool.testApiUpstreamAdapter", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
+  .action(async ({ parsedInput }) => {
+    return requestPool<{ preview: unknown }>("/api/admin/image-backend/script-runtime/test", "POST", parsedInput);
   });
 
 /** 读取当前 Web 进程的脱敏 API 上游脚本运行诊断。 */
 export const getApiUpstreamRuntimeDiagnosticsAction = adminAction
   .metadata({ action: "imageBackendPool.getApiUpstreamRuntimeDiagnostics" })
-  .action(async ({ ctx }) => {
-    return invokePoolOperation(
-      "pool.getApiUpstreamRuntimeDiagnostics",
-      {},
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+  .action(async () => {
+    return requestPool<PoolOperationOutputs["pool.getApiUpstreamRuntimeDiagnostics"]>("/api/admin/image-backend/script-runtime/diagnostics", "GET");
   });
 
 /** 获取用户可选择的启用分组。 */
