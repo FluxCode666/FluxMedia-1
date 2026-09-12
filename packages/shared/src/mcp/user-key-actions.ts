@@ -8,7 +8,7 @@
  * - 删除（仅已撤销的 key 可删除）
  *
  * 使用方：Server Action / MCP 设置页面
- * 关键依赖：@repo/database（db、mcpApiKey schema）、nanoid、crypto
+ * 关键依赖：Go MCP API（密钥生成、哈希、归属校验与持久化均在 Go 后端完成）。
  *
  * 安全约束：
  * - 明文 key 仅在创建时返回一次，后续不可恢复

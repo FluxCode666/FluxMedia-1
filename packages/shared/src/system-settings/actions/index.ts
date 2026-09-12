@@ -3,26 +3,19 @@
 /**
  * 系统设置 Server Actions。
  *
- * 职责：验证真实管理员会话，把传输输入转换为 UOL 调用，并映射安全的用户反馈。
- * 审核策略写入、事务与审计全部由 moderation operation 和 policy service 持有。
+ * Actions 只负责验证登录会话、校验输入并转发到 Go API。管理员权限、事务、审计
+ * 和设置数据均由 Go 后端持有，避免 Next Server Action 重新读取角色或数据库。
  */
 
-import { z } from "zod";
 import { cookies } from "next/headers";
+import { z } from "zod";
 
 import {
   moderationBlockRiskLevelSchema,
   type ResolvedModerationPolicyValues,
 } from "../../moderation/policy-contract";
 import type { SetGlobalRiskLevelResult } from "../../moderation/policy-service";
-import {
-  ActionUserError,
-  adminAction,
-  superAdminAction,
-} from "../../safe-action";
-import { OperationError } from "../../uol";
-import "../../uol/operations/moderation";
-import "../../uol/operations/system-settings";
+import { ActionUserError, protectedAction } from "../../safe-action";
 import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
 import type { getAdminSystemSettingsSnapshot } from "../index";
 import { siteLogoUrlSchema } from "../site-branding";
@@ -38,31 +31,18 @@ const globalModerationPolicyInputSchema = z
   })
   .strict();
 
-/** 把 UOL 错误映射为安全中文反馈，不透传 internal_error 内部消息。 */
+/** 把 Go API 错误映射为安全中文反馈，不透传内部实现细节。 */
 function throwModerationPolicyActionError(error: unknown): never {
-  if (!(error instanceof OperationError)) throw error;
-  switch (error.code) {
-    case "forbidden":
-    case "unauthenticated":
-      throw new ActionUserError("无权查看或修改全站审核策略");
-    case "validation_error":
-      throw new ActionUserError("审核级别或变更原因不合法");
-    case "not_found":
-      throw new ActionUserError("全站审核策略不存在");
-    case "timeout":
-    case "not_ready":
-      throw new ActionUserError("审核策略服务暂时不可用，请稍后重试");
-    default:
-      throw new ActionUserError("审核策略操作失败，请稍后重试");
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("权限") || message.includes("登录")) {
+    throw new ActionUserError("无权查看或修改全站审核策略");
   }
+  if (message.includes("不合法") || message.includes("不能为空")) {
+    throw new ActionUserError("审核级别或变更原因不合法");
+  }
+  throw new ActionUserError("审核策略操作失败，请稍后重试");
 }
 
-/**
- * 把设置更新 UOL 错误转换为 next-safe-action 可直接展示的安全中文提示。
- *
- * @param error - invokeOperation 抛出的未知错误。
- * @throws ActionUserError 仅对权限与可信设置校验失败返回用户提示；其他错误原样上抛。
- */
 const settingUpdateSchema = z.object({
   key: z.string().min(1),
   value: z.unknown().optional(),
@@ -71,63 +51,73 @@ const settingUpdateSchema = z.object({
 
 async function requestGo<T>(path: string, body?: unknown, method = "GET"): Promise<T> {
   const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
-  const cookieHeader = (await cookies()).getAll().map((c) => `${c.name}=${c.value}`).join("; ");
-  const response = await fetch(`${base}${path}`, { method, headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), cache: "no-store" });
-  const payload = (await response.json().catch(() => null)) as T & { error?: { message?: string } };
-  if (!response.ok) throw new Error(payload?.error?.message || "请求失败，请稍后重试");
+  const cookieHeader = (await cookies())
+    .getAll()
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join("; ");
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(cookieHeader ? { cookie: cookieHeader } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => null)) as T & {
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || "请求失败，请稍后重试");
+  }
   return payload;
 }
 
-export const getSystemSettingsAction = superAdminAction
+export const getSystemSettingsAction = protectedAction
   .metadata({ action: "system-settings.get" })
-  .action(async () => {
-    return requestGo<{ settings: Awaited<ReturnType<typeof getAdminSystemSettingsSnapshot>> }>("/api/system-settings");
-    /*
-    const result = await invokeOperation<{
+  .action(async () =>
+    requestGo<{
       settings: Awaited<ReturnType<typeof getAdminSystemSettingsSnapshot>>;
-      timestamp: string;
-    }>(
-      "settings.getSnapshot",
-      {},
-      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-    );
-    return { settings: result.settings };
-    */
-  });
+    }>("/api/system-settings")
+  );
 
 /** 读取后端池等只读消费者所需的完整全局价格矩阵。 */
-export const getGlobalModelPricingAction = adminAction
+export const getGlobalModelPricingAction = protectedAction
   .metadata({ action: "system-settings.model-pricing.get" })
-  .action(async () => {
-    return requestGo<{
+  .action(async () =>
+    requestGo<{
       image: ImageCreditOverrides;
       videoBillingModes: Record<string, string>;
       videoCreditsPerItem: Record<string, number>;
       videoCreditsPerSecond: Record<string, number>;
-    }>("/api/system-settings/model-pricing");
-  });
+    }>("/api/system-settings/model-pricing")
+  );
 
-/** 读取全站审核级别，只负责把真实 super_admin 会话传入 UOL。 */
-export const getGlobalModerationPolicyAction = superAdminAction
+/** 读取全站审核级别；管理员权限由 Go API 校验。 */
+export const getGlobalModerationPolicyAction = protectedAction
   .metadata({ action: "system-settings.moderation.getGlobalPolicy" })
   .action(async () => {
     try {
-      const { policy } = await requestGo<{ policy: ResolvedModerationPolicyValues }>("/api/system-settings/moderation-policy");
-      // WHY: 策略读取保持由 UOL 统一解析；审计只做固定 action 的只读投影，
-      // 不复用通用设置写入口，也不把无关管理员 metadata 暴露给组件。
+      const { policy } = await requestGo<{
+        policy: ResolvedModerationPolicyValues;
+      }>("/api/system-settings/moderation-policy");
       return { policy, recentAudits: [] };
     } catch (error) {
       throwModerationPolicyActionError(error);
     }
   });
 
-/** 更新全站审核级别；策略、事务与审计由 UOL 下层统一完成。 */
-export const setGlobalModerationPolicyAction = superAdminAction
+/** 更新全站审核级别；策略、事务与审计由 Go 后端统一完成。 */
+export const setGlobalModerationPolicyAction = protectedAction
   .metadata({ action: "system-settings.moderation.setGlobalPolicy" })
   .schema(globalModerationPolicyInputSchema)
   .action(async ({ parsedInput }) => {
     try {
-      const result = await requestGo<SetGlobalRiskLevelResult>("/api/system-settings/moderation-policy", parsedInput, "PUT");
+      const result = await requestGo<SetGlobalRiskLevelResult>(
+        "/api/system-settings/moderation-policy",
+        parsedInput,
+        "PUT"
+      );
       return {
         success: true,
         ...result,
@@ -140,39 +130,23 @@ export const setGlobalModerationPolicyAction = superAdminAction
     }
   });
 
-export const updateSystemSettingsAction = superAdminAction
+export const updateSystemSettingsAction = protectedAction
   .metadata({ action: "system-settings.update" })
   .schema(
     z.object({
       settings: z.array(settingUpdateSchema).min(1),
     })
   )
-  .action(async ({ parsedInput }) => {
-    return requestGo<{ success: boolean; changedKeys: string[]; message: string }>("/api/system-settings", { settings: parsedInput.settings }, "PUT");
-    /*
-    try {
-      const result = await invokeOperation<{
-        success: boolean;
-        changedKeys: string[];
-      }>(
-        "settings.update",
-        { updates: parsedInput.settings },
-        createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-      );
+  .action(async ({ parsedInput }) =>
+    requestGo<{ success: boolean; changedKeys: string[]; message: string }>(
+      "/api/system-settings",
+      { settings: parsedInput.settings },
+      "PUT"
+    )
+  );
 
-      return {
-        success: result.success,
-        changedKeys: result.changedKeys,
-        message: "系统设置已保存",
-      };
-    } catch (error) {
-      throwSystemSettingsUpdateActionError(error);
-    }
-    */
-  });
-
-/** 保存或恢复网站 Logo；地址契约、权限与缓存副作用统一由 UOL 持有。 */
-export const setSiteLogoAction = superAdminAction
+/** 保存或恢复网站 Logo；地址契约、权限与缓存副作用由 Go 后端持有。 */
+export const setSiteLogoAction = protectedAction
   .metadata({ action: "system-settings.site-logo.set" })
   .schema(
     z
@@ -181,60 +155,31 @@ export const setSiteLogoAction = superAdminAction
       })
       .strict()
   )
-  .action(async ({ parsedInput }) => {
-    return requestGo<{ success: boolean; logoUrl: string; message: string }>("/api/system-settings/site-logo", parsedInput, "PUT");
-    /*
-    const result = await invokeOperation<{ logoUrl: string }>(
-      "settings.setSiteLogo",
+  .action(async ({ parsedInput }) =>
+    requestGo<{ success: boolean; logoUrl: string; message: string }>(
+      "/api/system-settings/site-logo",
       parsedInput,
-      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-    );
-    return {
-      ...result,
-      success: true,
-      message: parsedInput.logoUrl
-        ? "网站 Logo 已更新"
-        : "网站 Logo 已恢复为默认资源",
-    };
-    */
-  });
+      "PUT"
+    )
+  );
 
-export const importSystemSettingsFromEnvAction = superAdminAction
+export const importSystemSettingsFromEnvAction = protectedAction
   .metadata({ action: "system-settings.importEnv" })
   .schema(z.object({ overwrite: z.boolean().optional() }).optional())
-  .action(async ({ parsedInput }) => {
-    return requestGo<{ success: boolean; importedKeys: string[]; message: string }>("/api/system-settings/import-env", { overwrite: parsedInput?.overwrite ?? true }, "POST");
-    /*
-    const importedKeys = await importSystemSettingsFromEnv({
-      updatedBy: ctx.userId,
-      overwrite: parsedInput?.overwrite ?? true,
-    });
-    return {
-      success: true,
-      importedKeys,
-      message:
-        importedKeys.length > 0
-          ? `已导入 ${importedKeys.length} 个环境变量配置`
-          : "没有可导入的环境变量配置",
-    };
-    */
-  });
+  .action(async ({ parsedInput }) =>
+    requestGo<{ success: boolean; importedKeys: string[]; message: string }>(
+      "/api/system-settings/import-env",
+      { overwrite: parsedInput?.overwrite ?? true },
+      "POST"
+    )
+  );
 
-export const initializeSystemSettingsDefaultsAction = superAdminAction
+export const initializeSystemSettingsDefaultsAction = protectedAction
   .metadata({ action: "system-settings.initializeDefaults" })
-  .action(async () => {
-    return requestGo<{ success: boolean; initializedKeys: string[]; message: string }>("/api/system-settings/initialize-defaults", {}, "POST");
-    /*
-    const initializedKeys = await initializeMissingSystemSettingsDefaults({
-      updatedBy: ctx.userId,
-    });
-    return {
-      success: true,
-      initializedKeys,
-      message:
-        initializedKeys.length > 0
-          ? `已初始化 ${initializedKeys.length} 个默认配置`
-          : "默认配置已存在，无需初始化",
-    };
-    */
-  });
+  .action(async () =>
+    requestGo<{
+      success: boolean;
+      initializedKeys: string[];
+      message: string;
+    }>("/api/system-settings/initialize-defaults", {}, "POST")
+  );
