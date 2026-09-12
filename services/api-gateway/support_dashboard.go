@@ -676,11 +676,25 @@ func (b *backend) handleAdminAnalyticsUsers(w http.ResponseWriter, r *http.Reque
 		return e
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("query"))
-	if q == "" {
+	selected := strings.TrimSpace(r.URL.Query().Get("selectedUserId"))
+	if q == "" && selected == "" {
 		writeJSON(w, 200, map[string]any{"users": []any{}})
 		return nil
 	}
-	rows, e := b.db.Query(r.Context(), `SELECT id,name,email FROM "user" WHERE name ILIKE $1 OR email ILIKE $1 ORDER BY name LIMIT 20`, `%`+q+`%`)
+	limit := 20
+	if n, e := strconv.Atoi(r.URL.Query().Get("limit")); e == nil && n > 0 && n <= 50 {
+		limit = n
+	}
+	pattern := "%" + q + "%"
+	query := `SELECT id,name,email FROM "user" WHERE (name ILIKE $1 OR email ILIKE $1)`
+	args := []any{pattern}
+	if selected != "" {
+		query = `SELECT id,name,email FROM "user" WHERE id=$1`
+		args = []any{selected}
+	}
+	query += " ORDER BY name LIMIT $" + strconv.Itoa(len(args)+1)
+	args = append(args, limit)
+	rows, e := b.db.Query(r.Context(), query, args...)
 	if e != nil {
 		return e
 	}
