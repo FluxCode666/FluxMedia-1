@@ -5,6 +5,7 @@ package main
 // while workers can claim the queued rows independently of this process.
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -13,6 +14,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"os"
@@ -22,11 +27,13 @@ import (
 	"strings"
 	"time"
 
+	nativewebp "github.com/HugoSmits86/nativewebp"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
+	xdraw "golang.org/x/image/draw"
 )
 
 func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
@@ -740,10 +747,15 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	// A path width is accepted for parity with the Next route. Go currently
 	// serves the original object when image processing is unavailable; keeping
 	// the segment out of the object key is still essential for signed URLs.
+	thumbWidth := 0
 	if parts := strings.Split(key, "/"); len(parts) > 1 && strings.HasPrefix(parts[0], "w") {
 		if _, parseErr := strconv.Atoi(strings.TrimPrefix(parts[0], "w")); parseErr == nil {
+			thumbWidth, _ = strconv.Atoi(strings.TrimPrefix(parts[0], "w"))
 			key = strings.Join(parts[1:], "/")
 		}
+	}
+	if thumbWidth != 0 && (thumbWidth < 16 || thumbWidth > 1280) {
+		return &apiError{400, "INVALID_THUMBNAIL_WIDTH", "Invalid thumbnail width"}
 	}
 	if bucket == "" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") {
 		return &apiError{400, "INVALID_PATH", "Invalid storage path"}
@@ -754,6 +766,9 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	domain := storageObjectDomain(bucket, key, systemBucket, generationsBucket)
 	if domain == "" {
 		return &apiError{400, "INVALID_PATH", "Invalid public asset key"}
+	}
+	if thumbWidth != 0 && domain != "generations" && domain != "avatars" {
+		return &apiError{400, "INVALID_THUMBNAIL", "Public asset thumbnails are not allowed"}
 	}
 	if domain == "generations" {
 		if err := b.verifyStorageSignature(r, bucket, key); err != nil {
@@ -771,7 +786,15 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 		}
 		return err
 	}
+	if thumbWidth > 0 {
+		if thumb, thumbErr := storageThumbnail(data, thumbWidth); thumbErr == nil {
+			data = thumb
+		}
+	}
 	contentType := "application/octet-stream"
+	if thumbWidth > 0 {
+		contentType = "image/webp"
+	}
 	switch strings.ToLower(filepath.Ext(key)) {
 	case ".png":
 		contentType = "image/png"
@@ -804,6 +827,32 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	w.WriteHeader(200)
 	_, err = w.Write(data)
 	return err
+}
+
+// storageThumbnail decodes a source image, scales it down while preserving
+// aspect ratio, and encodes a lossless WebP thumbnail. Unsupported media is
+// returned to the caller as an error so the storage endpoint can safely fall
+// back to the original bytes, matching the historical Next route behavior.
+func storageThumbnail(data []byte, width int) ([]byte, error) {
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	bounds := src.Bounds()
+	if bounds.Dx() <= 0 || bounds.Dy() <= 0 || bounds.Dx() <= width {
+		return data, nil
+	}
+	height := bounds.Dy() * width / bounds.Dx()
+	if height < 1 {
+		height = 1
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, width, height))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+	var out bytes.Buffer
+	if err := nativewebp.Encode(&out, dst, nil); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // readStorageObject reads from the configured S3-compatible provider when an

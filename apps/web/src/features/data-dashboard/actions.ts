@@ -10,12 +10,11 @@ import {
   type DataDashboardOutput,
   dataDashboardInputSchema,
 } from "@repo/shared/analytics/contracts";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { logError } from "@repo/shared/logger";
 import { protectedAction } from "@repo/shared/safe-action";
 import { OperationError } from "@repo/shared/uol";
+import { requestGoJson } from "@/server/go-backend-client";
 
-import { loadDataDashboardPageData } from "./data-dashboard-page-data";
 
 /** 客户端可区分且不携带服务端异常详情的刷新结果。 */
 export type DataDashboardActionResult =
@@ -52,14 +51,13 @@ function mapOperationError(error: OperationError): DataDashboardActionResult {
 export const refreshDataDashboardAction = protectedAction
   .metadata({ action: "analytics.getMyDataDashboard" })
   .schema(dataDashboardInputSchema)
-  .action(async ({ ctx, parsedInput }): Promise<DataDashboardActionResult> => {
+  .action(async ({ parsedInput }): Promise<DataDashboardActionResult> => {
     try {
-      const role = await getUserRoleById(ctx.userId);
-      const snapshot = await loadDataDashboardPageData({
-        userId: ctx.userId,
-        role,
-        rangeInput: parsedInput,
-      });
+      const result = await requestGoJson<{ status: "ready"; snapshot: DataDashboardOutput }>(
+        "/api/analytics/data-dashboard",
+        { method: "POST", body: JSON.stringify(parsedInput) }
+      );
+      const snapshot = result.snapshot;
       return { status: "ready", snapshot };
     } catch (error) {
       if (error instanceof OperationError) {

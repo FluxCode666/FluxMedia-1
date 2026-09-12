@@ -124,7 +124,7 @@ describe("image backend pool actions", () => {
       sample: { model: "seedance2" },
     };
     const output = { preview: { body: { model: "seedance2" } } };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (testApiUpstreamAdapterAction as unknown as MockAction)({
@@ -132,11 +132,9 @@ describe("image backend pool actions", () => {
         ctx: { userId: "admin-1", role: "admin" },
       })
     ).resolves.toBe(output);
-    expect(mocks.ensureUolInitialized).toHaveBeenCalledOnce();
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.testApiUpstreamAdapter",
-      input,
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/script-runtime/test",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(input) })
     );
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
@@ -153,7 +151,7 @@ describe("image backend pool actions", () => {
       saturationCount: 0,
       replacementCount: 0,
     };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (getApiUpstreamRuntimeDiagnosticsAction as unknown as MockAction)({
@@ -161,14 +159,9 @@ describe("image backend pool actions", () => {
         ctx: { userId: "super-admin-1", role: "super_admin" },
       })
     ).resolves.toBe(output);
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "pool.getApiUpstreamRuntimeDiagnostics",
-      {},
-      {
-        type: "user",
-        userId: "super-admin-1",
-        role: "super_admin",
-      }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/image-backend/script-runtime/diagnostics",
+      { method: "GET" }
     );
   });
 
