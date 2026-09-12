@@ -317,6 +317,7 @@ func (b *backend) router() *http.ServeMux {
 	b.registerPaymentRoutes(mux)
 	b.registerMigratedRoutes(mux)
 	b.registerSystemSettingsRoutes(mux)
+	b.registerMarketingSLARoutes(mux)
 	b.registerNewsletterRoutes(mux)
 	b.registerSupportDashboardRoutes(mux)
 	b.registerAdminUserRoutes(mux)
