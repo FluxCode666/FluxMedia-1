@@ -6,47 +6,14 @@
  * 使用方：钱包页面。各 Action 只初始化 UOL、从 session 构造本人 Principal
  * 并调用 operation；不读取数据库、不合并错误，也不接受 userId。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import type { UserPaymentOrderListOutput } from "@repo/shared/payment/user-order-contract";
 import { protectedAction } from "@repo/shared/safe-action";
-import { invokeOperation, type Principal } from "@repo/shared/uol";
-import { ensureUolInitialized } from "@/server/uol-init";
 import type {
   WalletBalanceSnapshot,
   WalletTopUpOptions,
 } from "./wallet-page-data";
 import { loadWalletPageData } from "./wallet-page-data";
 import { requestGoJson } from "@/server/go-backend-client";
-
-type WalletOperationOutputs = {
-  "credits.getMyBalance": WalletBalanceSnapshot;
-  "credits.getTopUpOptions": WalletTopUpOptions;
-  "payment.listMyRecentOrders": UserPaymentOrderListOutput;
-};
-type WalletOperationName = keyof WalletOperationOutputs;
-
-/** 初始化 UOL 并为当前 session 构造一次 user Principal。 */
-async function createMyWalletPrincipal(userId: string): Promise<Principal> {
-  await ensureUolInitialized();
-  const role = await getUserRoleById(userId);
-  return { type: "user", userId, role };
-}
-
-/** 使用已验证的 user Principal 调用类型绑定的无输入钱包 operation。 */
-async function invokeWalletOperation<N extends WalletOperationName>(
-  name: N,
-  principal: Principal
-): Promise<WalletOperationOutputs[N]> {
-  return invokeOperation<WalletOperationOutputs[N]>(name, {}, principal);
-}
-
-/** 为单项重试 Action 构造当前 Principal 后调用钱包 operation。 */
-async function invokeMyWalletOperation<N extends WalletOperationName>(
-  name: N,
-  userId: string
-): Promise<WalletOperationOutputs[N]> {
-  return invokeWalletOperation(name, await createMyWalletPrincipal(userId));
-}
 
 /** 读取当前用户钱包余额快照。 */
 export const getMyWalletBalanceAction = protectedAction
@@ -63,8 +30,8 @@ export const getMyWalletTopUpOptionsAction = protectedAction
 /** 读取当前用户最近创建的积分充值订单。 */
 export const getMyWalletRecentPaymentOrdersAction = protectedAction
   .metadata({ action: "payment.listMyRecentOrders" })
-  .action(async ({ ctx }) =>
-    invokeMyWalletOperation("payment.listMyRecentOrders", ctx.userId)
+  .action(async () =>
+    requestGoJson<UserPaymentOrderListOutput>("/api/credits/payment-orders")
   );
 
 /**
@@ -74,14 +41,12 @@ export const getMyWalletRecentPaymentOrdersAction = protectedAction
  */
 export const getMyWalletPageDataAction = protectedAction
   .metadata({ action: "wallet.getMyPageData" })
-  .action(async ({ ctx }) => {
-    const principal = await createMyWalletPrincipal(ctx.userId);
-    return loadWalletPageData({
-      loadBalance: () =>
-        invokeWalletOperation("credits.getMyBalance", principal),
+  .action(async () =>
+    loadWalletPageData({
+      loadBalance: () => requestGoJson<WalletBalanceSnapshot>("/api/credits/balance"),
       loadRecentOrders: () =>
-        invokeWalletOperation("payment.listMyRecentOrders", principal),
+        requestGoJson<UserPaymentOrderListOutput>("/api/credits/payment-orders"),
       loadTopUp: () =>
         requestGoJson<WalletTopUpOptions>("/api/credits/top-up/options"),
-    });
-  });
+    })
+  );
