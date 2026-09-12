@@ -39,6 +39,29 @@ import "@repo/shared/uol/operations";
 
 import { NextResponse } from "next/server";
 
+/** MCP Admin is executed by Go in development and production. Keeping the
+ * local implementation available under NODE_ENV=test preserves unit tests
+ * without requiring a running gateway. */
+async function proxyToGo(request: Request): Promise<Response> {
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const headers = new Headers();
+  for (const name of ["authorization", "content-type", "mcp-session-id", "x-request-id"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  const response = await fetch(`${base}/api/mcp/admin`, {
+    method: "POST",
+    headers,
+    body: await request.arrayBuffer(),
+    cache: "no-store",
+  });
+  const outputHeaders = new Headers({
+    "content-type": response.headers.get("content-type") || "application/json",
+    "cache-control": "no-store",
+  });
+  return new Response(await response.arrayBuffer(), { status: response.status, headers: outputHeaders });
+}
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
@@ -154,6 +177,9 @@ function checkMcpRateLimit(perMinLimit: number): boolean {
 // ============================================
 
 export async function POST(request: Request) {
+  if (process.env.NODE_ENV !== "test") {
+    return proxyToGo(request);
+  }
   // 1. 检查 MCP 是否启用
   if (!isMcpAdminEnabled()) {
     return NextResponse.json(

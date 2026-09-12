@@ -46,6 +46,28 @@ import { ensureUolInitialized } from "@/server/uol-init";
 // 副作用导入：确保所有 UOL 操作已注册到 registry
 import "@repo/shared/uol/operations";
 
+/** MCP 生产请求由 Go 网关统一鉴权、限流并执行工具；测试环境保留本地
+ * handler 以便不依赖运行中的数据库和网关进程。 */
+async function proxyToGo(request: Request): Promise<Response> {
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const headers = new Headers();
+  for (const name of ["authorization", "content-type", "mcp-session-id", "x-request-id"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  const response = await fetch(`${base}/api/mcp/user`, {
+    method: "POST",
+    headers,
+    body: await request.arrayBuffer(),
+    cache: "no-store",
+  });
+  const outputHeaders = new Headers({
+    "content-type": response.headers.get("content-type") || "application/json",
+    "cache-control": "no-store",
+  });
+  return new Response(await response.arrayBuffer(), { status: response.status, headers: outputHeaders });
+}
+
 // ============================================
 // 鉴权绑定（进程启动时执行一次）
 // ============================================
@@ -149,6 +171,9 @@ const MCP_USER_AGGREGATE_RATE_LIMIT_PREFIX = "mcp-user-account:";
 // ============================================
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  if (process.env.NODE_ENV !== "test") {
+    return proxyToGo(request) as Promise<NextResponse>;
+  }
   // 1. 功能开关检查
   if (!isMcpUserEnabled()) {
     return NextResponse.json(

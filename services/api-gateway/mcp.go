@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -145,6 +146,7 @@ func (b *backend) handleMCPUserCall(w http.ResponseWriter, r *http.Request, q mc
 		return nil
 	}
 	var out any
+	var callErr error
 	switch name {
 	case "image.generate":
 		out, _ = b.createImageTask(r, &apiPrincipal{UserID: p.UserID, KeyID: p.KeyID}, args, "generate")
@@ -157,11 +159,101 @@ func (b *backend) handleMCPUserCall(w http.ResponseWriter, r *http.Request, q mc
 	case "video.listCapabilities":
 		out = map[string]any{"object": "list", "data": videoModelIDs}
 	case "image.listMyHistoryRecords":
-		out = map[string]any{"records": []any{}, "items": []any{}, "total": 0}
+		out, callErr = b.mcpUserHistory(r, p.UserID, args)
+		if callErr != nil {
+			writeJSON(w, 200, mcpResult(q.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": `{"error":"internal_error","message":"Unable to read history"}`}}, "isError": true}))
+			return nil
+		}
 	}
 	bts, _ := json.Marshal(out)
 	writeJSON(w, 200, mcpResult(q.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": string(bts)}}, "isError": false}))
 	return nil
+}
+
+// mcpUserHistory is the MCP-safe projection of a user's unified image/video
+// history. It intentionally queries by the authenticated principal only and
+// omits storage keys, metadata and other internal fields from the response.
+func (b *backend) mcpUserHistory(r *http.Request, userID string, args map[string]json.RawMessage) (map[string]any, error) {
+	limit := 20
+	for _, key := range []string{"pageSize", "limit"} {
+		var n int
+		if raw, ok := args[key]; ok && json.Unmarshal(raw, &n) == nil && n > 0 {
+			if n > 50 {
+				n = 50
+			}
+			limit = n
+			break
+		}
+	}
+	var imageRows []map[string]any
+	rows, err := b.db.Query(r.Context(), `SELECT id,user_id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		v := generationDTO{}
+		if err := rows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.RevisedPrompt, &v.Model, &v.Size, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		imageRows = append(imageRows, adminImageHistoryRecord(v, ""))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	videoRows, err := b.db.Query(r.Context(), `SELECT id,user_id,prompt,model,duration_seconds,aspect_ratio,resolution,status,storage_key,storage_bucket,credits_consumed,error,metadata,input_manifest,created_at,completed_at FROM video_generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for videoRows.Next() {
+		v := generationDTO{}
+		var duration int
+		var ratio, resolution string
+		var manifest any
+		if err := videoRows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.Model, &duration, &ratio, &resolution, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &manifest, &v.CreatedAt, &v.CompletedAt); err != nil {
+			videoRows.Close()
+			return nil, err
+		}
+		imageRows = append(imageRows, adminVideoHistoryRecord(v, "", duration, ratio, resolution, manifest))
+	}
+	if err := videoRows.Err(); err != nil {
+		videoRows.Close()
+		return nil, err
+	}
+	videoRows.Close()
+	sort.SliceStable(imageRows, func(i, j int) bool {
+		li, _ := imageRows[i]["createdAt"].(string)
+		lj, _ := imageRows[j]["createdAt"].(string)
+		if li == lj {
+			a, _ := imageRows[i]["id"].(string)
+			b, _ := imageRows[j]["id"].(string)
+			return a > b
+		}
+		return li > lj
+	})
+	if len(imageRows) > limit {
+		imageRows = imageRows[:limit]
+	}
+	for _, row := range imageRows {
+		delete(row, "userId")
+		delete(row, "userEmail")
+		delete(row, "backendAccount")
+		delete(row, "submissionAttempts")
+		delete(row, "storageKey")
+		delete(row, "storageBucket")
+		delete(row, "metadata")
+	}
+	models := make([]string, 0, len(imageRows))
+	seen := map[string]bool{}
+	for _, row := range imageRows {
+		if model, ok := row["model"].(string); ok && model != "" && !seen[model] {
+			seen[model] = true
+			models = append(models, model)
+		}
+	}
+	return map[string]any{"asOf": time.Now().UTC().Format(time.RFC3339Nano), "page": 1, "pageSize": limit, "totalCount": len(imageRows), "records": imageRows, "modelOptions": models, "nextCursor": nil, "previousCursor": nil}, nil
 }
 
 func (b *backend) handleMCPAdmin(w http.ResponseWriter, r *http.Request) error {
