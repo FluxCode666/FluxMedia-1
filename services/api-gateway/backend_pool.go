@@ -179,6 +179,10 @@ func (b *backend) backendPoolMembers(r *http.Request) ([]any, error) {
 		if cfg == nil {
 			cfg = map[string]any{}
 		}
+		// Adapter versions are deliberately secret-free. Older rows may have
+		// been written before the Go boundary existed, so sanitize defensively.
+		delete(cfg, "apiKey")
+		delete(cfg, "expectedCurrentVersionId")
 		cfg["hasApiKey"] = hasKey
 		out = append(out, map[string]any{"id": id, "name": name, "type": "api", "groupIds": gids, "supportedModelIds": mids, "supportedResolutionsByModel": jsonValue(resolutions, map[string]any{}), "contentSafetyEnabled": safety, "isEnabled": enabled, "alwaysActive": always, "failureCooldownEnabled": cooldown, "priority": priority, "concurrency": concurrency, "status": status, "healthStatus": health, "inflightCount": 0, "leaseAcquiredCount": leaseCount, "createdAt": created.UTC().Format(time.RFC3339Nano), "lastAcquiredAt": timeValue(acquired), "lastUsedAt": timeValue(used), "lastError": lastError, "lastErrorAt": timeValue(errorAt), "credentialHealthStatus": nil, "config": cfg})
 	}
@@ -329,6 +333,7 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 		return invalid("API 成员缺少上游地址")
 	}
 	delete(config, "apiKey")
+	delete(config, "expectedCurrentVersionId")
 	configuration, err := json.Marshal(config)
 	if err != nil {
 		return invalid("API 成员配置无效")
