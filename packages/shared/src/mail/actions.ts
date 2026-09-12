@@ -5,7 +5,7 @@ import { z } from "zod";
 import { actionClient } from "../safe-action";
 
 async function requestGo<T>(path: string, body: unknown): Promise<T> {
-  const base = (process.env.GO_BACKEND_URL || process.env.BETTER_AUTH_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
   const cookieHeader = (await cookies()).getAll().map((c) => `${c.name}=${c.value}`).join("; ");
   const response = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(cookieHeader ? { cookie: cookieHeader } : {}) }, body: JSON.stringify(body), cache: "no-store" });
   const payload = (await response.json().catch(() => null)) as T & { message?: string; error?: { message?: string } };

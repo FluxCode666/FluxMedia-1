@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { protectedAction } from "../safe-action";
 async function go<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const base = (process.env.GO_BACKEND_URL || process.env.BETTER_AUTH_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
   const cookie = (await cookies()).getAll().map(c => `${c.name}=${c.value}`).join("; ");
   const headers = new Headers(init.headers); if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json"); if (cookie) headers.set("cookie", cookie);
   const res = await fetch(`${base}${path}`, { ...init, headers, cache: "no-store" });

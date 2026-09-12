@@ -19,7 +19,7 @@
 import { cookies } from "next/headers";
 
 async function go<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const base = (process.env.GO_BACKEND_URL || process.env.BETTER_AUTH_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
   const cookie = (await cookies()).getAll().map((item) => `${item.name}=${item.value}`).join("; ");
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
