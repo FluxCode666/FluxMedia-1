@@ -73,9 +73,11 @@ async function loadBalanceThroughUol(input: {
 function sanitizeRecentCreationsError(error: unknown): Error {
   if (error instanceof Error && error.cause instanceof Error) {
     const cause = error.cause as Error & { code?: string };
-    const safe = new Error(cause.message);
-    if (cause.code) Object.assign(safe, { code: cause.code });
-    return safe;
+    return {
+      name: "Error",
+      message: cause.message,
+      ...(cause.code ? { code: cause.code } : {}),
+    } as Error;
   }
   return new Error(
     error instanceof Error ? error.message : "Recent creations query failed"
