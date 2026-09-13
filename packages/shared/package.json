@@ -16,6 +16,7 @@
     "./auth/registration-verification": "./src/auth/registration-verification.ts",
     "./safe-action": "./src/safe-action.ts",
     "./http/client": "./src/http/client.ts",
+    "./http/go-backend": "./src/http/go-backend.ts",
     "./http/use-json-action": "./src/http/use-json-action.ts",
     "./database-errors": "./src/database-errors.ts",
     "./database-error-messages": "./src/database-error-messages.ts",

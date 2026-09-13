@@ -1,13 +1,10 @@
 /**
  * 服务端展示时区解析与用户偏好持久化。
  *
- * 使用方包括 Dashboard Server Components 与 user-auth UOL 操作。部署默认值只读取
- * APP_TIME_ZONE 环境变量；用户偏好存于 user.time_zone，数据库时间本身仍统一为 UTC。
+ * 使用方包括 Dashboard Server Components 与 user-auth UOL 操作。部署默认值由 Go
+ * 后端的运行时设置提供；用户偏好也由 Go API 读取和持久化，数据库时间本身仍统一为 UTC。
  */
-import { db } from "@repo/database";
-import { user } from "@repo/database/schema";
-import { eq } from "drizzle-orm";
-
+import { requestGoBackendJson } from "../http/go-backend";
 import {
   isValidTimeZone,
   normalizeUserTimeZonePreference,
@@ -39,17 +36,30 @@ export function getAppTimeZone(): string {
 export async function getUserTimeZoneSettings(
   userId: string
 ): Promise<UserTimeZoneSettings> {
-  const [row] = await db
-    .select({ timeZone: user.timeZone })
-    .from(user)
-    .where(eq(user.id, userId))
-    .limit(1);
-  const defaultTimeZone = getAppTimeZone();
-  const timeZone = normalizeUserTimeZonePreference(row?.timeZone);
+  const profile = await requestGoBackendJson<{
+    id?: string;
+    timeZone?: string | null;
+    defaultTimeZone?: string | null;
+  }>("/api/user/profile");
+  // The Go endpoint is intentionally scoped to the authenticated session. A
+  // mismatched id means a caller attempted to resolve another user's setting;
+  // preserving the old safe fallback avoids exposing that user's preference.
+  if (profile.id && profile.id !== userId) {
+    return {
+      timeZone: null,
+      defaultTimeZone: getAppTimeZone(),
+      effectiveTimeZone: getAppTimeZone(),
+    };
+  }
+  const rowTimeZone = normalizeUserTimeZonePreference(profile.timeZone);
+  const defaultTimeZone = resolveDisplayTimeZone(
+    null,
+    profile.defaultTimeZone || process.env.APP_TIME_ZONE
+  );
   return {
-    timeZone,
+    timeZone: rowTimeZone,
     defaultTimeZone,
-    effectiveTimeZone: resolveDisplayTimeZone(timeZone, defaultTimeZone),
+    effectiveTimeZone: resolveDisplayTimeZone(rowTimeZone, defaultTimeZone),
   };
 }
 
@@ -75,13 +85,22 @@ export async function setUserTimeZone(
   userId: string,
   timeZone: string | null
 ): Promise<string | null> {
+  // The Go endpoint scopes the mutation to the authenticated session. Keep
+  // the parameter in the public contract for callers that already pass it.
+  void userId;
   const normalized = timeZone?.trim() || null;
   if (normalized !== null && !isValidTimeZone(normalized)) {
     throw new RangeError("无效的 IANA 时区");
   }
-  await db
-    .update(user)
-    .set({ timeZone: normalized, updatedAt: new Date() })
-    .where(eq(user.id, userId));
+  const result = await requestGoBackendJson<{
+    data?: { timeZone?: string | null };
+  }>("/api/user/time-zone", {
+    method: "POST",
+    body: JSON.stringify({ timeZone: normalized }),
+  });
+  const returned = result.data?.timeZone;
+  if (returned !== undefined) {
+    return normalizeUserTimeZonePreference(returned);
+  }
   return normalized;
 }

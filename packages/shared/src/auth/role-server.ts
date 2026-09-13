@@ -1,6 +1,4 @@
-import { db, user } from "@repo/database";
-import { eq } from "drizzle-orm";
-
+import { requestGoBackendJson } from "../http/go-backend";
 import { normalizeUserRole, type AppUserRole } from "./roles";
 
 /**
@@ -9,14 +7,12 @@ import { normalizeUserRole, type AppUserRole } from "./roles";
  *
  * @param userId - 需要查询的用户主键。
  * @returns 已规范化的应用角色；用户不存在或角色非法时安全降级为 user。
- * @sideEffects 只读数据库。首次超管提权由 bootstrap 流程承担，避免读路径暗含写入。
+ * @sideEffects 只读当前 Go 会话；首次超管提权由 bootstrap 流程承担，避免读路径暗含写入。
  */
 export async function getUserRoleById(userId: string): Promise<AppUserRole> {
-  const [record] = await db
-    .select({ role: user.role })
-    .from(user)
-    .where(eq(user.id, userId))
-    .limit(1);
-
-  return normalizeUserRole(record?.role);
+  const payload = await requestGoBackendJson<{
+    user?: { id?: string; role?: string | null } | null;
+  }>("/api/session/current");
+  if (!payload?.user || payload.user.id !== userId) return "user";
+  return normalizeUserRole(payload.user.role);
 }
