@@ -786,11 +786,11 @@ func (b *backend) handleImagesExpireJob(w http.ResponseWriter, r *http.Request) 
 	if !b.cronAuthorized(r) {
 		return &apiError{401, "UNAUTHORIZED", "Unauthorized"}
 	}
-	result, err := b.db.Exec(r.Context(), `UPDATE generation SET status='failed',error='Generation timed out',completed_at=now() WHERE status='pending' AND created_at < now()-interval '30 minutes'`)
+	expired, err := b.expireStaleImages(r.Context())
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"success": true, "expired": result.RowsAffected()})
+	writeJSON(w, 200, map[string]any{"success": true, "expired": expired})
 	return nil
 }
 
