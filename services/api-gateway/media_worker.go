@@ -37,7 +37,10 @@ type mediaWorker struct {
 }
 
 func (b *backend) startMediaWorker(parent context.Context) *mediaWorker {
-	if strings.EqualFold(strings.TrimSpace(osGetenv("GO_MEDIA_WORKER_ENABLED")), "false") {
+	// The Go executor is opt-in until every provider protocol and billing CAS is
+	// enabled in production. This guard prevents a partial worker from stealing
+	// tasks from the still-authoritative Next worker during rollout.
+	if !strings.EqualFold(strings.TrimSpace(osGetenv("GO_MEDIA_WORKER_ENABLED")), "true") {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(parent)
