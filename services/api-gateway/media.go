@@ -805,14 +805,17 @@ func (b *backend) handleMediaRecoveryJob(w http.ResponseWriter, r *http.Request)
 	}
 	queue, err := b.recoverMediaQueue(r.Context())
 	if err != nil {
+		b.logger.ErrorContext(r.Context(), "media recovery queue failed", "error", err)
 		return err
 	}
 	delivered, callbackErr := b.deliverVideoCallbacks(r.Context())
 	if callbackErr != nil {
+		b.logger.ErrorContext(r.Context(), "media recovery callback delivery failed", "error", callbackErr)
 		return callbackErr
 	}
 	deleted, cleanupErr := b.cleanupVideoInputs(r.Context())
 	if cleanupErr != nil {
+		b.logger.ErrorContext(r.Context(), "media recovery input cleanup failed", "error", cleanupErr)
 		return cleanupErr
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "queueRecovered": queue, "callbacksDelivered": delivered, "inputsDeleted": deleted})
