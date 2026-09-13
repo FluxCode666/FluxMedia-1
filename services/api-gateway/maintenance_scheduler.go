@@ -30,6 +30,7 @@ const (
 	maintenanceImageInterval   = 5 * time.Minute
 	maintenanceCreditInterval  = 24 * time.Hour
 	maintenancePaymentInterval = time.Minute
+	maintenanceExportInterval  = time.Hour
 	maintenanceMediaInterval   = time.Minute
 )
 
@@ -68,10 +69,12 @@ func (s *maintenanceScheduler) loop(ctx context.Context) {
 	imageTicker := time.NewTicker(maintenanceImageInterval)
 	creditTicker := time.NewTicker(maintenanceCreditInterval)
 	paymentTicker := time.NewTicker(maintenancePaymentInterval)
+	exportTicker := time.NewTicker(maintenanceExportInterval)
 	mediaTicker := time.NewTicker(maintenanceMediaInterval)
 	defer imageTicker.Stop()
 	defer creditTicker.Stop()
 	defer paymentTicker.Stop()
+	defer exportTicker.Stop()
 	defer mediaTicker.Stop()
 
 	// Run payment recovery once at startup; image/credit jobs wait for their
@@ -87,9 +90,35 @@ func (s *maintenanceScheduler) loop(ctx context.Context) {
 			s.runImages(ctx)
 		case <-creditTicker.C:
 			s.runCredits(ctx)
+		case <-exportTicker.C:
+			s.runExports(ctx)
 		case <-mediaTicker.C:
 			s.runMedia(ctx)
 		}
+	}
+}
+
+// runExports expires completed export objects after their retention window.
+// The row remains auditable while the local object is removed before the CAS
+// update, so a failed delete never presents a dangling download as expired.
+func (s *maintenanceScheduler) runExports(ctx context.Context) {
+	rows, err := s.backend.db.Query(ctx, `SELECT id,object_bucket,object_key FROM operations_export_task WHERE status='completed' AND expires_at IS NOT NULL AND expires_at < now() ORDER BY expires_at LIMIT 100`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, bucket, key string
+		if err := rows.Scan(&id, &bucket, &key); err != nil {
+			return
+		}
+		if bucket != "" && key != "" {
+			path := filepath.Join(s.backend.config.storagePath, bucket, filepath.FromSlash(key))
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				continue
+			}
+		}
+		_, _ = s.backend.db.Exec(ctx, `UPDATE operations_export_task SET status='expired',object_deleted_at=now(),updated_at=now() WHERE id=$1 AND status='completed' AND expires_at < now()`, id)
 	}
 }
 
@@ -230,7 +259,7 @@ func (b *backend) cleanupVideoInputs(ctx context.Context) (int, error) {
 		token := newRequestID()
 		var id, userID, videoID, attemptID, key, bucket string
 		var count int
-		err := b.db.QueryRow(ctx, `WITH expired AS (DELETE FROM video_task_staging_reservation WHERE expires_at<=now() RETURNING task_id), candidate AS (SELECT c.id FROM video_input_cleanup c WHERE c.next_attempt_at<=now() AND (c.claim_expires_at IS NULL OR c.claim_expires_at<=now()) AND NOT EXISTS (SELECT 1 FROM video_task_staging_reservation r WHERE r.task_id=c.video_id AND r.user_id=c.user_id AND r.reservation_token=c.attempt_id) ORDER BY c.next_attempt_at,c.created_at,c.id LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE video_input_cleanup c SET claim_token=$1,claim_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE c.id=candidate.id RETURNING c.id,c.user_id,c.video_id,c.attempt_id,c.storage_key,c.storage_bucket,c.attempt_count`, token).Scan(&id, &userID, &videoID, &attemptID, &key, &bucket, &count)
+		err := b.db.QueryRow(ctx, `WITH expired AS (DELETE FROM video_task_staging_reservation WHERE expires_at<=now() RETURNING task_id), candidate AS (SELECT c.id FROM video_input_cleanup c WHERE c.next_attempt_at<=now() AND (c.claim_expires_at IS NULL OR c.claim_expires_at<=now()) AND ((c.reason='orphan' AND NOT EXISTS (SELECT 1 FROM video_generation v WHERE v.id=c.video_id AND v.user_id=c.user_id)) OR (c.reason='lifecycle_delete' AND EXISTS (SELECT 1 FROM video_generation v JOIN "user" u ON u.id=v.user_id WHERE v.id=c.video_id AND v.user_id=c.user_id AND v.stage IN ('completed','failed') AND u.banned=true AND u.banned_reason='account_deleted'))) AND NOT EXISTS (SELECT 1 FROM video_task_staging_reservation r WHERE r.task_id=c.video_id AND r.user_id=c.user_id AND r.reservation_token=c.attempt_id) ORDER BY c.next_attempt_at,c.created_at,c.id LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE video_input_cleanup c SET claim_token=$1,claim_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE c.id=candidate.id RETURNING c.id,c.user_id,c.video_id,c.attempt_id,c.storage_key,c.storage_bucket,c.attempt_count`, token).Scan(&id, &userID, &videoID, &attemptID, &key, &bucket, &count)
 		if errors.Is(err, pgx.ErrNoRows) {
 			break
 		}
