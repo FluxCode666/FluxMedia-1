@@ -34,6 +34,7 @@ import "@/server/uol-bindings/payment-webhooks";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/referrals";
 import "@/server/uol-bindings/video-generation";
+import "@/server/uol-bindings/user-auth";
 import "@/server/site-branding-binding";
 
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";

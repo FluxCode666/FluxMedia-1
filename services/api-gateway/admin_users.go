@@ -25,6 +25,7 @@ func (b *backend) registerAdminUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/grant", b.endpoint(b.handleAdminUserGrant))
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/adjust", b.endpoint(b.handleAdminUserAdjust))
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/status", b.endpoint(b.handleAdminUserCreditsStatus))
+	mux.HandleFunc("POST /api/admin/users/{id}/external-api-key-status", b.endpoint(b.handleAdminUserExternalAPIKeyStatus))
 	mux.HandleFunc("POST /api/admin/api-keys/{keyId}/status", b.endpoint(b.handleAdminUserKeyStatus))
 	mux.HandleFunc("POST /api/moderation/users/{id}/policy", b.endpoint(b.handleAdminUserModeration))
 	mux.HandleFunc("POST /api/admin/users/{id}/concurrency", b.endpoint(b.handleAdminUserConcurrency))
@@ -414,7 +415,34 @@ func (b *backend) handleAdminUserCreditsStatus(w http.ResponseWriter, r *http.Re
 		return e
 	}
 	b.auditAdmin(r.Context(), s.User.ID, id, "credits.status", in.Reason, nil, map[string]any{"status": in.Status})
-	writeJSON(w, 200, map[string]string{"message": "积分账户状态已更新"})
+	writeJSON(w, 200, map[string]any{"success": true, "message": "积分账户状态已更新"})
+	return nil
+}
+
+// handleAdminUserExternalAPIKeyStatus changes all external keys owned by one
+// user. The UOL user operation is intentionally user-scoped; the key-scoped
+// endpoint remains available for the admin key table.
+func (b *backend) handleAdminUserExternalAPIKeyStatus(w http.ResponseWriter, r *http.Request) error {
+	id := r.PathValue("id")
+	s, err := b.adminTarget(r, false, id)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Enabled *bool  `json:"externalApiKeyEnabled"`
+		Reason  string `json:"reason"`
+	}
+	if err = decodeBody(r, &in); err != nil {
+		return err
+	}
+	if in.Enabled == nil {
+		return invalid("externalApiKeyEnabled is required")
+	}
+	if _, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET is_active=$1,updated_at=now() WHERE user_id=$2`, *in.Enabled, id); err != nil {
+		return err
+	}
+	b.auditAdmin(r.Context(), s.User.ID, id, "external_api_key.user_status", in.Reason, nil, map[string]any{"isActive": *in.Enabled})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "用户 API Key 状态已更新"})
 	return nil
 }
 func (b *backend) handleAdminUserKeyStatus(w http.ResponseWriter, r *http.Request) error {
