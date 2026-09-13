@@ -134,6 +134,11 @@ func (b *backend) confirmPaymentWorkItem(ctx context.Context, orderID, provider,
 	if _, err := tx.Exec(ctx, `INSERT INTO payment_lifecycle_event(id,payment_order_id,event_type,source_ref,occurred_at,recorded_at,timestamp_source,provider) VALUES($1,$2,'payment_confirmed',$3,now(),now(),'server_received',$4) ON CONFLICT(payment_order_id,event_type,source_ref) DO NOTHING`, stablePaymentEventID(orderID, "payment_confirmed", eventRef), orderID, eventRef, provider); err != nil {
 		return "", err
 	}
+	if provider == "epay" {
+		if _, err := tx.Exec(ctx, `UPDATE epay_order SET status='fulfilling',updated_at=now() WHERE out_trade_no=$1 AND status IN ('pending','fulfilling')`, strings.TrimPrefix(sourceRef, "epay:")); err != nil {
+			return "", err
+		}
+	}
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
@@ -309,6 +314,9 @@ func (b *backend) finishPaymentFulfillment(ctx context.Context, item *paymentFul
 			return "superseded", nil
 		}
 		_, _ = b.db.Exec(ctx, `UPDATE payment_order SET status='failed',updated_at=now() WHERE id=$1 AND status='fulfilling'`, item.PaymentOrderID)
+		if item.Provider == "epay" {
+			_, _ = b.db.Exec(ctx, `UPDATE epay_order SET status='failed',updated_at=now() WHERE out_trade_no=$1`, strings.TrimPrefix(item.CreditSourceRef, "epay:"))
+		}
 		_, _ = b.db.Exec(ctx, `INSERT INTO payment_lifecycle_event(id,payment_order_id,event_type,source_ref,occurred_at,recorded_at,timestamp_source,provider) VALUES($1,$2,'fulfillment_failed_terminal',$3,now(),now(),'server_received',$4) ON CONFLICT(payment_order_id,event_type,source_ref) DO NOTHING`, stablePaymentEventID(item.PaymentOrderID, "fulfillment_failed_terminal", "work:"+item.ID+":terminal"), item.PaymentOrderID, "work:"+item.ID+":terminal", item.Provider)
 		return "failed_terminal", nil
 	}
@@ -319,6 +327,9 @@ func (b *backend) finishPaymentFulfillment(ctx context.Context, item *paymentFul
 	}
 	if result.RowsAffected() == 0 {
 		return "superseded", nil
+	}
+	if item.Provider == "epay" {
+		_, _ = b.db.Exec(ctx, `UPDATE epay_order SET status='fulfilling',updated_at=now() WHERE out_trade_no=$1 AND status IN ('pending','fulfilling')`, strings.TrimPrefix(item.CreditSourceRef, "epay:"))
 	}
 	return "retry_scheduled", nil
 }
