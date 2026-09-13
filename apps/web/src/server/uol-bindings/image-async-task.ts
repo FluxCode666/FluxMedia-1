@@ -52,6 +52,7 @@ import type {
   ImageQuality,
 } from "@/features/image-generation/types";
 import { enqueueImageTask } from "@/server/media-task-queues";
+import { requestGoJson, requestGoJsonForPrincipal } from "@/server/go-backend-client";
 
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
@@ -501,6 +502,13 @@ export async function executeImageEnqueueAsyncBinding(
   context: OperationContext,
   dependencies: ImageAsyncTaskBindingDependencies = defaultDependencies
 ): Promise<ImageAsyncTaskOutput> {
+  if (dependencies === defaultDependencies) {
+    const body = JSON.stringify(input);
+    const output = isExternalApiKeyPrincipal(principal)
+      ? await requestGoJsonForPrincipal<ImageAsyncTaskOutput>(principal, "/api/image-generation/async", { method: "POST", body })
+      : await requestGoJson<ImageAsyncTaskOutput>("/api/image-generation/async", { method: "POST", body });
+    return output;
+  }
   const isSiteSession = principal.type === "user";
   if (!isSiteSession && !isExternalApiKeyPrincipal(principal)) {
     throw new OperationError(
@@ -679,6 +687,12 @@ export async function executeImageGetAsyncTaskBinding(
   context: OperationContext,
   repository: ImageAsyncTaskRepository = defaultImageAsyncTaskRepository
 ): Promise<ImageAsyncTaskOutput> {
+  if (repository === defaultImageAsyncTaskRepository) {
+    const output = isExternalApiKeyPrincipal(principal)
+      ? await requestGoJsonForPrincipal<ImageAsyncTaskOutput>(principal, `/api/image-generation/async/${encodeURIComponent(input.taskId)}`)
+      : await requestGoJson<ImageAsyncTaskOutput>(`/api/image-generation/async/${encodeURIComponent(input.taskId)}`);
+    return output;
+  }
   const task = await repository.findById(input.taskId);
   if (!task) {
     throw new OperationError("not_found", "Image async task not found");

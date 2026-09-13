@@ -76,6 +76,8 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/images/generate", b.endpoint(b.handleImageCreateSession))
 	mux.HandleFunc("POST /api/images/edit", b.endpoint(b.handleImageEditSession))
 	mux.HandleFunc("GET /api/images/status/{id}", b.endpoint(b.handleImageStatusSession))
+	mux.HandleFunc("POST /api/image-generation/async", b.endpoint(b.handleImageAsyncCreate))
+	mux.HandleFunc("GET /api/image-generation/async/{taskId}", b.endpoint(b.handleImageAsyncStatus))
 	mux.HandleFunc("GET /api/image-generation/page-data", b.endpoint(b.handleImageGenerationPageData))
 	mux.HandleFunc("GET /api/model-marketplace/public", b.endpoint(b.handlePublicModelMarketplace))
 	mux.HandleFunc("GET /api/model-marketplace/runtime-catalog", b.endpoint(b.handleRuntimeModelCatalog))
@@ -196,19 +198,51 @@ func (b *backend) createImageTask(r *http.Request, p *apiPrincipal, body map[str
 	if len([]rune(prompt)) > 32000 {
 		return nil, invalid("prompt is too long")
 	}
-	id := "task_" + newRequestID()
-	generationID := newRequestID()
+	// Persist the canonical operation in the input snapshot so the Go worker
+	// and async-task constraints can reconcile the same envelope on retries.
+	if _, ok := body["operation"]; !ok {
+		body["operation"] = json.RawMessage(`"` + operation + `"`)
+	}
+	generationID := rawString(body, "generationId", "generation_id")
+	if generationID == "" {
+		generationID = newRequestID()
+	}
+	if _, ok := body["generationId"]; !ok {
+		encodedGenerationID, _ := json.Marshal(generationID)
+		body["generationId"] = encodedGenerationID
+	}
+	// A generation id is the UOL idempotency key. Replays return the existing
+	// durable task instead of creating a second billable generation.
+	var existingID, existingModel, existingStatus string
+	var existingCreated time.Time
+	if err := b.db.QueryRow(r.Context(), `SELECT t.id,g.model,t.status,t.created_at FROM image_async_task t LEFT JOIN generation g ON g.id=t.generation_id WHERE t.generation_id=$1 AND t.user_id=$2 LIMIT 1`, generationID, p.UserID).Scan(&existingID, &existingModel, &existingStatus, &existingCreated); err == nil {
+		return taskResponse(existingID, existingModel, existingStatus, existingCreated, map[string]any{"generation_id": generationID, "generationId": generationID}), nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	var generationOwner string
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM generation WHERE id=$1`, generationID).Scan(&generationOwner); err == nil && generationOwner != p.UserID {
+		return nil, &apiError{409, "IDEMPOTENCY_CONFLICT", "generationId was already used by another user"}
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	id := rawString(body, "taskId", "task_id")
+	if id == "" {
+		id = "task_" + generationID
+	}
 	inputs, _ := json.Marshal(body)
+	digest := sha256.Sum256(inputs)
+	inputDigest := "sha256:" + hex.EncodeToString(digest[:])
 	created := time.Now().UTC()
 	tx, err := b.db.Begin(r.Context())
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(tx)
-	if _, err = tx.Exec(r.Context(), `INSERT INTO generation(id,user_id,prompt,model,status,metadata) VALUES($1,$2,$3,$4,'pending',$5)`, generationID, p.UserID, prompt, model, string(inputs)); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO generation(id,user_id,prompt,model,status,metadata) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT (id) DO NOTHING`, generationID, p.UserID, prompt, model, string(inputs)); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO image_async_task(id,user_id,api_key_id,plan,operation,generation_inputs,generation_ids,response_format,status) VALUES($1,$2,$3,'default',$4,$5,$6,'url','queued')`, id, p.UserID, p.KeyID, operation, string(inputs), "[\""+generationID+"\"]"); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO image_async_task(id,user_id,api_key_id,plan,operation,generation_inputs,generation_ids,generation_input,input_digest,generation_id,response_format,status) VALUES($1,$2,$3,'default',$4,$5,$6,$5,$7,$8,'url','queued')`, id, p.UserID, p.KeyID, operation, string(inputs), "[\""+generationID+"\"]", inputDigest, generationID); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(r.Context()); err != nil {
@@ -473,15 +507,20 @@ func (b *backend) handleImageStatus(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 func (b *backend) handleImageCreateSession(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
-	if err != nil {
-		return err
+	var p *apiPrincipal
+	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
+		p = &apiPrincipal{UserID: principal.UserID, KeyID: principal.APIKeyID}
+	} else {
+		s, err := b.requireSession(r)
+		if err != nil {
+			return err
+		}
+		p = &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
 	}
 	body, err := decodeObject(r)
 	if err != nil {
 		return err
 	}
-	p := &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
 	response, err := b.createImageTask(r, p, body, "generate")
 	if err != nil {
 		return err
@@ -490,15 +529,20 @@ func (b *backend) handleImageCreateSession(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 func (b *backend) handleImageEditSession(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
-	if err != nil {
-		return err
+	var p *apiPrincipal
+	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
+		p = &apiPrincipal{UserID: principal.UserID, KeyID: principal.APIKeyID}
+	} else {
+		s, err := b.requireSession(r)
+		if err != nil {
+			return err
+		}
+		p = &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
 	}
 	body, err := b.decodeImageEditBody(r)
 	if err != nil {
 		return err
 	}
-	p := &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
 	response, err := b.createImageTask(r, p, body, "edit")
 	if err != nil {
 		return err
@@ -507,11 +551,17 @@ func (b *backend) handleImageEditSession(w http.ResponseWriter, r *http.Request)
 	return nil
 }
 func (b *backend) handleImageStatusSession(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
-	if err != nil {
-		return err
+	userID := ""
+	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
+		userID = principal.UserID
+	} else {
+		s, err := b.requireSession(r)
+		if err != nil {
+			return err
+		}
+		userID = s.User.ID
 	}
-	response, err := b.imageStatus(r, r.PathValue("id"), s.User.ID)
+	response, err := b.imageStatus(r, r.PathValue("id"), userID)
 	if err != nil {
 		return err
 	}

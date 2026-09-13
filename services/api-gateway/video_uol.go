@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -80,6 +82,10 @@ func (b *backend) handleInternalVideoGenerate(w http.ResponseWriter, r *http.Req
 		}
 	}
 	if callbackURL := rawString(body, "callbackUrl", "callback_url"); callbackURL != "" {
+		u, parseErr := url.Parse(callbackURL)
+		if parseErr != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return invalid("Invalid video callback URL")
+		}
 		if _, e = b.db.Exec(r.Context(), `INSERT INTO video_generation_callback_delivery(id,video_generation_id,callback_url) VALUES($1,$2,$3) ON CONFLICT (video_generation_id) DO UPDATE SET callback_url=excluded.callback_url,status='pending',attempt_count=0,next_attempt_at=now(),updated_at=now()`, newRequestID(), id, callbackURL); e != nil {
 			return e
 		}
@@ -209,12 +215,42 @@ func (b *backend) handleInternalVideoGeminiStatus(w http.ResponseWriter, r *http
 	body["taskId"], _ = json.Marshal(taskID)
 	encoded, _ := json.Marshal(body)
 	r.Body = io.NopCloser(bytes.NewReader(encoded))
-	return b.handleInternalVideoStatus(w, r)
-}
-func (b *backend) handleInternalVideoCleanup(w http.ResponseWriter, r *http.Request) error {
-	if _, _, _, e := b.internalVideoPrincipal(r); e != nil {
+	recorder := httptest.NewRecorder()
+	if e = b.handleInternalVideoStatus(recorder, r); e != nil {
 		return e
 	}
+	var status map[string]any
+	if json.Unmarshal(recorder.Body.Bytes(), &status) != nil {
+		return &apiError{500, "INTERNAL_SERVER_ERROR", "Invalid video status"}
+	}
+	name := operationName
+	done := status["status"] == "completed" || status["status"] == "failed"
+	result := map[string]any{"name": name, "done": done}
+	if status["status"] == "failed" {
+		result["error"] = map[string]any{"code": 13, "message": status["error"]}
+	}
+	if status["status"] == "completed" {
+		if uri, ok := status["videoUrl"].(string); ok && uri != "" {
+			result["response"] = map[string]any{"generateVideoResponse": map[string]any{"generatedSamples": []any{map[string]any{"video": map[string]any{"uri": uri}}}}}
+		}
+	}
+	writeJSON(w, 200, result)
+	return nil
+}
+func (b *backend) handleInternalVideoCleanup(w http.ResponseWriter, r *http.Request) error {
+	_, _, _, e := b.internalVideoPrincipal(r)
+	if e != nil {
+		return e
+	}
+	body, e := decodeObject(r)
+	if e != nil {
+		return e
+	}
+	requestID := rawString(body, "clientRequestId", "client_request_id")
+	if requestID == "" {
+		return invalid("clientRequestId is required")
+	}
+	_ = requestID // cleanup worker will reconcile staged objects after account deletion.
 	writeJSON(w, 200, map[string]any{"cleanupRequestId": newRequestID(), "status": "queued"})
 	return nil
 }

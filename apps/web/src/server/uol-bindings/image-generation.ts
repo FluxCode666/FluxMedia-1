@@ -39,7 +39,10 @@ import type {
   ImageGenerationCallbacks,
   ImageQuality,
 } from "@/features/image-generation/types";
-import { requestGoJson } from "@/server/go-backend-client";
+import {
+  requestGoJson,
+  requestGoJsonForPrincipal,
+} from "@/server/go-backend-client";
 
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
@@ -71,10 +74,80 @@ const defaultDependencies: ImageGenerationBindingDependencies = {
       await import("@/features/image-generation/image-input-storage")
     ).stageImageInputReferences(input);
   },
-  async runImageGenerationForUser(input, callbacks) {
-    return (
-      await import("@/features/image-generation/operations")
-    ).runImageGenerationForUser(input, callbacks);
+  async runImageGenerationForUser(input, _callbacks) {
+    void _callbacks;
+    // The durable generation/worker pipeline now lives in Go. Keep the
+    // binding's return shape stable by creating the task there and polling its
+    // generation projection until the worker settles it.
+    const { admissionAuthorization: _admission, ...requestInput } = input;
+    const body = {
+      ...requestInput,
+      operation: input.mode,
+      ...(input.mode === "edit"
+        ? {
+            images: input.mediaInputReferences?.images ?? [],
+            ...(input.mediaInputReferences?.mask
+              ? { mask: input.mediaInputReferences.mask }
+              : {}),
+          }
+        : {}),
+    };
+    delete (body as Record<string, unknown>).mode;
+    delete (body as Record<string, unknown>).userId;
+    delete (body as Record<string, unknown>).apiKeyId;
+    delete (body as Record<string, unknown>).executionAuthorization;
+    delete (body as Record<string, unknown>).groupAuthorization;
+    delete (body as Record<string, unknown>).inputDigest;
+    delete (body as Record<string, unknown>).mediaInputReferences;
+    delete (body as Record<string, unknown>).stagedImageInputObjects;
+    const principal = input.apiKeyId
+      ? {
+          type: "apiKey" as const,
+          credentialKind: "external" as const,
+          userId: input.userId,
+          apiKeyId: input.apiKeyId,
+        }
+      : undefined;
+    const endpoint = input.mode === "edit" ? "/api/images/edit" : "/api/images/generate";
+    const create = principal
+      ? await requestGoJsonForPrincipal<Record<string, unknown>>(principal, endpoint, {
+          method: "POST",
+          body: JSON.stringify(body),
+        })
+      : await requestGoJson<Record<string, unknown>>(endpoint, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+    const generationId = String(create.generationId ?? create.generation_id ?? input.generationId);
+    const deadline = Date.now() + 120_000;
+    let status: Record<string, unknown> = create;
+    while (Date.now() < deadline) {
+      const state = principal
+        ? await requestGoJsonForPrincipal<Record<string, unknown>>(principal, `/api/images/status/${encodeURIComponent(generationId)}`)
+        : await requestGoJson<Record<string, unknown>>(`/api/images/status/${encodeURIComponent(generationId)}`);
+      status = state;
+      const value = String(state.status ?? "");
+      if (value === "completed" || value === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const imageOutputs = Array.isArray(status.imageOutputs)
+      ? status.imageOutputs.map((item) => {
+          const value = item as Record<string, unknown>;
+          return {
+            imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : undefined,
+            revisedPrompt: typeof value.revisedPrompt === "string" ? value.revisedPrompt : undefined,
+            size: typeof value.size === "string" ? value.size : undefined,
+            outputRole: value.role === "choice" ? "choice" as const : "final" as const,
+          };
+        })
+      : [];
+    return {
+      generationId,
+      model: typeof status.model === "string" ? status.model : input.model,
+      imageUrl: typeof status.imageUrl === "string" ? status.imageUrl : undefined,
+      imageOutputs,
+      error: status.status === "failed" ? String((status.error as Record<string, unknown> | undefined)?.message ?? status.error ?? "Image generation failed") : undefined,
+    } as Awaited<ReturnType<typeof runImageGenerationForUser>>;
   },
   async getMediaLimitsForUser(userId) {
     const { mediaLimitService } = await import(
@@ -262,11 +335,17 @@ export async function executeImageGenerateBinding(
 
     const references =
       input.operation === "mask" ? [...input.images, input.mask] : input.images;
-    const staged = await dependencies.stageImageInputReferences({
-      userId,
-      generationId: input.generationId,
-      references,
-    });
+    // UOL callers already provide durable storage references. Re-hosting them
+    // through the legacy Next storage service would reintroduce a second write
+    // path after generation moved to Go. Data/blob references remain supported
+    // by the injected compatibility dependency for older tests/callers.
+    const staged = references.every((reference) => reference.source === "storage")
+      ? { references, objects: [] }
+      : await dependencies.stageImageInputReferences({
+          userId,
+          generationId: input.generationId,
+          references,
+        });
     const imageCount = input.images.length;
     const images = staged.references.slice(0, imageCount);
     const mask =
