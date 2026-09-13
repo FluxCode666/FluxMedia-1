@@ -77,7 +77,7 @@ func (b *backend) appAnalyticsLocation(r *http.Request) (*time.Location, string,
 }
 
 func (b *backend) handleGoAnalyticsSummary(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	userID, _, _, err := b.requireAnalyticsPrincipal(r)
 	if err != nil {
 		return err
 	}
@@ -88,28 +88,28 @@ func (b *backend) handleGoAnalyticsSummary(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
-	_, zone, err := b.userAnalyticsLocation(r, s.User.ID, fallback)
+	_, zone, err := b.userAnalyticsLocation(r, userID, fallback)
 	if err != nil {
 		return err
 	}
 	asOf := time.Now().UTC()
 	start := asOf.Add(-24 * time.Hour)
 	var recentImage, recentVideo int
-	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(image_count),0),COALESCE(sum(video_seconds),0) FROM user_output_usage_event WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, start, asOf).Scan(&recentImage, &recentVideo); err != nil {
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(image_count),0),COALESCE(sum(video_seconds),0) FROM user_output_usage_event WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, userID, start, asOf).Scan(&recentImage, &recentVideo); err != nil {
 		return err
 	}
 	var lifetimeImage, lifetimeVideo int
-	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(total_image_count,0),COALESCE(total_video_seconds,0) FROM user_usage_summary WHERE user_id=$1`, s.User.ID).Scan(&lifetimeImage, &lifetimeVideo); err != nil && err != pgx.ErrNoRows {
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(total_image_count,0),COALESCE(total_video_seconds,0) FROM user_usage_summary WHERE user_id=$1`, userID).Scan(&lifetimeImage, &lifetimeVideo); err != nil && err != pgx.ErrNoRows {
 		return err
 	}
 	var recentCredits, lifetimeCredits float64
-	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, start, asOf).Scan(&recentCredits); err != nil {
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, userID, start, asOf).Scan(&recentCredits); err != nil {
 		return err
 	}
-	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1`, s.User.ID).Scan(&lifetimeCredits); err != nil {
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1`, userID).Scan(&lifetimeCredits); err != nil {
 		return err
 	}
-	rows, err := b.db.Query(r.Context(), `SELECT COALESCE(NULLIF(TRIM(g.model),''),NULLIF(TRIM(v.model),''),'unknown'),count(*) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id LEFT JOIN video_generation v ON e.output_kind='video' AND e.source_task_id=v.id AND e.user_id=v.user_id WHERE e.user_id=$1 AND e.operation_created_at >= $2 AND e.operation_created_at < $3 GROUP BY 1 ORDER BY count(*) DESC,1`, s.User.ID, start, asOf)
+	rows, err := b.db.Query(r.Context(), `SELECT COALESCE(NULLIF(TRIM(g.model),''),NULLIF(TRIM(v.model),''),'unknown'),count(*) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id LEFT JOIN video_generation v ON e.output_kind='video' AND e.source_task_id=v.id AND e.user_id=v.user_id WHERE e.user_id=$1 AND e.operation_created_at >= $2 AND e.operation_created_at < $3 GROUP BY 1 ORDER BY count(*) DESC,1`, userID, start, asOf)
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func parseAnalyticsTrendRange(in analyticsTrendInput, asOf time.Time, loc *time.
 }
 
 func (b *backend) handleGoAnalyticsTrends(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	userID, _, _, err := b.requireAnalyticsPrincipal(r)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func (b *backend) handleGoAnalyticsTrends(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return err
 	}
-	loc, zone, err := b.userAnalyticsLocation(r, s.User.ID, fallback)
+	loc, zone, err := b.userAnalyticsLocation(r, userID, fallback)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func (b *backend) handleGoAnalyticsTrends(w http.ResponseWriter, r *http.Request
 	}
 	values := make([]int, len(rangeValue.labels))
 	imageTasks, videoTasks := 0, 0
-	rows, err := b.db.Query(r.Context(), `SELECT operation_created_at,output_kind,COALESCE(image_count,0),COALESCE(video_seconds,0) FROM user_output_usage_event WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, rangeValue.start.UTC(), rangeValue.end.UTC())
+	rows, err := b.db.Query(r.Context(), `SELECT operation_created_at,output_kind,COALESCE(image_count,0),COALESCE(video_seconds,0) FROM user_output_usage_event WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, userID, rangeValue.start.UTC(), rangeValue.end.UTC())
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func (b *backend) handleGoAnalyticsTrends(w http.ResponseWriter, r *http.Request
 }
 
 func (b *backend) handleGoAnalyticsDataDashboard(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	userID, _, _, err := b.requireAnalyticsPrincipal(r)
 	if err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func (b *backend) handleGoAnalyticsDataDashboard(w http.ResponseWriter, r *http.
 	if err != nil {
 		return err
 	}
-	loc, zone, err := b.userAnalyticsLocation(r, s.User.ID, fallback)
+	loc, zone, err := b.userAnalyticsLocation(r, userID, fallback)
 	if err != nil {
 		return err
 	}
@@ -363,13 +363,16 @@ func (b *backend) handleGoAnalyticsDataDashboard(w http.ResponseWriter, r *http.
 	if err = decodeBody(r, &in); err != nil {
 		return err
 	}
-	return b.writeGoDataDashboard(w, r, s.User.ID, zone, loc, in.StartDate, in.EndDate)
+	return b.writeGoDataDashboard(w, r, userID, zone, loc, in.StartDate, in.EndDate)
 }
 
 func (b *backend) handleGoAdminAnalyticsDataDashboard(w http.ResponseWriter, r *http.Request) error {
-	_, err := b.requireAdmin(r, false)
+	_, role, apiKey, err := b.requireAnalyticsPrincipal(r)
 	if err != nil {
 		return err
+	}
+	if apiKey || (role != "admin" && role != "super_admin") {
+		return forbidden()
 	}
 	loc, zone, err := b.appAnalyticsLocation(r)
 	if err != nil {
@@ -525,8 +528,12 @@ func (b *backend) writeGoDataDashboard(w http.ResponseWriter, r *http.Request, u
 }
 
 func (b *backend) handleGoAdminAnalyticsUsers(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.requireAdmin(r, false); err != nil {
+	_, role, apiKey, err := b.requireAnalyticsPrincipal(r)
+	if err != nil {
 		return err
+	}
+	if apiKey || (role != "admin" && role != "super_admin") {
+		return forbidden()
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
 	selected := strings.TrimSpace(r.URL.Query().Get("selectedUserId"))
@@ -535,7 +542,6 @@ func (b *backend) handleGoAdminAnalyticsUsers(w http.ResponseWriter, r *http.Req
 		limit = n
 	}
 	var rows pgx.Rows
-	var err error
 	if selected != "" {
 		rows, err = b.db.Query(r.Context(), `SELECT id,name,email FROM "user" WHERE id=$1`, selected)
 	} else if query == "" {

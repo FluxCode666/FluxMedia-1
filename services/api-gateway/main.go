@@ -44,22 +44,23 @@ const (
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 type config struct {
-	bind               string
-	databaseURL        string
-	authSecret         string
-	authURL            string
-	trustedOrigins     []string
-	redisOptions       *redis.Options
-	maxBodyBytes       int64
-	readHeader         time.Duration
-	readTimeout        time.Duration
-	writeTimeout       time.Duration
-	idleTimeout        time.Duration
-	readyTimeout       time.Duration
-	scriptRuntimeURL   string
-	scriptRuntimeToken string
-	cronSecret         string
-	storagePath        string
+	bind                    string
+	databaseURL             string
+	authSecret              string
+	authURL                 string
+	trustedOrigins          []string
+	redisOptions            *redis.Options
+	maxBodyBytes            int64
+	readHeader              time.Duration
+	readTimeout             time.Duration
+	writeTimeout            time.Duration
+	idleTimeout             time.Duration
+	readyTimeout            time.Duration
+	scriptRuntimeURL        string
+	scriptRuntimeToken      string
+	cronSecret              string
+	internalPrincipalSecret string
+	storagePath             string
 }
 
 type backend struct {
@@ -294,10 +295,11 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 		},
 		maxBodyBytes: maxBodyBytes, readHeader: readHeader, readTimeout: readTimeout,
 		writeTimeout: writeTimeout, idleTimeout: idleTimeout, readyTimeout: readyTimeout,
-		scriptRuntimeURL:   scriptRuntimeURL,
-		scriptRuntimeToken: getString(getenv, "GO_SCRIPT_RUNTIME_TOKEN", ""),
-		cronSecret:         getString(getenv, "CRON_SECRET", ""),
-		storagePath:        getString(getenv, "LOCAL_STORAGE_PATH", "/app/storage"),
+		scriptRuntimeURL:        scriptRuntimeURL,
+		scriptRuntimeToken:      getString(getenv, "GO_SCRIPT_RUNTIME_TOKEN", ""),
+		cronSecret:              getString(getenv, "CRON_SECRET", ""),
+		internalPrincipalSecret: getString(getenv, "GO_INTERNAL_PRINCIPAL_SECRET", ""),
+		storagePath:             getString(getenv, "LOCAL_STORAGE_PATH", "/app/storage"),
 	}, nil
 }
 

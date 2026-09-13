@@ -1,4 +1,6 @@
 import { cookies } from "next/headers";
+import { createHmac } from "node:crypto";
+import type { Principal } from "@repo/shared/uol";
 
 /** Structured failure returned by a Go endpoint; bindings can preserve stable UOL error codes. */
 export class GoBackendRequestError extends Error {
@@ -30,4 +32,26 @@ export async function requestGoJson<T>(path: string, init: RequestInit = {}): Pr
     );
   }
   return payload as T;
+}
+
+/** Call Go with a short-lived signed UOL principal when no browser session exists. */
+export async function requestGoJsonForPrincipal<T>(
+  principal: Extract<Principal, { type: "apiKey" }>,
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const secret = process.env.GO_INTERNAL_PRINCIPAL_SECRET?.trim();
+  if (!secret) throw new GoBackendRequestError("Go internal principal bridge is not configured", 503, "NOT_READY");
+  const payload = Buffer.from(JSON.stringify({
+    type: "apiKey",
+    userId: principal.userId,
+    credentialKind: principal.credentialKind,
+    apiKeyId: principal.apiKeyId,
+    issuedAt: Math.floor(Date.now() / 1000),
+  })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  const headers = new Headers(init.headers);
+  headers.set("X-Flux-Principal", payload);
+  headers.set("X-Flux-Principal-Signature", signature);
+  return requestGoJson<T>(path, { ...init, headers });
 }

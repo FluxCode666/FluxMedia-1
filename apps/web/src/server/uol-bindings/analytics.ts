@@ -19,6 +19,7 @@ import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
 import {
   GoBackendRequestError,
   requestGoJson,
+  requestGoJsonForPrincipal,
 } from "@/server/go-backend-client";
 
 /** Preserve Go's stable HTTP error classes at the UOL boundary. */
@@ -39,6 +40,18 @@ async function requestAnalyticsGo<T>(path: string, init?: RequestInit): Promise<
     return init === undefined
       ? await requestGoJson<T>(path)
       : await requestGoJson<T>(path, init);
+  } catch (error) {
+    throwAnalyticsGoError(error);
+  }
+}
+
+async function requestAnalyticsGoForPrincipal<T>(
+  principal: Extract<Principal, { type: "apiKey" }>,
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  try {
+    return await requestGoJsonForPrincipal<T>(principal, path, init);
   } catch (error) {
     throwAnalyticsGoError(error);
   }
@@ -143,7 +156,9 @@ bindExecute(
       throw new OperationError("unauthenticated", "User identity required");
     }
     return usageSummaryOutputSchema.parse(
-      await requestAnalyticsGo<unknown>("/api/analytics/summary")
+      principal.type === "apiKey"
+        ? await requestAnalyticsGoForPrincipal(principal, "/api/analytics/summary")
+        : await requestAnalyticsGo<unknown>("/api/analytics/summary")
     );
   }
 );
@@ -156,11 +171,11 @@ bindExecute(
       throw new OperationError("unauthenticated", "User identity required");
     }
     const parsed = usageTrendsInputSchema.parse(input);
+    const init = { method: "POST", body: JSON.stringify(parsed) };
     return usageTrendsOutputSchema.parse(
-      await requestAnalyticsGo<unknown>("/api/analytics/trends", {
-        method: "POST",
-        body: JSON.stringify(parsed),
-      })
+      principal.type === "apiKey"
+        ? await requestAnalyticsGoForPrincipal(principal, "/api/analytics/trends", init)
+        : await requestAnalyticsGo<unknown>("/api/analytics/trends", init)
     );
   }
 );
