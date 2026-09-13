@@ -159,16 +159,44 @@ func (b *backend) handleAdminLogoUpload(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	logoURL := "/api/storage/" + urlPathEscape(bucket) + "/" + urlPathEscape(key)
-	// Persist the setting after the immutable object is available. The request id
-	// is recorded for audit and retry diagnostics; the content hash provides the
-	// natural idempotency key for repeated uploads.
-	value, _ := json.Marshal(logoURL)
-	_, err = b.db.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_by,updated_at) VALUES('SITE_LOGO_URL',$1,false,$2,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, value, s.User.ID)
+	// Persist an idempotency receipt and the setting atomically. A repeated
+	// clientRequestId with a different payload is rejected instead of silently
+	// switching the active logo.
+	requestHash := hex.EncodeToString(hash[:])
+	receiptHash := sha256.Sum256([]byte(s.User.ID + ":" + clientRequestID))
+	receiptID := "site-logo-upload:" + hex.EncodeToString(receiptHash[:])
+	tx, err := b.db.Begin(r.Context())
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback(r.Context())
+	metadata, _ := json.Marshal(map[string]any{"requestHash": requestHash, "sha256": requestHash, "contentType": contentType})
+	after, _ := json.Marshal(map[string]any{"logoUrl": logoURL})
+	inserted, err := tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after,metadata,created_at) VALUES($1,$2,NULL,'system-settings.site-logo.upload','管理员上传网站 Logo',NULL,$3,$4,now()) ON CONFLICT(id) DO NOTHING`, receiptID, s.User.ID, after, metadata)
+	if err != nil {
+		return err
+	}
+	replayed := inserted.RowsAffected() == 0
+	if replayed {
+		var previousHash, previousURL string
+		if err := tx.QueryRow(r.Context(), `SELECT COALESCE(metadata->>'requestHash',''), COALESCE(after->>'logoUrl','') FROM admin_audit_log WHERE id=$1`, receiptID).Scan(&previousHash, &previousURL); err != nil {
+			return err
+		}
+		if previousHash != requestHash {
+			return &apiError{409, "IDEMPOTENCY_CONFLICT", "该上传请求标识已用于另一份 Logo"}
+		}
+		logoURL = previousURL
+	} else {
+		value, _ := json.Marshal(logoURL)
+		if _, err = tx.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_by,updated_at) VALUES('SITE_LOGO_URL',$1,false,$2,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_BY,updated_at=now()`, value, s.User.ID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return err
+	}
 	noStore(w)
-	writeJSON(w, http.StatusOK, map[string]any{"logoUrl": logoURL, "replayed": false, "clientRequestId": clientRequestID})
+	writeJSON(w, http.StatusOK, map[string]any{"logoUrl": logoURL, "replayed": replayed, "clientRequestId": clientRequestID})
 	return nil
 }
 
