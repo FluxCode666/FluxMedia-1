@@ -253,7 +253,7 @@ func (w *mediaWorker) failImageGeneration(ctx context.Context, taskID, reason st
 		}
 		return err
 	}
-	if status == "completed" {
+	if status == "completed" || status == "failed" {
 		return tx.Commit(ctx)
 	}
 	if _, err = tx.Exec(ctx, `UPDATE generation SET status='failed',error=$2,completed_at=COALESCE(completed_at,now()) WHERE id=$1 AND status='pending'`, generationID, reason); err != nil {
