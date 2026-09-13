@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -55,12 +56,20 @@ func (w *mediaWorker) close() {
 func (w *mediaWorker) loop(ctx context.Context) {
 	ticker := time.NewTicker(mediaWorkerPollInterval)
 	defer ticker.Stop()
+	var wakeup <-chan *redis.Message
+	var pubsub *redis.PubSub
+	if w.backend.redis != nil {
+		pubsub = w.backend.redis.Subscribe(ctx, "fluxmedia:media:wakeup")
+		defer pubsub.Close()
+		wakeup = pubsub.Channel()
+	}
 	for {
 		w.runOnce(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-wakeup:
 		}
 	}
 }

@@ -212,6 +212,11 @@ func (b *backend) createImageTask(r *http.Request, p *apiPrincipal, body map[str
 	if err = tx.Commit(r.Context()); err != nil {
 		return nil, err
 	}
+	// Redis is only a wake-up hint; PostgreSQL remains the durable queue and
+	// the Go worker's periodic scan recovers lost publications.
+	if b.redis != nil {
+		_ = b.redis.Publish(r.Context(), "fluxmedia:media:wakeup", id).Err()
+	}
 	return taskResponse(id, model, "processing", created, map[string]any{"generation_id": generationID, "generationId": generationID}), nil
 }
 func (b *backend) handleImageCreate(w http.ResponseWriter, r *http.Request) error {
@@ -527,6 +532,9 @@ func (b *backend) createVideoTask(r *http.Request, p *apiPrincipal, body map[str
 	_, err := b.db.Exec(r.Context(), `INSERT INTO video_generation(id,user_id,api_key_id,principal_scope,model,prompt,duration_seconds,aspect_ratio,resolution,output_width,output_height,status,stage,input_manifest,metadata) VALUES($1,$2,NULLIF($3,'session'),$4,$5,$6,$7,$8,$9,1024,1024,'pending','created',$10,$10)`, id, p.UserID, p.KeyID, p.UserID, model, prompt, duration, ratio, resolution, input)
 	if err != nil {
 		return nil, err
+	}
+	if b.redis != nil {
+		_ = b.redis.Publish(r.Context(), "fluxmedia:media:wakeup", id).Err()
 	}
 	return taskResponse(id, model, "processing", created, map[string]any{"duration": duration, "duration_seconds": duration, "aspect_ratio": ratio, "aspectRatio": ratio, "resolution": resolution}), nil
 }
