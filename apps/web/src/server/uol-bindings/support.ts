@@ -94,3 +94,35 @@ bindExecute("support.getMyUnreadCount", async (_input, principal) => {
   userOnly(principal);
   return requestGoJson<{ count: number }>("/api/support/tickets/unread-count");
 });
+
+bindExecute("support.createTicket", async (input, principal) => {
+  userOnly(principal);
+  const parsed = input as {
+    subject: string;
+    message: string;
+    category?: "bug" | "feature" | "billing" | "account" | "other";
+  };
+  return requestGoJson<{ ticketId: string; createdAt: string }>(
+    "/api/support/tickets",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        subject: parsed.subject,
+        message: parsed.message,
+        category: parsed.category,
+      }),
+    }
+  );
+});
+
+bindExecute("support.addMessage", async (input, principal) => {
+  userOnly(principal);
+  const parsed = input as { ticketId: string; message: string };
+  return requestGoJson<{ messageId: string; createdAt: string }>(
+    `/api/support/tickets/${encodeURIComponent(parsed.ticketId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content: parsed.message }),
+    }
+  );
+});

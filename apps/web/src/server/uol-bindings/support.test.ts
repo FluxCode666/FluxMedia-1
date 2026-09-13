@@ -16,8 +16,14 @@ import "./support";
 describe("support Go bindings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requestGoJson.mockImplementation(async (path: string) => {
+    mocks.requestGoJson.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path.includes("/seen")) return { seenAt: "2026-09-13T00:00:00.000Z" };
+      if (init?.method === "POST" && path === "/api/support/tickets") {
+        return { ticketId: "ticket-2", createdAt: "2026-09-13T00:00:00.000Z" };
+      }
+      if (init?.method === "POST" && path.includes("/messages")) {
+        return { messageId: "message-2", createdAt: "2026-09-13T00:00:00.000Z" };
+      }
       return {
         items: [
           {
@@ -55,6 +61,26 @@ describe("support Go bindings", () => {
       2,
       "/api/support/tickets/ticket-1/seen",
       { method: "POST", body: "{}" }
+    );
+  });
+
+  it("routes ticket creation and replies to Go", async () => {
+    const principal = { type: "user" as const, userId: "user-1", role: "user" as const };
+    await expect(
+      invokeOperation("support.createTicket", { subject: "Issue", message: "Details", category: "bug" }, principal)
+    ).resolves.toMatchObject({ ticketId: "ticket-2" });
+    await expect(
+      invokeOperation("support.addMessage", { ticketId: "ticket-1", message: "Follow up" }, principal)
+    ).resolves.toMatchObject({ messageId: "message-2" });
+    expect(mocks.requestGoJson).toHaveBeenNthCalledWith(
+      1,
+      "/api/support/tickets",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(mocks.requestGoJson).toHaveBeenNthCalledWith(
+      2,
+      "/api/support/tickets/ticket-1/messages",
+      expect.objectContaining({ method: "POST" })
     );
   });
 

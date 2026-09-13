@@ -169,11 +169,12 @@ func (b *backend) handleTicketCreate(w http.ResponseWriter, r *http.Request) err
 	if e != nil {
 		return e
 	}
-	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,false)`, supportRandomID(), id, s.User.ID, in.Message)
+	messageID := supportRandomID()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,false)`, messageID, id, s.User.ID, in.Message)
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 201, map[string]any{"message": "工单创建成功", "ticketId": id})
+	writeJSON(w, 201, map[string]any{"message": "工单创建成功", "ticketId": id, "createdAt": now.UTC()})
 	return nil
 }
 func (b *backend) handleTicketList(w http.ResponseWriter, r *http.Request) error {
@@ -366,7 +367,8 @@ func (b *backend) handleTicketAddMessage(w http.ResponseWriter, r *http.Request)
 		return invalid("工单已关闭")
 	}
 	now := time.Now()
-	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,$5)`, supportRandomID(), id, s.User.ID, in.Content, s.User.Role == "admin" || s.User.Role == "super_admin")
+	messageID := supportRandomID()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO ticket_message(id,ticket_id,user_id,content,is_admin_response) VALUES($1,$2,$3,$4,$5)`, messageID, id, s.User.ID, in.Content, s.User.Role == "admin" || s.User.Role == "super_admin")
 	if e != nil {
 		return e
 	}
@@ -378,7 +380,7 @@ func (b *backend) handleTicketAddMessage(w http.ResponseWriter, r *http.Request)
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]string{"message": "消息发送成功"})
+	writeJSON(w, 200, map[string]any{"message": "消息发送成功", "messageId": messageID, "createdAt": now.UTC()})
 	return nil
 }
 func (b *backend) handleTicketSeen(w http.ResponseWriter, r *http.Request) error {
