@@ -70,6 +70,7 @@ type backend struct {
 	redis           *redis.Client
 	logger          *slog.Logger
 	mediaWorker     *mediaWorker
+	maintenance     *maintenanceScheduler
 }
 
 func main() {
@@ -121,6 +122,7 @@ func main() {
 		return
 	}
 	server.mediaWorker = server.startMediaWorker(ctx)
+	server.maintenance = server.startMaintenanceScheduler(ctx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.bind,
@@ -180,6 +182,9 @@ func newBackend(ctx context.Context, cfg config, logger *slog.Logger) (*backend,
 func (b *backend) close() {
 	if b.mediaWorker != nil {
 		b.mediaWorker.close()
+	}
+	if b.maintenance != nil {
+		b.maintenance.close()
 	}
 	b.db.Close()
 	_ = b.redis.Close()
