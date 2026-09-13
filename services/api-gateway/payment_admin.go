@@ -22,6 +22,7 @@ func (b *backend) registerPaymentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/internal/payment-fulfillment/recover", b.endpoint(b.handlePaymentFulfillmentRecovery))
 	mux.HandleFunc("POST /api/internal/payment-fulfillment/epay", b.endpoint(b.handleInternalPaymentEpay))
 	mux.HandleFunc("POST /api/internal/payment-fulfillment/creem", b.endpoint(b.handleInternalPaymentCreem))
+	mux.HandleFunc("POST /api/internal/payment-fulfillment/alipay", b.endpoint(b.handleInternalPaymentAlipay))
 }
 
 // handleMyRecentPaymentOrders returns the current user's recent credit top-up
