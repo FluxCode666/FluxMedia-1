@@ -328,6 +328,7 @@ func (b *backend) router() *http.ServeMux {
 	b.registerAccountRoutes(mux)
 	b.registerPaymentRoutes(mux)
 	b.registerMigratedRoutes(mux)
+	b.registerVideoUOLRoutes(mux)
 	b.registerSystemSettingsRoutes(mux)
 	b.registerMarketingSLARoutes(mux)
 	b.registerNewsletterRoutes(mux)
