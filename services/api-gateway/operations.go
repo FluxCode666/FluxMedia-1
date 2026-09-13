@@ -233,7 +233,56 @@ func (b *backend) populateOperationsContent(r *http.Request, snapshot map[string
 		"series": series,
 	}
 	snapshot["content"] = content
+	if err := b.populateOperationsHealth(r.Context(), snapshot, start, end, prevStart, prevEnd); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (b *backend) populateOperationsHealth(ctx context.Context, snapshot map[string]any, start, end, prevStart, prevEnd time.Time) error {
+	var imageQueued, imageRunning, videoPending int
+	if err := b.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status='pending'), count(*) FILTER (WHERE status IN ('running','processing')) FROM generation`).Scan(&imageQueued, &imageRunning); err != nil {
+		return err
+	}
+	if err := b.db.QueryRow(ctx, `SELECT count(*) FROM video_generation WHERE status IN ('pending','queued')`).Scan(&videoPending); err != nil {
+		return err
+	}
+	health, _ := snapshot["systemHealth"].(map[string]any)
+	health["queueBacklog"] = map[string]any{"status": "current", "imageQueued": imageQueued, "imageRunning": imageRunning, "videoPending": videoPending, "total": imageQueued + imageRunning + videoPending}
+	current, err := b.readOperationsTaskOutcome(ctx, start, end)
+	if err != nil {
+		return err
+	}
+	previous, err := b.readOperationsTaskOutcome(ctx, prevStart, prevEnd)
+	if err != nil {
+		return err
+	}
+	health["taskSuccessRate"] = map[string]any{"current": operationsTaskRate(current), "previous": operationsTaskRate(previous), "comparison": map[string]any{"status": "not_comparable", "reason": "pre_epoch"}}
+	snapshot["systemHealth"] = health
+	return nil
+}
+
+type operationsTaskOutcome struct{ succeeded, failed int }
+
+func (b *backend) readOperationsTaskOutcome(ctx context.Context, start, end time.Time) (operationsTaskOutcome, error) {
+	var out operationsTaskOutcome
+	err := b.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status='completed'), count(*) FILTER (WHERE status='failed') FROM generation WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&out.succeeded, &out.failed)
+	if err != nil {
+		return out, err
+	}
+	var s, f int
+	err = b.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status='completed'), count(*) FILTER (WHERE status='failed') FROM video_generation WHERE created_at >= $1 AND created_at < $2`, start, end).Scan(&s, &f)
+	out.succeeded += s
+	out.failed += f
+	return out, err
+}
+
+func operationsTaskRate(out operationsTaskOutcome) map[string]any {
+	total := out.succeeded + out.failed
+	if total == 0 {
+		return map[string]any{"status": "no_data", "succeededTasks": 0, "failedTasks": 0, "rate": nil}
+	}
+	return map[string]any{"status": "value", "succeededTasks": out.succeeded, "failedTasks": out.failed, "rate": float64(out.succeeded) / float64(total)}
 }
 
 type operationsContentTotals struct {
