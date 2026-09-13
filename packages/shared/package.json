@@ -139,6 +139,7 @@
     "./uol/errors": "./src/uol/errors.ts",
     "./uol/principal": "./src/uol/principal.ts",
     "./uol/operations": "./src/uol/operations/index.ts",
+    "./uol/operations/user-auth": "./src/uol/operations/user-auth.ts",
     "./uol/operations/analytics": "./src/uol/operations/analytics.ts",
     "./uol/operations/content": "./src/uol/operations/content.ts",
     "./uol/operations/operations-dashboard-facts": "./src/uol/operations/operations-dashboard-facts.ts",
