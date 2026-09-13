@@ -116,38 +116,24 @@ func (b *backend) handleEpayReturn(w http.ResponseWriter, r *http.Request) error
 }
 
 func (b *backend) fulfillCredit(ctx context.Context, orderID, provider, tradeNo, sourceRef string, amount float64, metadata map[string]any) error {
-	tx, err := b.db.Begin(ctx)
+	if tradeNo == "" {
+		return invalid("渠道交易号不能为空")
+	}
+	var userID string
+	if err := b.db.QueryRow(ctx, `SELECT user_id FROM payment_order WHERE id=$1 AND provider=$2`, orderID, provider).Scan(&userID); err != nil {
+		return err
+	}
+	if _, err := b.confirmPaymentWorkItem(ctx, orderID, provider, userID, tradeNo, provider+":"+tradeNo, sourceRef, metadata); err != nil {
+		return err
+	}
+	status, err := b.processPaymentOrder(ctx, orderID)
 	if err != nil {
 		return err
 	}
-	defer rollback(tx)
-	var uid string
-	var credits float64
-	var status string
-	if err = tx.QueryRow(ctx, `SELECT user_id,credits_amount,status FROM payment_order WHERE id=$1 AND provider=$2 AND purpose IN ('credit_package','credit_top_up') FOR UPDATE`, orderID, provider).Scan(&uid, &credits, &status); err != nil {
-		return err
+	if status == "failed_terminal" {
+		return &apiError{409, "PAYMENT_FULFILLMENT_FAILED", "支付履约失败"}
 	}
-	if status == "fulfilled" {
-		return tx.Commit(ctx)
-	}
-	if _, err = tx.Exec(ctx, `UPDATE payment_order SET status='fulfilled',provider_trade_no=$2,fulfilled_at=now(),updated_at=now() WHERE id=$1`, orderID, tradeNo); err != nil {
-		return err
-	}
-	raw, _ := json.Marshal(metadata)
-	batchID := newRequestID()
-	cmd, err := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref) VALUES($1,$2,$3,$3,'purchase',$4) ON CONFLICT (source_type,source_ref) DO NOTHING`, batchID, uid, credits, sourceRef)
-	if err != nil {
-		return err
-	}
-	if cmd.RowsAffected() > 0 {
-		if _, err = tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,metadata) VALUES($1,$2,'purchase',$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, newRequestID(), uid, credits, "PAYMENT:"+tradeNo, "WALLET:"+uid, "Payment credit top-up", sourceRef, string(raw)); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `INSERT INTO credits_balance(id,user_id,balance,total_earned) VALUES($1,$2,$3,$3) ON CONFLICT(user_id) DO UPDATE SET balance=credits_balance.balance+EXCLUDED.balance,total_earned=credits_balance.total_earned+EXCLUDED.total_earned,updated_at=now()`, newRequestID(), uid, credits); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (b *backend) handleEpayWebhook(w http.ResponseWriter, r *http.Request) error {
@@ -223,7 +209,10 @@ func (b *backend) handleCreemWebhook(w http.ResponseWriter, r *http.Request) err
 		}
 		id := ev.Object.Metadata["paymentOrderId"]
 		if id != "" {
-			if err := b.fulfillCredit(r.Context(), id, "creem", ev.Object.Order.ID, "creem:"+ev.Object.Order.ID, ev.Object.Order.Amount, m); err != nil {
+			if err := b.validateCreemWebhookAmount(r.Context(), id, ev.Object.Order.Amount, ev.Object.Order.Currency); err != nil {
+				return err
+			}
+			if err := b.fulfillCredit(r.Context(), id, "creem", ev.Object.Order.ID, "creem:"+id, ev.Object.Order.Amount, m); err != nil {
 				return err
 			}
 		}

@@ -16,6 +16,12 @@ func (b *backend) registerPaymentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/credits/top-up/checkout", b.endpoint(b.handleTopUpCheckout))
 	mux.HandleFunc("POST /api/credits/top-up/order-status", b.endpoint(b.handleTopUpOrderStatus))
 	mux.HandleFunc("POST /api/credits/payment/status", b.endpoint(b.handleCreditPaymentStatus))
+	// These endpoints are called by the server-side scheduler/UOL bindings with
+	// CRON_SECRET. Public provider callbacks continue to enter through the
+	// signature-verifying webhook routes in payments.go.
+	mux.HandleFunc("POST /api/internal/payment-fulfillment/recover", b.endpoint(b.handlePaymentFulfillmentRecovery))
+	mux.HandleFunc("POST /api/internal/payment-fulfillment/epay", b.endpoint(b.handleInternalPaymentEpay))
+	mux.HandleFunc("POST /api/internal/payment-fulfillment/creem", b.endpoint(b.handleInternalPaymentCreem))
 }
 
 // handleMyRecentPaymentOrders returns the current user's recent credit top-up

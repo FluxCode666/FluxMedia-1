@@ -11,16 +11,12 @@ const mocks = vi.hoisted(() => {
   process.env.DATABASE_URL ||=
     "postgres://test:test@127.0.0.1:5432/gpt2image_test";
   return {
-    fulfillSuccessfulEpayPayment: vi.fn(),
-    fulfillSuccessfulCreemPayment: vi.fn(),
+    requestGoJson: vi.fn(),
   };
 });
 
-vi.mock("@/features/payment/epay-fulfillment", () => ({
-  fulfillSuccessfulEpayPayment: mocks.fulfillSuccessfulEpayPayment,
-}));
-vi.mock("@/features/payment/creem-fulfillment", () => ({
-  fulfillSuccessfulCreemPayment: mocks.fulfillSuccessfulCreemPayment,
+vi.mock("@/server/go-backend-client", () => ({
+  requestGoJson: mocks.requestGoJson,
 }));
 
 import "./payment-webhooks";
@@ -55,14 +51,11 @@ const creemInput = {
 describe("payment webhook bindings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.fulfillSuccessfulEpayPayment.mockResolvedValue({
-      metadata: {
-        type: "credit_purchase",
-        userId: "user-1",
-        outTradeNo: "order-1",
-      },
-    });
-    mocks.fulfillSuccessfulCreemPayment.mockResolvedValue(undefined);
+    mocks.requestGoJson.mockImplementation(async (path: string) =>
+      path.endsWith("/epay")
+        ? { metadataType: "credit_purchase" }
+        : { processed: true }
+    );
   });
 
   it("Creem operation 只把规范化通知交给履约服务", async () => {
@@ -73,8 +66,9 @@ describe("payment webhook bindings", () => {
       })
     ).resolves.toEqual({ processed: true });
 
-    expect(mocks.fulfillSuccessfulCreemPayment).toHaveBeenCalledWith(
-      creemInput
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/internal/payment-fulfillment/creem",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(creemInput) })
     );
 
     await expect(
@@ -93,13 +87,9 @@ describe("payment webhook bindings", () => {
       })
     ).resolves.toEqual({ metadataType: "credit_purchase" });
 
-    expect(mocks.fulfillSuccessfulEpayPayment).toHaveBeenCalledWith(
-      {
-        ...input,
-        verifyStatus: true,
-        raw: {},
-      },
-      "epay-webhook"
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/internal/payment-fulfillment/epay",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(input) })
     );
   });
 
@@ -117,6 +107,6 @@ describe("payment webhook bindings", () => {
         { type: "webhook", provider: "epay" }
       )
     ).rejects.toMatchObject({ code: "validation_error" });
-    expect(mocks.fulfillSuccessfulEpayPayment).not.toHaveBeenCalled();
+    expect(mocks.requestGoJson).not.toHaveBeenCalled();
   });
 });
