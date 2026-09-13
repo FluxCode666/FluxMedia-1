@@ -323,6 +323,18 @@ func (b *backend) handleAdminUserMutate(w http.ResponseWriter, r *http.Request) 
 		return e
 	}
 	super := false
+	// Profile and credential changes are super-admin operations in the shared
+	// UOL contract. Enforce that boundary in Go as well, rather than relying on
+	// the Next action wrapper to be the only guard.
+	for _, field := range []string{"name", "email", "password"} {
+		if _, ok := in[field]; ok {
+			super = true
+			break
+		}
+	}
+	if _, ok := in["reason"]; ok && len(in) == 1 {
+		return invalid("至少需要一个用户变更字段")
+	}
 	if _, ok := in["role"]; ok {
 		super = true
 	}
