@@ -154,7 +154,7 @@ func (b *backend) recoverMediaQueue(ctx context.Context) (int, error) {
 		return count, err
 	}
 	rows.Close()
-	videoRows, err := b.db.Query(ctx, `SELECT id FROM video_generation WHERE stage NOT IN ('completed','failed') AND (claim_expires_at IS NULL OR claim_expires_at<=now()) AND (next_poll_at IS NULL OR next_poll_at<=now() OR stage IN ('charged','submitting')) ORDER BY COALESCE(next_poll_at,updated_at),created_at,id LIMIT 1000`)
+	videoRows, err := b.db.Query(ctx, `SELECT id FROM video_generation WHERE stage NOT IN ('completed','failed') AND (claim_expires_at IS NULL OR claim_expires_at<=now()) AND ((stage IN ('created','retrying','polling','downloading','refunding') AND (next_poll_at IS NULL OR next_poll_at<=now())) OR (stage IN ('charged','submitting') AND COALESCE(submit_started_at,updated_at)<=now()-interval '10 minutes') OR (stage='submit_uncertain' AND metadata->>'videoBackendProtocol'='api')) ORDER BY COALESCE(next_poll_at,updated_at),created_at,id LIMIT 1000`)
 	if err != nil {
 		return count, err
 	}
