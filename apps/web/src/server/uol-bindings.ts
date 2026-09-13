@@ -20,6 +20,7 @@ import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
 import "@/server/uol-bindings/credits";
+import "@/server/uol-bindings/support";
 import "@/server/uol-bindings/content";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
