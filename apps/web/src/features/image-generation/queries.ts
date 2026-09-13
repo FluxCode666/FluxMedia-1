@@ -1,99 +1,90 @@
 import "server-only";
 
-import { db } from "@repo/database";
-import { generation } from "@repo/database/schema";
-import { expireStalePendingGenerations } from "@repo/shared/generation-maintenance";
-import { and, count, desc, eq, gte, isNotNull, or, sum } from "drizzle-orm";
+import { requestGoJson } from "@/server/go-backend-client";
+
+type GenerationResponse = {
+  id: string;
+  userId: string;
+  prompt: string;
+  revisedPrompt: string | null;
+  model: string;
+  size: string;
+  status: "pending" | "completed" | "failed";
+  storageKey: string | null;
+  storageBucket: string | null;
+  imageUrl: string | null;
+  creditsConsumed: number;
+  error: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+  completedAt: Date | null;
+};
+
+type GenerationWireResponse = Omit<
+  GenerationResponse,
+  "createdAt" | "completedAt"
+> & { createdAt: string; completedAt: string | null };
+
+function normalizeGeneration(row: GenerationWireResponse): GenerationResponse {
+  return {
+    ...row,
+    createdAt: new Date(row.createdAt),
+    completedAt: row.completedAt ? new Date(row.completedAt) : null,
+  };
+}
 
 export async function getUserRecentGenerations(userId: string, limit = 12) {
-  return db
-    .select()
-    .from(generation)
-    .where(
-      and(
-        eq(generation.userId, userId),
-        or(
-          and(
-            eq(generation.status, "completed"),
-            isNotNull(generation.storageKey)
-          ),
-          eq(generation.status, "pending")
-        )
-      )
-    )
-    .orderBy(desc(generation.createdAt))
-    .limit(limit);
+  // The Go session is authoritative for the user scope; retain the argument
+  // for callers that still pass the authenticated user id.
+  void userId;
+  const rows = await requestGoJson<GenerationWireResponse[]>(
+    `/api/image-generation/recent?limit=${encodeURIComponent(String(limit))}`
+  );
+  return rows.map(normalizeGeneration);
 }
 
 export async function getGenerationById(id: string) {
-  await expireStalePendingGenerations({ limit: 100 });
-  const rows = await db
-    .select()
-    .from(generation)
-    .where(eq(generation.id, id))
-    .limit(1);
-  return rows[0] || null;
+  try {
+    const row = await requestGoJson<GenerationWireResponse>(
+      `/api/image-generation/${encodeURIComponent(id)}`
+    );
+    return normalizeGeneration(row);
+  } catch (error) {
+    // Preserve the old nullable contract for an absent generation while
+    // allowing transport/database failures to surface to the caller.
+    if (error instanceof Error && /\b404\b/.test(error.message)) return null;
+    throw error;
+  }
 }
 
 export async function getUserGenerations(
   userId: string,
   opts?: { limit?: number; offset?: number; status?: string }
 ) {
-  await expireStalePendingGenerations({ userId, limit: 100 });
-  const conditions = [eq(generation.userId, userId)];
-  if (opts?.status) {
-    conditions.push(
-      eq(generation.status, opts.status as "pending" | "completed" | "failed")
-    );
-  }
-
-  return db
-    .select()
-    .from(generation)
-    .where(and(...conditions))
-    .orderBy(desc(generation.createdAt))
-    .limit(opts?.limit || 20)
-    .offset(opts?.offset || 0);
+  void userId;
+  const params = new URLSearchParams();
+  params.set("limit", String(opts?.limit || 20));
+  params.set("offset", String(opts?.offset || 0));
+  if (opts?.status) params.set("status", opts.status);
+  const rows = await requestGoJson<GenerationWireResponse[]>(
+    `/api/image-generation/list?${params.toString()}`
+  );
+  return rows.map(normalizeGeneration);
 }
 
 export async function getUserGenerationsCount(userId: string, status?: string) {
-  await expireStalePendingGenerations({ userId, limit: 100 });
-  const conditions = [eq(generation.userId, userId)];
-  if (status) {
-    conditions.push(
-      eq(generation.status, status as "pending" | "completed" | "failed")
-    );
-  }
-
-  const result = await db
-    .select({ count: count() })
-    .from(generation)
-    .where(and(...conditions));
-  return result[0]?.count || 0;
+  void userId;
+  const query = status
+    ? `?status=${encodeURIComponent(status)}`
+    : "";
+  const result = await requestGoJson<{ count: number }>(
+    `/api/image-generation/count${query}`
+  );
+  return result.count;
 }
 
 export async function getGenerationStats() {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  const [totalResult, todayResult, completedResult, creditsResult] =
-    await Promise.all([
-      db.select({ count: count() }).from(generation),
-      db
-        .select({ count: count() })
-        .from(generation)
-        .where(gte(generation.createdAt, todayStart)),
-      db
-        .select({ count: count() })
-        .from(generation)
-        .where(eq(generation.status, "completed")),
-      db.select({ total: sum(generation.creditsConsumed) }).from(generation),
-    ]);
-
-  return {
-    total: totalResult[0]?.count || 0,
-    today: todayResult[0]?.count || 0,
-    completed: completedResult[0]?.count || 0,
-    creditsConsumed: Number(creditsResult[0]?.total) || 0,
-  };
+  throw new Error(
+    "Generation statistics are not exposed by the Go first-party API yet"
+  );
 }

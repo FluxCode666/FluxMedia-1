@@ -5,52 +5,11 @@
  * 展开为卡片级排序键，保证一个任务包含多张参考图时 keyset 不跳项、不重复。
  */
 
-import { db } from "@repo/database";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
+import { createHmac } from "node:crypto";
+import { type GalleryListOutput, galleryListOutputSchema } from "@repo/shared/image-generation/gallery-contract";
 import { type SQL, sql } from "drizzle-orm";
-import { z } from "zod";
-import { extractExecuteRows } from "@/server/database-result";
-import type {
-  GalleryListQuery,
-  GalleryListRow,
-  GalleryRepository,
-} from "./gallery-service";
-import {
-  extractGenerationReferenceImages,
-  extractPromptRepairNotice,
-} from "./generation-metadata";
-
-const finalRowSchema = z.object({
-  id: z.string().min(1).max(512),
-  prompt: z.string(),
-  revised_prompt: z.string().nullable(),
-  model: z.string().min(1).max(240),
-  size: z.string().min(1).max(200),
-  credits_consumed: z.coerce.number().finite().nonnegative(),
-  storage_key: z.string().nullable(),
-  storage_bucket: z.string().nullable(),
-  metadata: z.record(z.string(), z.unknown()).nullable(),
-  created_at: z.coerce.date(),
-  sort_id: z.string().min(1).max(512),
-});
-
-const uploadRowSchema = finalRowSchema.extend({
-  input_index: z.coerce.number().int().nonnegative(),
-});
-
-const videoRowSchema = z.object({
-  id: z.string().min(1).max(512),
-  prompt: z.string(),
-  model: z.string().min(1).max(240),
-  duration_seconds: z.coerce.number().int().positive(),
-  aspect_ratio: z.string().min(1).max(100),
-  resolution: z.string().min(1).max(100),
-  credits_consumed: z.coerce.number().finite().nonnegative(),
-  storage_key: z.string().nullable(),
-  storage_bucket: z.string().nullable(),
-  created_at: z.coerce.date(),
-  sort_id: z.string().min(1).max(512),
-});
+import { requestGoJson } from "@/server/go-backend-client";
+import type { GalleryListQuery, GalleryListRow, GalleryRepository } from "./gallery-service";
 
 /** 构造严格小于卡片排序键的下一页谓词。 */
 function buildCursorPredicate(input: GalleryListQuery): SQL {
@@ -159,120 +118,54 @@ export function buildVideoGallerySql(input: GalleryListQuery): SQL {
   `;
 }
 
-/** 删除参考图内部存储坐标，只保留共享 lightbox 安全字段。 */
-function toSafeReferenceImages(metadata: Record<string, unknown> | null) {
-  return extractGenerationReferenceImages(metadata)
-    .slice(0, 50)
-    .map(({ storageBucket: _bucket, storageKey: _key, ...safe }) => safe);
+/**
+ * Encode the Go gallery cursor for a decoded service cursor. The service keeps
+ * its own signed cursor contract for callers; this adapter only needs to
+ * present the equivalent boundary to the Go endpoint.
+ */
+function encodeGoGalleryCursor(query: GalleryListQuery): string | null {
+  if (!query.cursor) return null;
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) throw new Error("BETTER_AUTH_SECRET is required for gallery cursors");
+  const payload = {
+    v: 1,
+    sub: query.userId,
+    tab: query.tab,
+    limit: query.limit,
+    asOf: query.asOf.toISOString(),
+    sortCreated: query.cursor.createdAt.toISOString(),
+    sortId: query.cursor.id,
+  };
+  const raw = Buffer.from(JSON.stringify(payload));
+  const signature = createHmac("sha256", secret)
+    .update("fluxmedia:gallery:cursor:v1\0")
+    .update(raw)
+    .digest("base64url");
+  return `${raw.toString("base64url")}.${signature}`;
 }
 
-/** 将成品查询行映射为安全卡片和内部排序键。 */
-function adaptFinalRows(rows: unknown[]): GalleryListRow[] {
-  return z
-    .array(finalRowSchema)
-    .parse(rows)
-    .map((row) => ({
-      item: {
-        id: row.id,
-        parentId: row.id,
-        prompt: row.prompt,
-        revisedPrompt: row.revised_prompt,
-        promptRepairNotice: extractPromptRepairNotice(row.metadata),
-        model: row.model,
-        size: row.size,
-        status: "completed",
-        creditsConsumed: row.credits_consumed,
-        imageUrl: buildSignedStorageImageUrl(
-          row.storage_key,
-          row.storage_bucket
-        ),
-        createdAt: row.created_at.toISOString(),
-        outputRole: "final",
-        referenceImages: toSafeReferenceImages(row.metadata),
-      },
-      sortKey: { createdAt: row.created_at, id: row.sort_id },
-    }));
-}
-
-/** 将上传图查询行映射为一张参考图卡片；损坏的数组成员会显式失败。 */
-function adaptUploadRows(rows: unknown[]): GalleryListRow[] {
-  return z
-    .array(uploadRowSchema)
-    .parse(rows)
-    .map((row) => {
-      const referenceImages = extractGenerationReferenceImages(row.metadata);
-      const image = referenceImages.find(
-        (referenceImage) => referenceImage.index === row.input_index
-      );
-      if (!image) throw new RangeError("Gallery upload image is invalid");
-      const megabytes =
-        image.sizeBytes && image.sizeBytes > 0
-          ? image.sizeBytes / 1024 / 1024
-          : null;
-      return {
-        item: {
-          id: `${row.id}-upload-${image.id || row.input_index + 1}`,
-          parentId: row.id,
-          prompt: row.prompt,
-          revisedPrompt: row.revised_prompt,
-          promptRepairNotice: extractPromptRepairNotice(row.metadata),
-          model: image.type || "User upload",
-          size:
-            megabytes === null
-              ? "Uploaded"
-              : `${megabytes >= 0.1 ? megabytes.toFixed(1) : "<0.1"} MB`,
-          status: "completed",
-          creditsConsumed: 0,
-          imageUrl: image.imageUrl,
-          createdAt: row.created_at.toISOString(),
-          outputRole: "upload",
-          referenceImages: toSafeReferenceImages(row.metadata),
-        },
-        sortKey: { createdAt: row.created_at, id: row.sort_id },
-      };
-    });
-}
-
-/** 将视频查询行映射为安全卡片和内部排序键。 */
-function adaptVideoRows(rows: unknown[]): GalleryListRow[] {
-  return z
-    .array(videoRowSchema)
-    .parse(rows)
-    .map((row) => ({
-      item: {
-        id: row.id,
-        parentId: row.id,
-        prompt: row.prompt,
-        model: row.model,
-        size: `${row.duration_seconds}s · ${row.aspect_ratio} · ${row.resolution}`,
-        status: "completed",
-        creditsConsumed: row.credits_consumed,
-        videoUrl: buildSignedStorageImageUrl(
-          row.storage_key,
-          row.storage_bucket
-        ),
-        createdAt: row.created_at.toISOString(),
-        outputRole: "video",
-      },
-      sortKey: { createdAt: row.created_at, id: row.sort_id },
-    }));
-}
-
-/** 生产图库仓储；switch 保证只查询当前页签，不读取或计算其他页签数据。 */
+/**
+ * Production gallery repository backed by the Go first-party endpoint.
+ * `query.limit` includes the service's look-ahead row, so Go can preserve the
+ * existing keyset pagination behavior while returning safe gallery DTOs.
+ */
 export const databaseGalleryRepository: GalleryRepository = {
-  async readItems(query) {
-    if (query.tab === "uploads") {
-      return adaptUploadRows(
-        extractExecuteRows(await db.execute(buildUploadGallerySql(query)))
-      );
-    }
-    if (query.tab === "videos") {
-      return adaptVideoRows(
-        extractExecuteRows(await db.execute(buildVideoGallerySql(query)))
-      );
-    }
-    return adaptFinalRows(
-      extractExecuteRows(await db.execute(buildFinalGallerySql(query)))
+  async readItems(query): Promise<GalleryListRow[]> {
+    const output = await requestGoJson<GalleryListOutput>(
+      "/api/image-generation/gallery",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          tab: query.tab,
+          limit: query.limit,
+          cursor: encodeGoGalleryCursor(query),
+        }),
+      }
     );
+    const parsed = galleryListOutputSchema.parse(output);
+    return parsed.items.map((item) => ({
+      item,
+      sortKey: { createdAt: new Date(item.createdAt), id: item.id },
+    }));
   },
 };
