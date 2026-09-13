@@ -7,8 +7,10 @@ package main
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +30,7 @@ func (b *backend) registerImageHistoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/image-generation/delete", b.endpoint(b.handleGenerationDelete))
 	mux.HandleFunc("POST /api/image-generation/batch-delete", b.endpoint(b.handleGenerationBatchDelete))
 	mux.HandleFunc("POST /api/image-generation/gallery", b.endpoint(b.handleGallery))
+	mux.HandleFunc("GET /api/image-generation/media-limits", b.endpoint(b.handleMediaLimits))
 	mux.HandleFunc("POST /api/image-generation/history", b.endpoint(b.handleHistory))
 	mux.HandleFunc("POST /api/image-generation/video-inputs", b.endpoint(b.handleVideoInputs))
 	mux.HandleFunc("POST /api/admin/image-generation/history", b.endpoint(b.handleAdminHistory))
@@ -132,6 +135,130 @@ func (b *backend) handleGenerationByID(w http.ResponseWriter, r *http.Request) e
 	}
 	writeJSON(w, 200, publicGeneration(v))
 	return nil
+}
+
+type galleryCursorPayload struct {
+	V           int    `json:"v"`
+	Sub         string `json:"sub"`
+	Tab         string `json:"tab"`
+	Limit       int    `json:"limit"`
+	AsOf        string `json:"asOf"`
+	SortCreated string `json:"sortCreated"`
+	SortID      string `json:"sortId"`
+}
+
+func encodeGalleryCursor(secret, userID, tab string, limit int, created time.Time, id string) string {
+	payload := galleryCursorPayload{V: 1, Sub: userID, Tab: tab, Limit: limit, AsOf: time.Now().UTC().Format(time.RFC3339Nano), SortCreated: created.UTC().Format(time.RFC3339Nano), SortID: id}
+	raw, _ := json.Marshal(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("fluxmedia:gallery:cursor:v1\x00"))
+	_, _ = mac.Write(raw)
+	return base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func decodeGalleryCursor(token, secret, userID, tab string, limit int) (time.Time, string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || secret == "" {
+		return time.Time{}, "", fmt.Errorf("invalid cursor")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("fluxmedia:gallery:cursor:v1\x00"))
+	_, _ = mac.Write(raw)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return time.Time{}, "", fmt.Errorf("invalid signature")
+	}
+	var payload galleryCursorPayload
+	if err := json.Unmarshal(raw, &payload); err != nil || payload.V != 1 || payload.Sub != userID || payload.Tab != tab || payload.Limit != limit || payload.SortID == "" {
+		return time.Time{}, "", fmt.Errorf("invalid payload")
+	}
+	created, err := time.Parse(time.RFC3339Nano, payload.SortCreated)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	return created, payload.SortID, nil
+}
+
+func galleryMetadataMap(value any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	if m, ok := value.(map[string]any); ok {
+		return m
+	}
+	var raw []byte
+	switch v := value.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		encoded, _ := json.Marshal(v)
+		raw = encoded
+	}
+	var result map[string]any
+	if json.Unmarshal(raw, &result) != nil || result == nil {
+		return map[string]any{}
+	}
+	return result
+}
+
+func galleryReferenceImages(value any) []any {
+	metadata := galleryMetadataMap(value)
+	input, _ := metadata["inputImages"].(map[string]any)
+	images, _ := input["images"].([]any)
+	result := make([]any, 0, len(images))
+	for _, raw := range images {
+		image, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		copy := map[string]any{}
+		for key, item := range image {
+			if key != "storageKey" && key != "storageBucket" {
+				copy[key] = item
+			}
+		}
+		result = append(result, copy)
+	}
+	return result
+}
+
+func galleryInputImage(value any, index int) (map[string]any, []any) {
+	metadata := galleryMetadataMap(value)
+	input, _ := metadata["inputImages"].(map[string]any)
+	images, _ := input["images"].([]any)
+	if index < 0 || index >= len(images) {
+		return nil, galleryReferenceImages(value)
+	}
+	image, _ := images[index].(map[string]any)
+	return image, galleryReferenceImages(value)
+}
+
+func imageString(image map[string]any, key, fallback string) string {
+	if value, ok := image[key].(string); ok && strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
+func galleryImageURL(image map[string]any) *string {
+	if url, ok := image["imageUrl"].(string); ok && strings.TrimSpace(url) != "" {
+		return &url
+	}
+	key, keyOK := image["storageKey"].(string)
+	bucket, bucketOK := image["storageBucket"].(string)
+	if !keyOK || !bucketOK || key == "" || bucket == "" {
+		return nil
+	}
+	return generationURL(&key, &bucket)
 }
 
 func (b *backend) handleGenerationList(w http.ResponseWriter, r *http.Request) error {
@@ -245,7 +372,7 @@ func (b *backend) handleGallery(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		Tab    string `json:"tab"`
 		Limit  int    `json:"limit"`
-		Offset int    `json:"offset"`
+		Cursor string `json:"cursor"`
 	}
 	if e = decodeBody(r, &in); e != nil {
 		return e
@@ -253,46 +380,150 @@ func (b *backend) handleGallery(w http.ResponseWriter, r *http.Request) error {
 	if in.Limit <= 0 || in.Limit > 50 {
 		in.Limit = 20
 	}
-	if in.Tab == "videos" {
-		rows, err := b.db.Query(r.Context(), `SELECT id,prompt,model,duration_seconds,aspect_ratio,resolution,credits_consumed,storage_key,storage_bucket,created_at FROM video_generation WHERE user_id=$1 AND status='completed' AND storage_key IS NOT NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`, s.User.ID, in.Limit, in.Offset)
+	createdBefore, idBefore := time.Now().UTC(), ""
+	if in.Cursor != "" {
+		var err error
+		createdBefore, idBefore, err = decodeGalleryCursor(in.Cursor, b.config.authSecret, s.User.ID, in.Tab, in.Limit)
 		if err != nil {
-			return err
+			return invalid("图库分页游标无效")
 		}
-		defer rows.Close()
-		out := []any{}
-		for rows.Next() {
-			var id, prompt, model, ratio, res string
-			var dur int
+	}
+	limit := in.Limit + 1
+	var rows pgx.Rows
+	if in.Tab == "videos" {
+		query := `SELECT id,prompt,model,duration_seconds,aspect_ratio,resolution,credits_consumed,storage_key,storage_bucket,created_at FROM video_generation WHERE user_id=$1 AND status='completed' AND storage_key IS NOT NULL AND created_at <= $2`
+		args := []any{s.User.ID, createdBefore}
+		if idBefore != "" {
+			query += ` AND (created_at,id) < ($3,$4)`
+			args = append(args, createdBefore, idBefore)
+		}
+		query += ` ORDER BY created_at DESC,id DESC LIMIT $` + strconv.Itoa(len(args)+1)
+		args = append(args, limit)
+		rows, e = b.db.Query(r.Context(), query, args...)
+	} else if in.Tab == "uploads" {
+		query := `SELECT g.id,g.prompt,g.revised_prompt,g.model,g.size,g.metadata,g.created_at,(input_image.ordinality - 1)::integer FROM generation g CROSS JOIN LATERAL jsonb_array_elements(COALESCE((g.metadata::jsonb)->'inputImages'->'images','[]'::jsonb)) WITH ORDINALITY AS input_image(value,ordinality) WHERE g.user_id=$1 AND g.created_at <= $2 AND ((input_image.value->>'imageUrl') IS NOT NULL OR ((input_image.value->>'storageKey') IS NOT NULL AND (input_image.value->>'storageBucket') IS NOT NULL))`
+		args := []any{s.User.ID, createdBefore}
+		if idBefore != "" {
+			query += ` AND (g.created_at,g.id) < ($3,$4)`
+			args = append(args, createdBefore, idBefore)
+		}
+		query += ` ORDER BY g.created_at DESC,g.id DESC,input_image.ordinality ASC LIMIT $` + strconv.Itoa(len(args)+1)
+		args = append(args, limit)
+		rows, e = b.db.Query(r.Context(), query, args...)
+	} else {
+		query := `SELECT id,prompt,revised_prompt,model,size,credits_consumed,storage_key,storage_bucket,metadata,created_at FROM generation WHERE user_id=$1 AND status='completed' AND storage_key IS NOT NULL AND created_at <= $2`
+		args := []any{s.User.ID, createdBefore}
+		if idBefore != "" {
+			query += ` AND (created_at,id) < ($3,$4)`
+			args = append(args, createdBefore, idBefore)
+		}
+		query += ` ORDER BY created_at DESC,id DESC LIMIT $` + strconv.Itoa(len(args)+1)
+		args = append(args, limit)
+		rows, e = b.db.Query(r.Context(), query, args...)
+	}
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	type galleryRow struct {
+		item    map[string]any
+		created time.Time
+		id      string
+	}
+	all := make([]galleryRow, 0, limit)
+	for rows.Next() {
+		if in.Tab == "videos" {
+			var id, prompt, model, ratio, resolution string
+			var duration int
 			var credits float64
 			var key, bucket *string
 			var created time.Time
-			if err := rows.Scan(&id, &prompt, &model, &dur, &ratio, &res, &credits, &key, &bucket, &created); err != nil {
+			if err := rows.Scan(&id, &prompt, &model, &duration, &ratio, &resolution, &credits, &key, &bucket, &created); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "parentId": id, "prompt": prompt, "model": model, "durationSeconds": dur, "aspectRatio": ratio, "resolution": res, "creditsConsumed": credits, "videoUrl": generationURL(key, bucket), "createdAt": created.UTC().Format(time.RFC3339Nano), "outputRole": "video", "status": "completed"})
+			all = append(all, galleryRow{item: map[string]any{"id": id, "parentId": id, "prompt": prompt, "model": model, "size": strconv.Itoa(duration) + "s · " + ratio + " · " + resolution, "status": "completed", "creditsConsumed": credits, "videoUrl": generationURL(key, bucket), "createdAt": created.UTC().Format(time.RFC3339Nano), "outputRole": "video"}, created: created, id: id})
+			continue
 		}
-		writeJSON(w, 200, map[string]any{"items": out, "nextCursor": nil})
-		return rows.Err()
+		if in.Tab == "uploads" {
+			var id, prompt, model, size string
+			var revised *string
+			var metadata any
+			var created time.Time
+			var inputIndex int
+			if err := rows.Scan(&id, &prompt, &revised, &model, &size, &metadata, &created, &inputIndex); err != nil {
+				return err
+			}
+			image, refs := galleryInputImage(metadata, inputIndex)
+			if image == nil {
+				continue
+			}
+			itemSize := "Uploaded"
+			if bytes, ok := image["sizeBytes"].(float64); ok && bytes > 0 {
+				itemSize = strconv.FormatFloat(bytes/1024/1024, 'f', 1, 64) + " MB"
+			}
+			itemID := id + "-upload-" + strconv.Itoa(inputIndex+1)
+			all = append(all, galleryRow{item: map[string]any{"id": itemID, "parentId": id, "prompt": prompt, "revisedPrompt": revised, "promptRepairNotice": nil, "model": imageString(image, "type", "User upload"), "size": itemSize, "status": "completed", "creditsConsumed": 0.0, "imageUrl": galleryImageURL(image), "createdAt": created.UTC().Format(time.RFC3339Nano), "outputRole": "upload", "referenceImages": refs}, created: created, id: itemID})
+			continue
+		}
+		var id, prompt, model, size string
+		var revised *string
+		var credits float64
+		var key, bucket *string
+		var metadata any
+		var created time.Time
+		if err := rows.Scan(&id, &prompt, &revised, &model, &size, &credits, &key, &bucket, &metadata, &created); err != nil {
+			return err
+		}
+		all = append(all, galleryRow{item: map[string]any{"id": id, "parentId": id, "prompt": prompt, "revisedPrompt": revised, "promptRepairNotice": nil, "model": model, "size": size, "status": "completed", "creditsConsumed": credits, "imageUrl": generationURL(key, bucket), "createdAt": created.UTC().Format(time.RFC3339Nano), "outputRole": "final", "referenceImages": galleryReferenceImages(metadata)}, created: created, id: id})
 	}
-	rows, err := b.db.Query(r.Context(), `SELECT id,user_id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 AND status='completed' AND storage_key IS NOT NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`, s.User.ID, in.Limit, in.Offset)
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	hasMore := len(all) > in.Limit
+	if hasMore {
+		all = all[:in.Limit]
+	}
+	items := make([]any, 0, len(all))
+	for _, row := range all {
+		items = append(items, row.item)
+	}
+	var next any
+	if hasMore && len(all) > 0 {
+		next = encodeGalleryCursor(b.config.authSecret, s.User.ID, in.Tab, in.Limit, all[len(all)-1].created, all[len(all)-1].id)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": next})
+	return nil
+}
+
+// handleMediaLimits exposes the user-facing system media policy through the Go
+// session boundary so dashboard pages do not read runtime settings in Next.js.
+func (b *backend) handleMediaLimits(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireSession(r); err != nil {
+		return err
+	}
+	value, err := b.setting(r.Context(), "IMAGE_EDIT_MAX_REFERENCE_IMAGES", 16)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	out := []any{}
-	for rows.Next() {
-		v := generationDTO{}
-		if err := rows.Scan(&v.ID, &v.UserID, &v.Prompt, &v.RevisedPrompt, &v.Model, &v.Size, &v.Status, &v.StorageKey, &v.StorageBucket, &v.CreditsConsumed, &v.Error, &v.Metadata, &v.CreatedAt, &v.CompletedAt); err != nil {
-			return err
+	limit := 16
+	switch n := value.(type) {
+	case float64:
+		limit = int(n)
+	case int:
+		limit = n
+	case string:
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(n)); parseErr == nil {
+			limit = parsed
 		}
-		p := publicGeneration(v)
-		p["parentId"] = v.ID
-		p["outputRole"] = "final"
-		delete(p, "userId")
-		out = append(out, p)
 	}
-	writeJSON(w, 200, map[string]any{"items": out, "nextCursor": nil})
-	return rows.Err()
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 256 {
+		limit = 256
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"maxEditReferenceImages": limit})
+	return nil
 }
 
 func (b *backend) handleHistory(w http.ResponseWriter, r *http.Request) error {

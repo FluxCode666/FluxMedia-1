@@ -5,19 +5,15 @@
  * 由客户端调用同一 operation；页面不再计算总数或按 `page * 20` 重查累计数据。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { getCurrentUser } from "@repo/shared/auth/server";
+import { getServerSession } from "@repo/shared/auth/server";
 import type {
   GalleryListOutput,
   GalleryTab,
 } from "@repo/shared/image-generation/gallery-contract";
-import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
-import { invokeOperation } from "@repo/shared/uol";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { GalleryClient } from "@/features/image-generation/components/gallery-client";
-import { ensureUolInitialized } from "@/server/uol-init";
+import { requestGoJson } from "@/server/go-backend-client";
 
 interface GalleryPageProps {
   searchParams: Promise<{ tab?: string }>;
@@ -31,25 +27,26 @@ function parseGalleryTab(value: string | undefined): GalleryTab {
 
 /** 渲染图库首批；数据库错误继续抛给 Next 错误边界，不伪装为空图库。 */
 export default async function GalleryPage({ searchParams }: GalleryPageProps) {
-  const [user, locale, params] = await Promise.all([
-    getCurrentUser(),
+  const [session, locale, params] = await Promise.all([
+    getServerSession(),
     getLocale(),
     searchParams,
   ]);
-  if (!user) redirect(`/${locale}/sign-in`);
+  if (!session?.user) redirect(`/${locale}/sign-in`);
   const copy = (en: string, zh: string) => (locale === "zh" ? zh : en);
   const activeTab = parseGalleryTab(params.tab);
-  await ensureUolInitialized();
-  const [role, timeZone, mediaLimits] = await Promise.all([
-    getUserRoleById(user.id),
-    getUserTimeZone(user.id),
-    getMediaLimitDefaults(),
+  const [initialBatch, profile, mediaLimits] = await Promise.all([
+    requestGoJson<GalleryListOutput>("/api/image-generation/gallery", {
+      method: "POST",
+      body: JSON.stringify({ cursor: null, limit: 20, tab: activeTab }),
+    }),
+    requestGoJson<{ timeZone?: string; defaultTimeZone?: string }>(
+      "/api/user/profile"
+    ),
+    requestGoJson<{ maxEditReferenceImages: number }>(
+      "/api/image-generation/media-limits"
+    ),
   ]);
-  const initialBatch = await invokeOperation<GalleryListOutput>(
-    "image.listMyGallery",
-    { cursor: null, limit: 20, tab: activeTab },
-    { type: "user", userId: user.id, role }
-  );
 
   return (
     <div className="container mx-auto space-y-8 px-4 py-6 md:px-6">
@@ -65,8 +62,8 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
         key={activeTab}
         initialBatch={initialBatch}
         activeTab={activeTab}
-        principalFingerprint={user.id}
-        timeZone={timeZone}
+        principalFingerprint={session.user.id}
+        timeZone={profile.timeZone || profile.defaultTimeZone || "UTC"}
         maxReferenceImages={mediaLimits.maxEditReferenceImages}
       />
     </div>

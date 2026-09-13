@@ -30,6 +30,7 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementDelete))
 	mux.HandleFunc("POST /api/admin/announcements/{id}/toggle", b.endpoint(b.handleAnnouncementToggle))
 	mux.HandleFunc("GET /api/referrals/dashboard", b.endpoint(b.handleReferralDashboard))
+	mux.HandleFunc("GET /api/referrals/relationships", b.endpoint(b.handleReferralRelationships))
 	mux.HandleFunc("POST /api/analytics/data-dashboard", b.endpoint(b.handleDataDashboard))
 	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
 	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
@@ -570,12 +571,124 @@ func (b *backend) handleReferralDashboard(w http.ResponseWriter, r *http.Request
 	if e != nil {
 		return e
 	}
-	base := b.config.authURL
+	base := strings.TrimRight(b.config.authURL, "/")
 	if base == "" {
-		base = "/"
+		base = "http://localhost:3000"
 	}
-	writeJSON(w, 200, map[string]any{"code": code, "inviteUrl": strings.TrimRight(base, "/") + "/?ref=" + code, "invitedCount": invited, "rewardedCount": rewarded, "totalRewardCredits": total, "rewardConfig": map[string]any{}})
+	rewardConfig, err := b.referralRewardConfig(r.Context())
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"code": code, "inviteUrl": base + "/r/" + code, "invitedCount": invited, "rewardedCount": rewarded, "totalRewardCredits": total, "rewardConfig": rewardConfig})
 	return nil
+}
+
+// handleReferralRelationships returns the current user's complete, redacted
+// relationship list. Identity is always derived from the authenticated session;
+// no user id or pagination input is accepted from the browser.
+func (b *backend) handleReferralRelationships(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireSession(r)
+	if err != nil {
+		return err
+	}
+	rows, err := b.db.Query(r.Context(), `SELECT rr.id,u.name,u.email,rr.status,rr.inviter_reward_credits,rr.invitee_reward_credits,rr.created_at,rr.rewarded_at FROM referral_relationship rr JOIN "user" u ON u.id=rr.invitee_user_id WHERE rr.inviter_user_id=$1 ORDER BY rr.created_at DESC,rr.id DESC`, s.User.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	records := make([]any, 0)
+	for rows.Next() {
+		var id, name, email, status string
+		var inviterReward, inviteeReward float64
+		var created time.Time
+		var rewardedAt *time.Time
+		if err := rows.Scan(&id, &name, &email, &status, &inviterReward, &inviteeReward, &created, &rewardedAt); err != nil {
+			return err
+		}
+		if status != "pending" && status != "rewarded" && status != "skipped" {
+			status = "pending"
+		}
+		records = append(records, map[string]any{
+			"id": id, "inviteeName": name, "inviteeEmail": maskReferralEmail(email),
+			"status": status, "inviterRewardCredits": inviterReward, "inviteeRewardCredits": inviteeReward,
+			"createdAt": created.UTC().Format(time.RFC3339Nano), "rewardedAt": referralTimeString(rewardedAt),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"records": records, "totalCount": len(records)})
+	return nil
+}
+
+func referralTimeString(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
+func maskReferralEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "***"
+	}
+	return parts[0][:1] + "***@" + parts[1]
+}
+
+func (b *backend) referralRewardConfig(ctx context.Context) (map[string]any, error) {
+	fallback := map[string]any{
+		"enabled": false,
+		"inviter": map[string]any{"mode": "percentage", "value": 10.0},
+		"invitee": map[string]any{"mode": "percentage", "value": 10.0},
+	}
+	value, err := b.setting(ctx, "REFERRAL_REWARD_CONFIG", fallback)
+	if err != nil {
+		return nil, err
+	}
+	candidate, ok := value.(map[string]any)
+	if !ok {
+		return fallback, nil
+	}
+	result := map[string]any{"enabled": false}
+	if enabled, ok := candidate["enabled"].(bool); ok {
+		result["enabled"] = enabled
+	}
+	for _, side := range []string{"inviter", "invitee"} {
+		result[side] = normalizeReferralRewardSide(candidate[side], fallback[side].(map[string]any))
+	}
+	return result, nil
+}
+
+func normalizeReferralRewardSide(value any, fallback map[string]any) map[string]any {
+	candidate, ok := value.(map[string]any)
+	if !ok {
+		return fallback
+	}
+	mode, _ := candidate["mode"].(string)
+	if mode != "fixed" && mode != "percentage" {
+		mode = fallback["mode"].(string)
+	}
+	amount := 0.0
+	switch n := candidate["value"].(type) {
+	case float64:
+		amount = n
+	case float32:
+		amount = float64(n)
+	case int:
+		amount = float64(n)
+	}
+	if amount < 0 || amount != amount {
+		amount = fallback["value"].(float64)
+	}
+	max := 100.0
+	if mode == "fixed" {
+		max = 1_000_000
+	}
+	if amount > max {
+		amount = max
+	}
+	return map[string]any{"mode": mode, "value": amount}
 }
 
 func (b *backend) handleAnnouncementAdminList(w http.ResponseWriter, r *http.Request) error {
