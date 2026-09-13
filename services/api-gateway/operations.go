@@ -348,12 +348,45 @@ func (b *backend) populateOperationsGrowthCommercial(ctx context.Context, snapsh
 	for i, k := range keys {
 		lifecycle[k] = operationsCountMetricFor(cl[i], pl[i], available, prevAvailable)
 	}
+	revenue := func(a, z time.Time) []any {
+		rows, e := b.db.Query(ctx, `SELECT upper(currency),COALESCE(sum(amount_minor),0) FROM payment_order WHERE status='fulfilled' AND purpose IN ('credit_top_up','credit_package') AND fulfilled_at >= $1 AND fulfilled_at < $2 GROUP BY upper(currency) ORDER BY upper(currency)`, a, z)
+		if e != nil {
+			return []any{}
+		}
+		defer rows.Close()
+		out := []any{}
+		for rows.Next() {
+			var c string
+			var n int64
+			if rows.Scan(&c, &n) == nil {
+				out = append(out, map[string]any{"currency": c, "amountMinor": n})
+			}
+		}
+		return out
+	}
+	curRev, prevRev := revenue(start, end), revenue(ps, pe)
+	conv := func(paid, active int, avail bool) map[string]any {
+		rate := any(nil)
+		if active > 0 {
+			rate = float64(paid) / float64(active)
+		}
+		reason := "zero_current_denominator"
+		if !avail {
+			reason = "pre_epoch"
+		}
+		return map[string]any{"status": func() string {
+			if avail {
+				return "value"
+			}
+			return "pre_epoch"
+		}(), "current": map[string]any{"paidUsers": paid, "activeUsers": active, "rate": rate}, "previous": map[string]any{"paidUsers": 0, "activeUsers": 0, "rate": nil}, "comparison": map[string]any{"status": "not_comparable", "reason": reason}}
+	}
 	commercial := map[string]any{"generatedAt": snapshot["generatedAt"], "range": rng, "lifecycle": lifecycle, "revenue": map[string]any{"status": func() string {
 		if available {
 			return "value"
 		}
 		return "pre_epoch"
-	}(), "current": []any{}, "previous": []any{}, "comparison": []any{}, "disclaimer": "不含线下退款"}, "conversion": map[string]any{"fromCreation": zeroRateMetric(), "fromLogin": zeroRateMetric()}}
+	}(), "current": curRev, "previous": prevRev, "comparison": []any{}, "disclaimer": "不含线下退款"}, "conversion": map[string]any{"fromCreation": conv(payment, creation, available), "fromLogin": conv(payment, login, available)}}
 	snapshot["commercial"] = commercial
 	return nil
 }
