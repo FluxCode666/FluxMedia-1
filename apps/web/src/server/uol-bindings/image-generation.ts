@@ -28,8 +28,6 @@ import {
   imageListMyGallery,
   imageMaintainHistoryCountProjection,
 } from "@repo/shared/uol/operations/image-generation";
-import { sql } from "drizzle-orm";
-import { z } from "zod";
 
 import type { stageImageInputReferences } from "@/features/image-generation/image-input-storage";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
@@ -41,17 +39,12 @@ import type {
   ImageGenerationCallbacks,
   ImageQuality,
 } from "@/features/image-generation/types";
-import { extractExecuteRows } from "@/server/database-result";
 import { requestGoJson } from "@/server/go-backend-client";
 
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
 type ImageGenerateInput = ImageGenerateOperationInput;
 type ImageGenerateOutput = ImageGenerateOperationOutput;
-
-const projectionDriftRowSchema = z.object({
-  driftCount: z.coerce.number().int().nonnegative().safe(),
-});
 
 /** 图片 binding 可替换依赖；测试注入桩，生产动态加载真实媒体服务。 */
 export interface ImageGenerationBindingDependencies {
@@ -307,17 +300,16 @@ bindOperationExecute(imageGenerate, (input, principal, ctx) =>
 
 /** 校验或幂等重建媒体历史精确计数投影；数据库函数自行持有写锁和漂移口径。 */
 bindOperationExecute(imageMaintainHistoryCountProjection, async (input) => {
-  const { db } = await import("@repo/database");
-  if (input.mode === "rebuild") {
-    await db.execute(sql`select rebuild_media_history_count_projection()`);
-  }
-  const result = await db.execute(sql`
-    select media_history_count_projection_drift_count() as "driftCount"
-  `);
-  const driftCount = projectionDriftRowSchema.parse(
-    extractExecuteRows(result)[0]
-  ).driftCount;
-  return { driftCount, rebuilt: input.mode === "rebuild" };
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) throw new OperationError("internal_error", "维护服务未配置");
+  return requestGoJson<{ driftCount: number; rebuilt: boolean }>(
+    "/api/admin/image-generation/history-projection",
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+      body: JSON.stringify(input),
+    }
+  );
 });
 
 /** 绑定本人图库批次；数据库查询与 cursor 签名仅在服务端执行。 */

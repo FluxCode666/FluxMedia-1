@@ -35,7 +35,42 @@ func (b *backend) registerImageHistoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/image-generation/video-inputs", b.endpoint(b.handleVideoInputs))
 	mux.HandleFunc("POST /api/admin/image-generation/history", b.endpoint(b.handleAdminHistory))
 	mux.HandleFunc("POST /api/admin/image-generation/request-snapshot", b.endpoint(b.handleAdminRequestSnapshot))
+	mux.HandleFunc("POST /api/admin/image-generation/history-projection", b.endpoint(b.handleHistoryCountProjection))
 	mux.HandleFunc("GET /api/admin/image-generation/stats", b.endpoint(b.handleGenerationStats))
+}
+
+// handleHistoryCountProjection exposes the same database-owned projection
+// maintenance used by the legacy scheduler through the Go system boundary.
+// The function is idempotent and returns only the drift count.
+func (b *backend) handleHistoryCountProjection(w http.ResponseWriter, r *http.Request) error {
+	if !b.cronAuthorized(r) {
+		if _, err := b.requireAdmin(r, true); err != nil {
+			return err
+		}
+	}
+	var input struct {
+		Mode string `json:"mode"`
+	}
+	if err := decodeBody(r, &input); err != nil {
+		return err
+	}
+	if input.Mode != "verify" && input.Mode != "rebuild" {
+		return invalid("projection mode is invalid")
+	}
+	if input.Mode == "rebuild" {
+		if _, err := b.db.Exec(r.Context(), `SELECT rebuild_media_history_count_projection()`); err != nil {
+			return err
+		}
+	}
+	var drift int
+	if err := b.db.QueryRow(r.Context(), `SELECT media_history_count_projection_drift_count()`).Scan(&drift); err != nil {
+		return err
+	}
+	if drift < 0 {
+		drift = 0
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"driftCount": drift, "rebuilt": input.Mode == "rebuild"})
+	return nil
 }
 
 type generationDTO struct {
