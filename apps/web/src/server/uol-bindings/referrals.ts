@@ -1,12 +1,6 @@
 /** 用户推广看板 UOL 真实绑定；身份仅从 Principal 派生。 */
-import { resolvePublicAppUrl } from "@repo/shared/config";
-import {
-  fulfillReferralFirstPayment,
-  getReferralDashboard,
-  listReferralRelationships,
-} from "@repo/shared/referrals";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { bindOperationExecute, OperationError } from "@repo/shared/uol";
+import { fulfillReferralFirstPayment } from "@repo/shared/referrals";
 import {
   fulfillAlipayReferralFirstPayment,
   fulfillCreemReferralFirstPayment,
@@ -14,6 +8,9 @@ import {
   getMyReferralDashboard,
   listMyReferralRelationships,
 } from "@repo/shared/uol/operations/referrals";
+import { requestGoJson } from "@/server/go-backend-client";
+
+import type { ReferralRelationshipListOutput } from "@repo/shared/referrals/relationship-contract";
 
 bindOperationExecute(getMyReferralDashboard, async (_input, principal) => {
   if (principal.type !== "user") {
@@ -22,15 +19,9 @@ bindOperationExecute(getMyReferralDashboard, async (_input, principal) => {
       "User session authentication required"
     );
   }
-  const appUrl = resolvePublicAppUrl(
-    [
-      await getRuntimeSettingString("NEXT_PUBLIC_APP_URL"),
-      process.env.BETTER_AUTH_URL,
-      process.env.NEXT_PUBLIC_APP_URL,
-    ],
-    { allowInternal: process.env.NODE_ENV !== "production" }
-  );
-  return getReferralDashboard({ userId: principal.userId, appUrl });
+  // Referral dashboard reads are served by the Go backend so the production
+  // data path no longer reaches the Next.js database service.
+  return requestGoJson("/api/referrals/dashboard");
 });
 
 bindOperationExecute(listMyReferralRelationships, async (input, principal) => {
@@ -40,7 +31,12 @@ bindOperationExecute(listMyReferralRelationships, async (input, principal) => {
       "User session authentication required"
     );
   }
-  return listReferralRelationships(principal.userId, input);
+  // The Go endpoint derives the user from the forwarded session cookie and
+  // intentionally accepts no user id or pagination parameters.
+  void input;
+  return requestGoJson<ReferralRelationshipListOutput>(
+    "/api/referrals/relationships"
+  );
 });
 
 for (const [definition, provider] of [
