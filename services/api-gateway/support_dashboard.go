@@ -370,7 +370,12 @@ func (b *backend) handleAnnouncementList(w http.ResponseWriter, r *http.Request)
 	if e != nil {
 		return e
 	}
-	rows, e := b.db.Query(r.Context(), `SELECT a.id,a.title,a.content,a.severity,a.is_published,a.is_pinned,a.priority,a.published_at,a.expires_at,a.created_at,a.updated_at, ar.read_at FROM announcement a LEFT JOIN announcement_read ar ON ar.announcement_id=a.id AND ar.user_id=$1 WHERE a.is_published=true AND (a.published_at IS NULL OR a.published_at<=now()) AND (a.expires_at IS NULL OR a.expires_at>now()) ORDER BY a.is_pinned DESC,a.priority DESC,a.published_at DESC NULLS LAST,a.created_at DESC`, s.User.ID)
+	page, pageSize := announcementPageParams(r, 20)
+	var total int
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*) FROM announcement WHERE is_published=true AND (published_at IS NULL OR published_at<=now()) AND (expires_at IS NULL OR expires_at>now())`).Scan(&total); e != nil {
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT a.id,a.title,a.content,a.severity,a.is_published,a.is_pinned,a.priority,a.published_at,a.expires_at,a.created_at,a.updated_at, ar.read_at FROM announcement a LEFT JOIN announcement_read ar ON ar.announcement_id=a.id AND ar.user_id=$1 WHERE a.is_published=true AND (a.published_at IS NULL OR a.published_at<=now()) AND (a.expires_at IS NULL OR a.expires_at>now()) ORDER BY a.is_pinned DESC,a.priority DESC,a.published_at DESC NULLS LAST,a.created_at DESC,a.id DESC LIMIT $2 OFFSET $3`, s.User.ID, pageSize, (page-1)*pageSize)
 	if e != nil {
 		return e
 	}
@@ -384,33 +389,37 @@ func (b *backend) handleAnnouncementList(w http.ResponseWriter, r *http.Request)
 		if e = rows.Scan(&id, &t, &c, &sev, &pub, &pin, &pr, &pa, &ea, &ca, &ua, &ra); e != nil {
 			return e
 		}
-		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua, "isRead": ra != nil})
+		isRead := ra != nil && ua != nil && !ra.Before(*ua)
+		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua, "isRead": isRead})
 	}
-	// Keep the legacy `items` envelope for the full announcement page while also
-	// exposing the compact shape used by the dashboard support card.
-	selected := out
-	if rawSize := r.URL.Query().Get("pageSize"); rawSize != "" {
-		size, _ := strconv.Atoi(rawSize)
-		if size > 0 {
-			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-			if page < 1 {
-				page = 1
-			}
-			start := (page - 1) * size
-			if start >= len(out) {
-				selected = []any{}
-			} else {
-				end := start + size
-				if end > len(out) {
-					end = len(out)
-				}
-				selected = out[start:end]
-			}
-		}
+	if e = rows.Err(); e != nil {
+		return e
 	}
-	writeJSON(w, 200, map[string]any{"items": out, "announcements": selected, "total": len(out)})
+	writeJSON(w, 200, map[string]any{"items": out, "records": out, "announcements": out, "total": total, "totalCount": total, "page": page, "pageSize": pageSize, "totalPages": maxAnnouncementPages(total, pageSize)})
 	return nil
 }
+
+func announcementPageParams(r *http.Request, defaultSize int) (int, int) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if pageSize <= 0 {
+		pageSize = defaultSize
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+func maxAnnouncementPages(total, pageSize int) int {
+	if pageSize <= 0 || total <= 0 {
+		return 1
+	}
+	return (total + pageSize - 1) / pageSize
+}
+
 func (b *backend) handleAnnouncementRead(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireSession(r)
 	if e != nil {
@@ -425,37 +434,42 @@ func (b *backend) handleAnnouncementRead(w http.ResponseWriter, r *http.Request)
 	if in.ID == "" {
 		return invalid("id is required")
 	}
-	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=now()`, supportRandomID(), in.ID, s.User.ID)
+	var exists bool
+	if e = b.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM announcement WHERE id=$1)`, in.ID).Scan(&exists); e != nil {
+		return e
+	}
+	if !exists {
+		return &apiError{404, "NOT_FOUND", "公告不存在"}
+	}
+	result, e := b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=EXCLUDED.read_at`, supportRandomID(), in.ID, s.User.ID)
 	if e != nil {
 		return e
+	}
+	if result.RowsAffected() == 0 {
+		return &apiError{404, "NOT_FOUND", "公告不存在"}
 	}
 	writeJSON(w, 200, map[string]string{"message": "已标记为已读"})
 	return nil
 }
+
 func (b *backend) handleAnnouncementReadAll(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireSession(r)
 	if e != nil {
 		return e
 	}
-	rows, e := b.db.Query(r.Context(), `SELECT id FROM announcement WHERE is_published=true`)
+	result, e := b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at)
+SELECT $1 || a.id, a.id, $2, now() FROM announcement a
+LEFT JOIN announcement_read ar ON ar.announcement_id=a.id AND ar.user_id=$2
+WHERE a.is_published=true AND (a.published_at IS NULL OR a.published_at<=now()) AND (a.expires_at IS NULL OR a.expires_at>now())
+  AND (ar.id IS NULL OR ar.read_at<a.updated_at)
+ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=EXCLUDED.read_at`, supportRandomID()+"-", s.User.ID)
 	if e != nil {
 		return e
 	}
-	defer rows.Close()
-	count := int64(0)
-	for rows.Next() {
-		var id string
-		if e = rows.Scan(&id); e != nil {
-			return e
-		}
-		if _, e = b.db.Exec(r.Context(), `INSERT INTO announcement_read(id,announcement_id,user_id,read_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id,announcement_id) DO UPDATE SET read_at=now()`, supportRandomID(), id, s.User.ID); e != nil {
-			return e
-		}
-		count++
-	}
-	writeJSON(w, 200, map[string]any{"count": count})
+	writeJSON(w, 200, map[string]any{"count": result.RowsAffected()})
 	return nil
 }
+
 func (b *backend) handleAnnouncementUnread(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireSession(r)
 	if e != nil {
@@ -491,11 +505,11 @@ func (b *backend) handleAnnouncementCreate(w http.ResponseWriter, r *http.Reques
 	if e = decodeBody(r, &in); e != nil {
 		return e
 	}
-	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Content) == "" {
-		return invalid("title and content are required")
+	if err := validateAnnouncementInput(in.Title, in.Content, in.Severity, in.Priority, in.PublishedAt, in.ExpiresAt); err != nil {
+		return err
 	}
 	id := supportRandomID()
-	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement(id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'info'),$5,$6,$7,$8,$9,$10,$10)`, id, in.Title, in.Content, in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID)
+	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement(id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'info'),$5,$6,$7,$8,$9,$10,$10)`, id, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID)
 	if e != nil {
 		return e
 	}
@@ -517,9 +531,15 @@ func (b *backend) handleAnnouncementUpdate(w http.ResponseWriter, r *http.Reques
 	if e = decodeBody(r, &in); e != nil {
 		return e
 	}
-	_, e = b.db.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=now() WHERE id=$10`, in.Title, in.Content, in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, id)
+	if err := validateAnnouncementInput(in.Title, in.Content, in.Severity, in.Priority, in.PublishedAt, in.ExpiresAt); err != nil {
+		return err
+	}
+	result, e := b.db.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=now() WHERE id=$10`, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, id)
 	if e != nil {
 		return e
+	}
+	if result.RowsAffected() != 1 {
+		return &apiError{404, "NOT_FOUND", "公告不存在"}
 	}
 	writeJSON(w, 200, map[string]string{"message": "公告已更新"})
 	return nil
@@ -528,9 +548,12 @@ func (b *backend) handleAnnouncementDelete(w http.ResponseWriter, r *http.Reques
 	if _, e := b.requireAdmin(r, false); e != nil {
 		return e
 	}
-	_, e := b.db.Exec(r.Context(), `DELETE FROM announcement WHERE id=$1`, r.PathValue("id"))
+	result, e := b.db.Exec(r.Context(), `DELETE FROM announcement WHERE id=$1`, r.PathValue("id"))
 	if e != nil {
 		return e
+	}
+	if result.RowsAffected() != 1 {
+		return &apiError{404, "NOT_FOUND", "公告不存在"}
 	}
 	writeJSON(w, 200, map[string]string{"message": "公告已删除"})
 	return nil
@@ -543,9 +566,35 @@ func (b *backend) handleAnnouncementToggle(w http.ResponseWriter, r *http.Reques
 	var p bool
 	e = b.db.QueryRow(r.Context(), `UPDATE announcement SET is_published=NOT is_published,published_at=CASE WHEN NOT is_published AND published_at IS NULL THEN now() ELSE published_at END,updated_by_user_id=$1,updated_at=now() WHERE id=$2 RETURNING is_published`, s.User.ID, r.PathValue("id")).Scan(&p)
 	if e != nil {
+		if e == pgx.ErrNoRows {
+			return &apiError{404, "NOT_FOUND", "公告不存在"}
+		}
 		return e
 	}
 	writeJSON(w, 200, map[string]any{"isPublished": p})
+	return nil
+}
+
+func validateAnnouncementInput(title, content, severity string, priority int, publishedAt, expiresAt *time.Time) error {
+	title = strings.TrimSpace(title)
+	content = strings.TrimSpace(content)
+	if len([]rune(title)) < 2 || len([]rune(title)) > 160 {
+		return invalid("标题长度必须为 2-160 个字符")
+	}
+	if len([]rune(content)) < 2 || len([]rune(content)) > 10000 {
+		return invalid("内容长度必须为 2-10000 个字符")
+	}
+	switch severity {
+	case "", "info", "success", "warning", "critical":
+	default:
+		return invalid("severity 无效")
+	}
+	if priority < 0 || priority > 999 {
+		return invalid("priority 无效")
+	}
+	if publishedAt != nil && expiresAt != nil && !expiresAt.After(*publishedAt) {
+		return invalid("expiresAt must be after publishedAt")
+	}
 	return nil
 }
 func (b *backend) handleReferralDashboard(w http.ResponseWriter, r *http.Request) error {
@@ -695,7 +744,22 @@ func (b *backend) handleAnnouncementAdminList(w http.ResponseWriter, r *http.Req
 	if _, e := b.requireAdmin(r, false); e != nil {
 		return e
 	}
-	rows, e := b.db.Query(r.Context(), `SELECT id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_at,updated_at FROM announcement ORDER BY updated_at DESC`)
+	page, pageSize := announcementPageParams(r, 20)
+	filter := r.URL.Query().Get("published")
+	where := ""
+	args := []any{}
+	if filter == "published" {
+		where = " WHERE is_published=true"
+	} else if filter == "unpublished" {
+		where = " WHERE is_published=false"
+	} else if filter != "" && filter != "all" {
+		return invalid("published 无效")
+	}
+	var total int
+	if e := b.db.QueryRow(r.Context(), "SELECT count(*) FROM announcement"+where, args...).Scan(&total); e != nil {
+		return e
+	}
+	rows, e := b.db.Query(r.Context(), "SELECT id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id,created_at,updated_at FROM announcement"+where+" ORDER BY is_pinned DESC,updated_at DESC,id DESC LIMIT $1 OFFSET $2", pageSize, (page-1)*pageSize)
 	if e != nil {
 		return e
 	}
@@ -706,12 +770,17 @@ func (b *backend) handleAnnouncementAdminList(w http.ResponseWriter, r *http.Req
 		var pub, pin bool
 		var pr int
 		var pa, ea, ca, ua *time.Time
-		if e = rows.Scan(&id, &t, &c, &sev, &pub, &pin, &pr, &pa, &ea, &ca, &ua); e != nil {
+		var createdBy, updatedBy *string
+		if e = rows.Scan(&id, &t, &c, &sev, &pub, &pin, &pr, &pa, &ea, &createdBy, &updatedBy, &ca, &ua); e != nil {
 			return e
 		}
-		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPublished": pub, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdAt": ca, "updatedAt": ua})
+		out = append(out, map[string]any{"id": id, "title": t, "content": c, "severity": sev, "isPublished": pub, "isPinned": pin, "priority": pr, "publishedAt": pa, "expiresAt": ea, "createdByUserId": createdBy, "updatedByUserId": updatedBy, "createdAt": ca, "updatedAt": ua})
 	}
-	writeJSON(w, 200, map[string]any{"items": out})
+	var active, drafts, pinned int
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE is_published AND (published_at IS NULL OR published_at<=now()) AND (expires_at IS NULL OR expires_at>now())),count(*) FILTER (WHERE NOT is_published),count(*) FILTER (WHERE is_pinned) FROM announcement`).Scan(&active, &drafts, &pinned); e != nil {
+		return e
+	}
+	writeJSON(w, 200, map[string]any{"items": out, "records": out, "total": total, "totalCount": total, "page": page, "pageSize": pageSize, "totalPages": maxAnnouncementPages(total, pageSize), "stats": map[string]int{"active": active, "drafts": drafts, "pinned": pinned}})
 	return nil
 }
 

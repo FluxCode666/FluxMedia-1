@@ -25,16 +25,20 @@ export async function loadMyAnnouncementPage(
   input: UserAnnouncementListInput
 ): Promise<UserAnnouncementListOutput> {
   const raw = await requestGoJson<{
-    items: UserAnnouncementListOutput["records"];
-  }>("/api/announcements");
-  const items = raw.items ?? [];
-  const start = (input.page - 1) * input.pageSize;
+    records?: UserAnnouncementListOutput["records"];
+    items?: UserAnnouncementListOutput["records"];
+    page?: number;
+    pageSize?: number;
+    totalCount?: number;
+    totalPages?: number;
+  }>(`/api/announcements?page=${input.page}&pageSize=${input.pageSize}`);
+  const items = raw.records ?? raw.items ?? [];
   return {
-    records: items.slice(start, start + input.pageSize),
-    page: input.page,
-    pageSize: input.pageSize,
-    totalCount: items.length,
-    totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)),
+    records: items,
+    page: raw.page ?? input.page,
+    pageSize: raw.pageSize ?? input.pageSize,
+    totalCount: raw.totalCount ?? items.length,
+    totalPages: raw.totalPages ?? Math.max(1, Math.ceil((raw.totalCount ?? items.length) / input.pageSize)),
   };
 }
 
@@ -55,22 +59,21 @@ export async function loadAdminAnnouncementPage(
   input: AdminAnnouncementListInput
 ): Promise<AdminAnnouncementListOutput> {
   const raw = await requestGoJson<{
-    items: AdminAnnouncementListOutput["records"];
-  }>("/api/admin/announcements");
-  let items = raw.items ?? [];
-  if (input.published === "published")
-    items = items.filter((item) => item.isPublished);
-  if (input.published === "unpublished")
-    items = items.filter((item) => !item.isPublished);
-  const start = (input.page - 1) * input.pageSize;
-  const active = (raw.items ?? []).filter((item) => item.isPublished).length;
-  const pinned = (raw.items ?? []).filter((item) => item.isPinned).length;
+    records?: AdminAnnouncementListOutput["records"];
+    items?: AdminAnnouncementListOutput["records"];
+    page?: number;
+    pageSize?: number;
+    totalCount?: number;
+    totalPages?: number;
+    stats?: AdminAnnouncementListOutput["stats"];
+  }>(`/api/admin/announcements?page=${input.page}&pageSize=${input.pageSize}&published=${input.published}`);
+  const items = raw.records ?? raw.items ?? [];
   return {
-    records: items.slice(start, start + input.pageSize),
-    page: input.page,
-    pageSize: input.pageSize,
-    totalCount: items.length,
-    totalPages: Math.max(1, Math.ceil(items.length / input.pageSize)),
-    stats: { active, drafts: (raw.items ?? []).length - active, pinned },
+    records: items,
+    page: raw.page ?? input.page,
+    pageSize: raw.pageSize ?? input.pageSize,
+    totalCount: raw.totalCount ?? items.length,
+    totalPages: raw.totalPages ?? Math.max(1, Math.ceil((raw.totalCount ?? items.length) / input.pageSize)),
+    stats: raw.stats ?? { active: 0, drafts: 0, pinned: 0 },
   };
 }

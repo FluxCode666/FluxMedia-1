@@ -1,48 +1,61 @@
-/** 公告集合已读写入的 PostgreSQL 适配器聚焦测试。 */
+/** 公告 Go 适配器测试：验证请求转发与后端计数契约。 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const databaseMocks = vi.hoisted(() => ({
-  db: {
-    execute: vi.fn(),
-    transaction: vi.fn(),
-  },
-}));
+const getAll = vi.fn(() => [{ name: "session", value: "token" }]);
+vi.mock("next/headers", () => ({ cookies: vi.fn(async () => ({ getAll })) }));
 
-vi.mock("@repo/database", () => ({
-  db: databaseMocks.db,
-}));
+import {
+  markAllActiveAnnouncementsReadForUser,
+  readAdminAnnouncementsPage,
+  readUserAnnouncementsPage,
+} from "./list-service";
 
-import { markAllActiveAnnouncementsReadForUser } from "./list-service";
-
-describe("markAllActiveAnnouncementsReadForUser", () => {
+describe("announcement Go adapter", () => {
   beforeEach(() => {
-    databaseMocks.db.execute.mockReset();
-    databaseMocks.db.transaction.mockReset();
+    vi.restoreAllMocks();
+    getAll.mockClear();
   });
 
-  it("uses one set-based statement and returns the affected row count", async () => {
-    databaseMocks.db.execute.mockResolvedValue({
-      rows: [
-        { announcement_id: "announcement-1" },
-        { announcement_id: "announcement-2" },
-      ],
-    });
-
-    await expect(markAllActiveAnnouncementsReadForUser("user-1")).resolves.toBe(
-      2
+  it("forwards user pagination with the current session cookie", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          records: [],
+          page: 2,
+          pageSize: 20,
+          totalCount: 0,
+          totalPages: 1,
+        }),
+        { status: 200 }
+      )
     );
-    expect(databaseMocks.db.execute).toHaveBeenCalledTimes(1);
-    expect(databaseMocks.db.transaction).not.toHaveBeenCalled();
+    await expect(
+      readUserAnnouncementsPage("user-1", { page: 2, pageSize: 20 })
+    ).resolves.toMatchObject({ page: 2 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/announcements?page=2&pageSize=20"),
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
   });
 
-  it("supports the Neon array result shape without pre-reading IDs", async () => {
-    databaseMocks.db.execute.mockResolvedValue([
-      { announcement_id: "announcement-1" },
-    ]);
-
-    await expect(markAllActiveAnnouncementsReadForUser("user-1")).resolves.toBe(
-      1
-    );
-    expect(databaseMocks.db.execute).toHaveBeenCalledTimes(1);
+  it("forwards admin filters and set-based read-all count", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            records: [],
+            page: 1,
+            pageSize: 20,
+            totalCount: 0,
+            totalPages: 1,
+            stats: { active: 0, drafts: 0, pinned: 0 },
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ count: 3 }), { status: 200 }));
+    await readAdminAnnouncementsPage({ page: 1, pageSize: 20, published: "published" });
+    await expect(markAllActiveAnnouncementsReadForUser("user-1")).resolves.toBe(3);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 });
