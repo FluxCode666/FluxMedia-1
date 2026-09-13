@@ -6,6 +6,7 @@
  */
 import { isValidTimeZone } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
+import { requestGoJson } from "@/server/go-backend-client";
 import { bindOperationExecute, OperationError } from "@repo/shared/uol";
 import {
   ensureCurrentOperationsEpoch,
@@ -51,10 +52,10 @@ bindOperationExecute(recordWebVisit, async (_input, principal) => {
     );
   }
   try {
-    return await recordOperationsWebVisit({
-      userId: principal.userId,
-      timeZone: getAppTimeZone(),
-    });
+    if (process.env.GO_BACKEND_URL || process.env.GO_BACKEND_INTERNAL_URL) {
+      return await requestGoJson("/api/operations/web-visit", { method: "POST", body: "{}" });
+    }
+    return await recordOperationsWebVisit({ userId: principal.userId, timeZone: getAppTimeZone() });
   } catch (error) {
     throwOperationsFactsOperationError(error);
   }

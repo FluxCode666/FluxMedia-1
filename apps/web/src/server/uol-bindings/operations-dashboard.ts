@@ -47,10 +47,14 @@ import {
 } from "@/features/operations-dashboard/export-worker";
 import { OperationsGrowthServiceError } from "@/features/operations-dashboard/growth-service";
 import { OperationsHealthAdapterError } from "@/features/operations-dashboard/health-adapter";
+import { requestGoJson } from "@/server/go-backend-client";
 import {
   databaseOperationsDashboardService,
   OperationsDashboardServiceError,
 } from "@/features/operations-dashboard/operations-dashboard-service";
+
+const goOperationsEnabled = () =>
+  Boolean(process.env.GO_BACKEND_URL || process.env.GO_BACKEND_INTERNAL_URL);
 
 /**
  * 收窄已由 invokeOperation 授权的人工 Principal，并执行运营页面限流。
@@ -247,10 +251,9 @@ bindExecute(
         "operations.getOverview",
         context,
         async () => {
-          const snapshot = await databaseOperationsDashboardService.getOverview(
-            input,
-            getAppTimeZone()
-          );
+          const snapshot = goOperationsEnabled()
+            ? await requestGoJson("/api/admin/operations/overview", { method: "POST", body: JSON.stringify(input) })
+            : await databaseOperationsDashboardService.getOverview(input, getAppTimeZone());
           return operationsOverviewOutputSchema.parse(snapshot);
         },
         (snapshot) => ({
@@ -283,11 +286,9 @@ bindExecute(
         context,
         async () =>
           operationsDetailOutputSchema.parse(
-            await loadOperationsDetail({
-              actorUserId: adminPrincipal.userId,
-              timeZone: getAppTimeZone(),
-              input,
-            })
+            goOperationsEnabled()
+              ? await requestGoJson("/api/admin/operations/detail", { method: "POST", body: JSON.stringify(input) })
+              : await loadOperationsDetail({ actorUserId: adminPrincipal.userId, timeZone: getAppTimeZone(), input })
           ),
         (result) => ({
           module: result.selection.module,
@@ -313,11 +314,9 @@ bindExecute(
         context,
         async () =>
           operationsCreateExportOutputSchema.parse(
-            await createOperationsExport({
-              createdBy: admin.userId,
-              timeZone: getAppTimeZone(),
-              input,
-            })
+            goOperationsEnabled()
+              ? await requestGoJson("/api/admin/operations/exports", { method: "POST", body: JSON.stringify(input) })
+              : await createOperationsExport({ createdBy: admin.userId, timeZone: getAppTimeZone(), input })
           ),
         (result) => ({
           module: result.task.exportType,
@@ -342,7 +341,9 @@ bindExecute(
         context,
         async () =>
           operationsListExportsOutputSchema.parse(
-            await listOperationsExports({ createdBy: admin.userId, input })
+            goOperationsEnabled()
+              ? await requestGoJson(`/api/admin/operations/exports?limit=${encodeURIComponent(String((input as {limit?:number})?.limit ?? 20))}${(input as {cursor?:string})?.cursor ? `&cursor=${encodeURIComponent((input as {cursor:string}).cursor)}` : ""}`)
+              : await listOperationsExports({ createdBy: admin.userId, input })
           ),
         (result) => ({ rowCount: result.tasks.length })
       );
@@ -363,7 +364,9 @@ bindExecute(
         context,
         async () =>
           operationsRetryExportOutputSchema.parse(
-            await retryOperationsExport({ createdBy: admin.userId, input })
+            goOperationsEnabled()
+              ? await requestGoJson("/api/admin/operations/exports/retry", { method: "POST", body: JSON.stringify(input) })
+              : await retryOperationsExport({ createdBy: admin.userId, input })
           ),
         (result) => ({
           module: result.task.exportType,
@@ -392,15 +395,13 @@ bindExecute(
         context,
         async () =>
           operationsPrepareExportDownloadOutputSchema.parse(
-            await prepareOperationsExportDownload({
-              createdBy: admin.userId,
-              input,
-              localDownloadUrl: (taskId) =>
-                new URL(
-                  `/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`,
-                  origin
-                ).toString(),
-            })
+            goOperationsEnabled()
+              ? await requestGoJson("/api/admin/operations/exports/prepare-download", { method: "POST", body: JSON.stringify(input) })
+              : await prepareOperationsExportDownload({
+                  createdBy: admin.userId,
+                  input,
+                  localDownloadUrl: (taskId) => new URL(`/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`, origin).toString(),
+                })
           ),
         (result) => ({ exportTaskId: result.taskId })
       );
@@ -421,10 +422,9 @@ bindExecute(
         context,
         async () =>
           operationsOpenLocalExportDownloadOutputSchema.parse(
-            await openOperationsLocalExportDownload({
-              createdBy: admin.userId,
-              taskId: requireOperationsTaskId(input),
-            })
+            goOperationsEnabled()
+              ? await requestGoJson("/api/admin/operations/exports/prepare-download", { method: "POST", body: JSON.stringify(input) })
+              : await openOperationsLocalExportDownload({ createdBy: admin.userId, taskId: requireOperationsTaskId(input) })
           ),
         (result) => ({ exportTaskId: result.taskId })
       );
