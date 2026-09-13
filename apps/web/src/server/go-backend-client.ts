@@ -18,7 +18,15 @@ export class GoBackendRequestError extends Error {
 /** Call the Go backend from a server action while preserving the browser session. */
 export async function requestGoJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
-  const cookieHeader = (await cookies()).getAll().map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+  // Scheduled jobs run outside a Next request scope. In that context there is
+  // no browser cookie to forward; cron/internal endpoints authenticate via
+  // their explicit Authorization header instead.
+  let cookieHeader = "";
+  try {
+    cookieHeader = (await cookies()).getAll().map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+  } catch {
+    cookieHeader = "";
+  }
   const headers = new Headers(init.headers);
   if (!headers.has("content-type") && init.body) headers.set("content-type", "application/json");
   if (cookieHeader) headers.set("cookie", cookieHeader);
