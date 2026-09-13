@@ -4,9 +4,11 @@ package main
 // PostgreSQL so retries and downloads remain consistent across web processes.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -177,8 +179,189 @@ func (b *backend) handleOperationsOverview(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		tz = "UTC"
 	}
-	writeJSON(w, http.StatusOK, buildOperationsZeroOverview(time.Now(), tz, input))
+	snapshot := buildOperationsZeroOverview(time.Now(), tz, input)
+	if err := b.populateOperationsContent(r, snapshot); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 	return nil
+}
+
+// populateOperationsContent replaces the content module's placeholder values
+// with the immutable output/credit read models. The remaining modules retain
+// their explicit pre-epoch state until their source facts are migrated.
+func (b *backend) populateOperationsContent(r *http.Request, snapshot map[string]any) error {
+	rng, ok := snapshot["range"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	start, err := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	if err != nil {
+		return nil
+	}
+	end, err := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	if err != nil {
+		return nil
+	}
+	previous, _ := rng["previous"].(map[string]any)
+	prevStart, _ := time.Parse(time.RFC3339, fmt.Sprint(previous["start"]))
+	prevEnd, _ := time.Parse(time.RFC3339, fmt.Sprint(previous["end"]))
+	cur, err := b.readOperationsContentTotals(r.Context(), start, end)
+	if err != nil {
+		return err
+	}
+	prev, err := b.readOperationsContentTotals(r.Context(), prevStart, prevEnd)
+	if err != nil {
+		return err
+	}
+	series, err := b.readOperationsContentSeries(r.Context(), start, end, rng["buckets"])
+	if err != nil {
+		return err
+	}
+	content := map[string]any{
+		"generatedAt": snapshot["generatedAt"],
+		"range":       rng,
+		"metrics": map[string]any{
+			"imageCount":   operationsCountMetric(cur.imageCount, prev.imageCount),
+			"videoCount":   operationsCountMetric(cur.videoCount, prev.videoCount),
+			"videoSeconds": operationsCountMetric(cur.videoSeconds, prev.videoSeconds),
+			"netCredits": map[string]any{
+				"status": "value", "current": cur.netCredits, "previous": prev.netCredits,
+				"comparison": operationsCreditComparison(cur.netCredits, prev.netCredits),
+			},
+		},
+		"series": series,
+	}
+	snapshot["content"] = content
+	return nil
+}
+
+type operationsContentTotals struct {
+	imageCount, videoCount, videoSeconds int
+	netCredits                           float64
+}
+
+func (b *backend) readOperationsContentTotals(ctx context.Context, start, end time.Time) (operationsContentTotals, error) {
+	var t operationsContentTotals
+	err := b.db.QueryRow(ctx, `SELECT COALESCE(sum(image_count),0)::int, COALESCE(sum(video_seconds),0)::int, count(*) FILTER (WHERE output_kind='video')::int FROM user_output_usage_event WHERE operation_created_at >= $1 AND operation_created_at < $2`, start, end).Scan(&t.imageCount, &t.videoSeconds, &t.videoCount)
+	if err != nil {
+		return t, err
+	}
+	err = b.db.QueryRow(ctx, `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE operation_created_at >= $1 AND operation_created_at < $2`, start, end).Scan(&t.netCredits)
+	return t, err
+}
+
+func operationsCountMetric(current, previous int) map[string]any {
+	comparison := map[string]any{"status": "not_comparable", "reason": "zero_previous", "current": current, "previous": previous}
+	if previous > 0 {
+		comparison = map[string]any{"status": "value", "current": current, "previous": previous, "changePercent": (float64(current-previous) / float64(previous)) * 100}
+	}
+	return map[string]any{"status": "value", "current": current, "previous": previous, "comparison": comparison}
+}
+
+func operationsCreditComparison(current, previous float64) map[string]any {
+	if previous == 0 {
+		return map[string]any{"status": "not_comparable", "reason": "zero_previous", "current": current, "previous": previous}
+	}
+	return map[string]any{"status": "value", "current": current, "previous": previous, "changePercent": ((current - previous) / previous) * 100}
+}
+
+func (b *backend) readOperationsContentSeries(ctx context.Context, start, end time.Time, rawBuckets any) (map[string]any, error) {
+	buckets, _ := rawBuckets.([]any)
+	image := make([]any, len(buckets))
+	video := make([]any, len(buckets))
+	seconds := make([]any, len(buckets))
+	credits := make([]any, len(buckets))
+	for i, raw := range buckets {
+		bucket, _ := raw.(map[string]any)
+		base := map[string]any{"key": bucket["key"], "granularity": bucket["granularity"], "from": bucket["from"], "to": bucket["to"], "start": bucket["start"], "end": bucket["end"], "availability": bucket["availability"], "dataFrom": bucket["dataFrom"]}
+		image[i] = cloneOperationsSeriesBucket(base, 0)
+		video[i] = cloneOperationsSeriesBucket(base, 0)
+		seconds[i] = cloneOperationsSeriesBucket(base, 0)
+		credits[i] = cloneOperationsSeriesBucket(base, 0)
+	}
+	rows, err := b.db.Query(ctx, `SELECT operation_created_at, output_kind, COALESCE(image_count,0), COALESCE(video_seconds,0) FROM user_output_usage_event WHERE operation_created_at >= $1 AND operation_created_at < $2`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var at time.Time
+		var kind string
+		var images, secs int
+		if err := rows.Scan(&at, &kind, &images, &secs); err != nil {
+			return nil, err
+		}
+		idx := operationsBucketIndex(at, buckets)
+		if idx < 0 || idx >= len(buckets) {
+			continue
+		}
+		addOperationsSeriesValue(image[idx], images)
+		addOperationsSeriesValue(video[idx], func() int {
+			if kind == "video" {
+				return 1
+			}
+			return 0
+		}())
+		addOperationsSeriesValue(seconds[idx], secs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	creditRows, err := b.db.Query(ctx, `SELECT operation_created_at, COALESCE(net_consumed,0) FROM credit_usage_operation WHERE operation_created_at >= $1 AND operation_created_at < $2`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer creditRows.Close()
+	for creditRows.Next() {
+		var at time.Time
+		var amount float64
+		if err := creditRows.Scan(&at, &amount); err != nil {
+			return nil, err
+		}
+		idx := operationsBucketIndex(at, buckets)
+		if idx >= 0 && idx < len(buckets) {
+			addOperationsSeriesFloat(credits[idx], amount)
+		}
+	}
+	if err := creditRows.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"imageCount": image, "videoCount": video, "videoSeconds": seconds, "netCredits": credits}, nil
+}
+
+func cloneOperationsSeriesBucket(base map[string]any, value float64) map[string]any {
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	out["status"] = "value"
+	out["value"] = value
+	return out
+}
+
+func addOperationsSeriesValue(item any, value int) {
+	if m, ok := item.(map[string]any); ok {
+		m["value"] = m["value"].(float64) + float64(value)
+	}
+}
+
+func addOperationsSeriesFloat(item any, value float64) {
+	if m, ok := item.(map[string]any); ok {
+		m["value"] = m["value"].(float64) + value
+	}
+}
+
+func operationsBucketIndex(at time.Time, buckets []any) int {
+	for i, raw := range buckets {
+		m, _ := raw.(map[string]any)
+		start, e1 := time.Parse(time.RFC3339, fmt.Sprint(m["start"]))
+		end, e2 := time.Parse(time.RFC3339, fmt.Sprint(m["end"]))
+		if e1 == nil && e2 == nil && !at.Before(start) && at.Before(end) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (b *backend) handleOperationsDetail(w http.ResponseWriter, r *http.Request) error {

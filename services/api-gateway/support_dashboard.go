@@ -116,7 +116,7 @@ func (b *backend) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request)
 	var credit24, creditLife float64
 	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1 AND operation_created_at >= $2 AND operation_created_at < $3`, s.User.ID, start, asOf).Scan(&credit24)
 	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(net_consumed),0) FROM credit_usage_operation WHERE user_id=$1`, s.User.ID).Scan(&creditLife)
-	rows, err := b.db.Query(r.Context(), `SELECT COALESCE(NULLIF(TRIM(g.model),''),'unknown'),count(*) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id WHERE e.user_id=$1 AND e.operation_created_at >= $2 AND e.operation_created_at < $3 GROUP BY 1`, s.User.ID, start, asOf)
+	rows, err := b.db.Query(r.Context(), `SELECT COALESCE(NULLIF(TRIM(g.model),''),NULLIF(TRIM(v.model),''),'unknown'),count(*) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id LEFT JOIN video_generation v ON e.output_kind='video' AND e.source_task_id=v.id AND e.user_id=v.user_id WHERE e.user_id=$1 AND e.operation_created_at >= $2 AND e.operation_created_at < $3 GROUP BY 1 ORDER BY 1`, s.User.ID, start, asOf)
 	if err != nil {
 		return err
 	}
@@ -133,8 +133,15 @@ func (b *backend) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request)
 		total += n
 	}
 	rows.Close()
+	zone := "UTC"
+	var userZone *string
+	if zoneErr := b.db.QueryRow(r.Context(), `SELECT time_zone FROM "user" WHERE id=$1`, s.User.ID).Scan(&userZone); zoneErr == nil && userZone != nil {
+		if _, loadErr := time.LoadLocation(*userZone); loadErr == nil {
+			zone = *userZone
+		}
+	}
 	dist := map[string]any{"models": models, "totalTasks": total}
-	writeJSON(w, 200, map[string]any{"asOf": asOf.Format(time.RFC3339Nano), "timeZone": "UTC", "last24HoursRange": map[string]any{"start": start.Format(time.RFC3339Nano), "end": asOf.Format(time.RFC3339Nano)}, "last24Hours": map[string]any{"imageCount": image24, "videoSeconds": video24, "creditsConsumed": credit24}, "modelDistribution": dist, "lifetime": map[string]any{"imageCount": imageLife, "videoSeconds": videoLife, "creditsConsumed": creditLife}})
+	writeJSON(w, 200, map[string]any{"asOf": asOf.Format(time.RFC3339Nano), "timeZone": zone, "last24HoursRange": map[string]any{"start": start.Format(time.RFC3339Nano), "end": asOf.Format(time.RFC3339Nano)}, "last24Hours": map[string]any{"imageCount": image24, "videoSeconds": video24, "creditsConsumed": credit24}, "modelDistribution": dist, "lifetime": map[string]any{"imageCount": imageLife, "videoSeconds": videoLife, "creditsConsumed": creditLife}})
 	return nil
 }
 
