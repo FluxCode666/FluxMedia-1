@@ -116,8 +116,8 @@ func (w *mediaWorker) claimNext(ctx context.Context) (string, string, error) {
 	*/
 	if err := w.backend.db.QueryRow(ctx, `WITH candidate AS (
 		SELECT id FROM video_generation
-		WHERE stage IN ('charged','submitting','retrying','polling','downloading','refunding')
-		   OR (stage='failed' AND COALESCE(credits_consumed,0)>0 AND refund_exhausted_at IS NULL)
+		WHERE (stage IN ('charged','submitting','retrying','polling','downloading','refunding')
+		   OR (stage='failed' AND COALESCE(credits_consumed,0)>0 AND refund_exhausted_at IS NULL))
 		  AND (claim_expires_at IS NULL OR claim_expires_at<now())
 		  AND (next_poll_at IS NULL OR next_poll_at<=now() OR stage IN ('refunding','failed'))
 		ORDER BY COALESCE(next_poll_at,created_at),created_at,id
