@@ -116,6 +116,10 @@ func operationsRange(now time.Time, tz string, input map[string]any) map[string]
 		days = 366
 	}
 	from = to.AddDate(0, 0, -(days - 1))
+	granularity := "day"
+	if g, ok := input["granularity"].(string); ok && (g == "day" || g == "week" || g == "month") {
+		granularity = g
+	}
 	start := from.UTC()
 	end := to.AddDate(0, 0, 1).UTC()
 	prevFrom := from.AddDate(0, 0, -days)
@@ -124,9 +128,9 @@ func operationsRange(now time.Time, tz string, input map[string]any) map[string]
 	for d := 0; d < days; d++ {
 		day := from.AddDate(0, 0, d)
 		ds := day.Format("2006-01-02")
-		buckets = append(buckets, map[string]any{"key": ds, "granularity": "day", "from": ds, "to": ds, "start": day.UTC().Format(time.RFC3339), "end": day.AddDate(0, 0, 1).UTC().Format(time.RFC3339), "availability": "pre_epoch", "dataFrom": nil, "status": "pre_epoch"})
+		buckets = append(buckets, map[string]any{"key": ds, "granularity": "day", "from": ds, "to": ds, "start": day.UTC().Format(time.RFC3339), "end": day.AddDate(0, 0, 1).UTC().Format(time.RFC3339), "availability": "pre_epoch", "dataFrom": nil})
 	}
-	return map[string]any{"timeZone": tz, "asOf": now.UTC().Format(time.RFC3339), "today": local.Format("2006-01-02"), "epochDate": local.Format("2006-01-02"), "granularity": "day", "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02"), "start": start.Format(time.RFC3339), "end": end.Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil, "previous": map[string]any{"from": prevFrom.Format("2006-01-02"), "to": prevTo.Format("2006-01-02"), "start": prevFrom.UTC().Format(time.RFC3339), "end": from.UTC().Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil}, "buckets": buckets}
+	return map[string]any{"timeZone": tz, "asOf": now.UTC().Format(time.RFC3339), "today": local.Format("2006-01-02"), "epochDate": local.Format("2006-01-02"), "granularity": granularity, "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02"), "start": start.Format(time.RFC3339), "end": end.Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil, "previous": map[string]any{"from": prevFrom.Format("2006-01-02"), "to": prevTo.Format("2006-01-02"), "start": prevFrom.UTC().Format(time.RFC3339), "end": from.UTC().Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil}, "buckets": buckets}
 }
 
 // applyOperationsEpoch overlays the immutable analytics epoch on a resolved
@@ -246,6 +250,7 @@ func (b *backend) handleOperationsOverview(w http.ResponseWriter, r *http.Reques
 		if epochDate, ok := rng["epochDate"].(string); ok {
 			snapshot["epoch"] = map[string]any{"appDate": epochDate, "startsAt": rng["epochStartsAt"]}
 		}
+		delete(rng, "epochStartsAt")
 	}
 	if err := b.populateOperationsContent(r, snapshot); err != nil {
 		return err
