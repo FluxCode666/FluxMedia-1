@@ -348,9 +348,9 @@ func (b *backend) apiKeySummary(r *http.Request, userID, keyID string, includeSe
 	var currentGroup map[string]any
 	if group != nil && *group != "" {
 		var groupName string
-		var groupEnabled bool
-		if e := b.db.QueryRow(r.Context(), `SELECT name,is_enabled FROM image_backend_group WHERE id=$1`, *group).Scan(&groupName, &groupEnabled); e == nil {
-			currentGroup = map[string]any{"id": *group, "name": groupName, "enabled": groupEnabled, "selectable": groupEnabled}
+		var groupEnabled, groupSelectable bool
+		if e := b.db.QueryRow(r.Context(), `SELECT name,is_enabled,is_user_selectable FROM image_backend_group WHERE id=$1`, *group).Scan(&groupName, &groupEnabled, &groupSelectable); e == nil {
+			currentGroup = map[string]any{"id": *group, "name": groupName, "enabled": groupEnabled, "selectable": groupEnabled && groupSelectable}
 		}
 	}
 	result := map[string]any{"id": id, "name": name, "keyPrefix": prefix, "lastFour": last4, "generationGroupId": group, "creditLimit": limit, "creditsUsed": creditsUsed, "lastUsedAt": last, "isActive": active, "createdAt": created, "updatedAt": updated, "currentGroup": currentGroup, "apiKey": nil}
