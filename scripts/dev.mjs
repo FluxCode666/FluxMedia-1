@@ -122,6 +122,16 @@ function startChild(name, command, args, cwd, environment) {
  * @sideEffects 启动 Turbo，并接管 SIGINT、SIGTERM 的清理流程。
  */
 function runDevelopmentServices() {
+  // The web app now calls first-party APIs on the Go backend directly. Start
+  // it as part of the normal development command so server actions never
+  // fall back to an unrelated process on port 3000.
+  startChild(
+    "Go API 后端",
+    "go",
+    ["run", "."],
+    resolve(projectRoot, "services/api-gateway"),
+    process.env
+  );
   startChild(
     "Turbo Web 开发服务",
     process.execPath,
