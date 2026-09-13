@@ -16,7 +16,33 @@ import {
 import { isAdminRole } from "@repo/shared/auth/roles";
 import { checkRateLimit } from "@repo/shared/rate-limit";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
-import { requestGoJson } from "@/server/go-backend-client";
+import {
+  GoBackendRequestError,
+  requestGoJson,
+} from "@/server/go-backend-client";
+
+/** Preserve Go's stable HTTP error classes at the UOL boundary. */
+function throwAnalyticsGoError(error: unknown): never {
+  if (error instanceof GoBackendRequestError) {
+    if (error.status === 400) throw new OperationError("validation_error", error.message);
+    if (error.status === 401) throw new OperationError("unauthenticated", error.message);
+    if (error.status === 403) throw new OperationError("forbidden", error.message);
+    if (error.status === 429) throw new OperationError("rate_limited", error.message);
+    if (error.status === 503 || error.code === "NOT_READY") throw new OperationError("not_ready", error.message, undefined, 503);
+    throw new OperationError("internal_error", "Analytics data is temporarily unavailable");
+  }
+  throw error;
+}
+
+async function requestAnalyticsGo<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    return init === undefined
+      ? await requestGoJson<T>(path)
+      : await requestGoJson<T>(path, init);
+  } catch (error) {
+    throwAnalyticsGoError(error);
+  }
+}
 
 /** 绑定本人整页数据看板；身份只取 session Principal，且事务前按用户限流。 */
 bindExecute(
@@ -38,7 +64,7 @@ bindExecute(
         "Data dashboard requests are too frequent"
       );
     }
-    const result = await requestGoJson<{
+    const result = await requestAnalyticsGo<{
       status: "ready";
       snapshot: unknown;
     }>("/api/analytics/data-dashboard", {
@@ -67,7 +93,7 @@ bindExecute(
       );
     }
     const parsedInput = adminDataDashboardInputSchema.parse(input);
-    const result = await requestGoJson<{
+    const result = await requestAnalyticsGo<{
       status: "ready";
       snapshot: unknown;
     }>("/api/admin/analytics/data-dashboard", {
@@ -104,7 +130,7 @@ bindExecute(
       query.set("selectedUserId", parsedInput.selectedUserId);
     }
     return adminDataDashboardUserSearchOutputSchema.parse(
-      await requestGoJson<unknown>(`/api/admin/analytics/users?${query}`)
+      await requestAnalyticsGo<unknown>(`/api/admin/analytics/users?${query}`)
     );
   }
 );
@@ -117,7 +143,7 @@ bindExecute(
       throw new OperationError("unauthenticated", "User identity required");
     }
     return usageSummaryOutputSchema.parse(
-      await requestGoJson<unknown>("/api/analytics/summary")
+      await requestAnalyticsGo<unknown>("/api/analytics/summary")
     );
   }
 );
@@ -131,7 +157,7 @@ bindExecute(
     }
     const parsed = usageTrendsInputSchema.parse(input);
     return usageTrendsOutputSchema.parse(
-      await requestGoJson<unknown>("/api/analytics/trends", {
+      await requestAnalyticsGo<unknown>("/api/analytics/trends", {
         method: "POST",
         body: JSON.stringify(parsed),
       })
