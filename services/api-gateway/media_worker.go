@@ -429,8 +429,8 @@ func (w *mediaWorker) refundVideoTask(ctx context.Context, id, reason string) er
 	}
 
 	if amount > 0 {
-		// Lock the wallet before touching batches/transactions. This matches the
-		// credit service's balance lock order and serializes concurrent refunds.
+		// Create the wallet row up front. The row is locked after the operation
+		// projection below, matching the shared credit service lock order.
 		if _, err = tx.Exec(ctx, `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), userID); err != nil {
 			return err
 		}
@@ -465,37 +465,47 @@ func (w *mediaWorker) refundVideoTask(ctx context.Context, id, reason string) er
 			metadata := mustJSON(map[string]any{"generationId": id, "worker": "go-media", "sourceRef": sourceRef})
 			transactionID := newRequestID()
 			transactionAt := time.Now().UTC()
-			if _, err = tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,operation_type,operation_id,operation_created_at,metadata,created_at)
+			transactionTag, transactionErr := tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,operation_type,operation_id,operation_created_at,metadata,created_at)
 				VALUES($1,$2,'refund',$3,'SYSTEM:generation_refund',$4,$5,$6,'video_generation',$7,$8,$9,$10)
-				ON CONFLICT(user_id,type,source_ref) DO NOTHING`, transactionID, userID, amount, "WALLET:"+userID, "视频生成失败退款", sourceRef, id, createdAt, metadata, transactionAt); err != nil {
-				return err
+				ON CONFLICT(user_id,type,source_ref) DO NOTHING`, transactionID, userID, amount, "WALLET:"+userID, "视频生成失败退款", sourceRef, id, createdAt, metadata, transactionAt)
+			if transactionErr != nil {
+				return transactionErr
 			}
-			// Keep the operation projection in the same transaction as the ledger
-			// row. Usage dashboards therefore observe the refund atomically with
-			// the wallet balance, matching grantCredits in the shared package.
-			var grossConsumed, refunded float64
-			var operationCreatedAt time.Time
-			if err = tx.QueryRow(ctx, `SELECT gross_consumed,refunded,operation_created_at FROM credit_usage_operation WHERE user_id=$1 AND operation_type='video_generation' AND operation_id=$2 FOR UPDATE`, userID, id).Scan(&grossConsumed, &refunded, &operationCreatedAt); err != nil {
-				return fmt.Errorf("video refund operation projection: %w", err)
-			}
-			if !operationCreatedAt.Equal(createdAt) {
-				return fmt.Errorf("video refund operation timestamp conflict for %s", id)
-			}
-			if refunded+amount > grossConsumed {
-				return fmt.Errorf("video refund exceeds gross consumption for %s", id)
-			}
-			if _, err = tx.Exec(ctx, `INSERT INTO credit_usage_projection_entry(transaction_id,user_id,contribution_kind,amount,operation_type,operation_id,operation_created_at,transaction_created_at)
-				VALUES($1,$2,'refund',$3,'video_generation',$4,$5,$6) ON CONFLICT(transaction_id) DO NOTHING`, transactionID, userID, amount, id, createdAt, transactionAt); err != nil {
-				return err
-			}
-			if _, err = tx.Exec(ctx, `UPDATE credit_usage_operation SET refunded=refunded+$3,net_consumed=net_consumed-$3,updated_at=$4 WHERE user_id=$1 AND operation_type='video_generation' AND operation_id=$2 AND operation_created_at=$5`, userID, id, amount, transactionAt, createdAt); err != nil {
-				return err
-			}
-			if err = tx.QueryRow(ctx, `SELECT user_id FROM credits_balance WHERE user_id=$1 FOR UPDATE`, userID).Scan(new(string)); err != nil {
-				return err
-			}
-			if _, err = tx.Exec(ctx, `UPDATE credits_balance SET balance=balance+$2,total_earned=total_earned+$2,total_refunded=total_refunded+$2,updated_at=$3 WHERE user_id=$1`, userID, amount, transactionAt); err != nil {
-				return err
+			if transactionTag.RowsAffected() == 0 {
+				if err = tx.QueryRow(ctx, `SELECT amount FROM credits_transaction WHERE user_id=$1 AND type='refund' AND source_ref=$2`, userID, sourceRef).Scan(&existingAmount); err != nil {
+					return err
+				}
+				if existingAmount != amount {
+					return fmt.Errorf("video refund amount conflict for %s", id)
+				}
+			} else {
+				// Keep the operation projection in the same transaction as the ledger
+				// row. Usage dashboards therefore observe the refund atomically with
+				// the wallet balance, matching grantCredits in the shared package.
+				var grossConsumed, refunded float64
+				var operationCreatedAt time.Time
+				if err = tx.QueryRow(ctx, `SELECT gross_consumed,refunded,operation_created_at FROM credit_usage_operation WHERE user_id=$1 AND operation_type='video_generation' AND operation_id=$2 FOR UPDATE`, userID, id).Scan(&grossConsumed, &refunded, &operationCreatedAt); err != nil {
+					return fmt.Errorf("video refund operation projection: %w", err)
+				}
+				if !operationCreatedAt.Equal(createdAt) {
+					return fmt.Errorf("video refund operation timestamp conflict for %s", id)
+				}
+				if refunded+amount > grossConsumed {
+					return fmt.Errorf("video refund exceeds gross consumption for %s", id)
+				}
+				if _, err = tx.Exec(ctx, `INSERT INTO credit_usage_projection_entry(transaction_id,user_id,contribution_kind,amount,operation_type,operation_id,operation_created_at,transaction_created_at)
+					VALUES($1,$2,'refund',$3,'video_generation',$4,$5,$6) ON CONFLICT(transaction_id) DO NOTHING`, transactionID, userID, amount, id, createdAt, transactionAt); err != nil {
+					return err
+				}
+				if _, err = tx.Exec(ctx, `UPDATE credit_usage_operation SET refunded=refunded+$3,net_consumed=net_consumed-$3,updated_at=$4 WHERE user_id=$1 AND operation_type='video_generation' AND operation_id=$2 AND operation_created_at=$5`, userID, id, amount, transactionAt, createdAt); err != nil {
+					return err
+				}
+				if err = tx.QueryRow(ctx, `SELECT user_id FROM credits_balance WHERE user_id=$1 FOR UPDATE`, userID).Scan(new(string)); err != nil {
+					return err
+				}
+				if _, err = tx.Exec(ctx, `UPDATE credits_balance SET balance=balance+$2,total_earned=total_earned+$2,total_refunded=total_refunded+$2,updated_at=$3 WHERE user_id=$1`, userID, amount, transactionAt); err != nil {
+					return err
+				}
 			}
 		}
 	}
