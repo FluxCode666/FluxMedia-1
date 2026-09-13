@@ -31,10 +31,6 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/announcements/{id}/toggle", b.endpoint(b.handleAnnouncementToggle))
 	mux.HandleFunc("GET /api/referrals/dashboard", b.endpoint(b.handleReferralDashboard))
 	mux.HandleFunc("GET /api/referrals/relationships", b.endpoint(b.handleReferralRelationships))
-	mux.HandleFunc("POST /api/analytics/data-dashboard", b.endpoint(b.handleDataDashboard))
-	mux.HandleFunc("POST /api/admin/analytics/data-dashboard", b.endpoint(b.handleAdminDataDashboard))
-	mux.HandleFunc("GET /api/admin/analytics/users", b.endpoint(b.handleAdminAnalyticsUsers))
-	mux.HandleFunc("GET /api/analytics/summary", b.endpoint(b.handleAnalyticsSummary))
 }
 
 // handleDashboardSupportConfiguration returns the small, explicitly public subset of

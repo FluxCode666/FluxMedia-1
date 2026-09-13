@@ -1,325 +1,76 @@
-/**
- * 用户 Analytics UOL binding 的 DB-free 测试。
- *
- * 使用方：Vitest；验证数据看板只接受真实 user Principal、按用户限流、使用账号时区，
- * 并把服务层 validation/readiness/损坏分类映射为稳定 OperationError。
- */
+/** Analytics UOL bindings are thin, authenticated adapters over the Go API. */
 import "@repo/shared/uol/operations";
 import { invokeOperation, isOperationBound } from "@repo/shared/uol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  process.env.DATABASE_URL ??=
-    "postgresql://unit-test:unit-test@127.0.0.1:5432/unit-test";
-  return {
-    checkRateLimit: vi.fn(),
-    getAppTimeZone: vi.fn(),
-    getUserTimeZone: vi.fn(),
-    loadDataDashboardSnapshot: vi.fn(),
-    searchAdminDataDashboardUsers: vi.fn(),
-    loadOutputUsageSummary: vi.fn(),
-    loadOutputUsageTrends: vi.fn(),
-    readAnalyticsReadModelStates: vi.fn(),
-  };
+  process.env.DATABASE_URL ??= "postgresql://unit-test:unit-test@127.0.0.1:5432/unit-test";
+  return { checkRateLimit: vi.fn(), requestGoJson: vi.fn() };
 });
-
-vi.mock("@repo/shared/rate-limit", () => ({
-  checkRateLimit: mocks.checkRateLimit,
-}));
-vi.mock("@repo/shared/time-zone/server", () => ({
-  getAppTimeZone: mocks.getAppTimeZone,
-  getUserTimeZone: mocks.getUserTimeZone,
-}));
-vi.mock("@/features/data-dashboard/data-dashboard-service", () => ({
-  DataDashboardServiceError: class DataDashboardServiceError extends Error {
-    readonly code: "validation_error" | "not_ready" | "invalid_data";
-
-    constructor(
-      code: "validation_error" | "not_ready" | "invalid_data",
-      message: string
-    ) {
-      super(message);
-      this.name = "DataDashboardServiceError";
-      this.code = code;
-    }
-  },
-  loadDataDashboardSnapshot: mocks.loadDataDashboardSnapshot,
-}));
-vi.mock("@/features/data-dashboard/admin-data-dashboard-user-search", () => ({
-  searchAdminDataDashboardUsers: mocks.searchAdminDataDashboardUsers,
-}));
-vi.mock("@/features/dashboard/analytics-service", () => ({
-  loadOutputUsageSummary: mocks.loadOutputUsageSummary,
-  loadOutputUsageTrends: mocks.loadOutputUsageTrends,
-  readAnalyticsReadModelStates: mocks.readAnalyticsReadModelStates,
-}));
-
-import { DataDashboardServiceError } from "@/features/data-dashboard/data-dashboard-service";
+vi.mock("@repo/shared/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
+vi.mock("@/server/go-backend-client", () => ({ requestGoJson: mocks.requestGoJson }));
 import "./analytics";
 
 const SNAPSHOT = {
-  asOf: "2026-08-09T10:15:30.000Z",
-  timeZone: "Asia/Shanghai",
-  today: "2026-08-09",
-  range: {
-    startDate: "2026-08-09",
-    endDate: "2026-08-09",
-    start: "2026-08-08T16:00:00.000Z",
-    end: "2026-08-09T10:15:30.000Z",
-  },
-  metrics: {
-    imageCount: 1,
-    videoSeconds: 0,
-    creditsConsumed: 2,
-    successRate: { succeeded: 1, failed: 0, terminal: 1, rate: 1 },
-    activeDays: 1,
-    mostUsedModel: { model: "image-model", taskCount: 1 },
-  },
-  buckets: [
-    {
-      date: "2026-08-09",
-      start: "2026-08-08T16:00:00.000Z",
-      end: "2026-08-09T10:15:30.000Z",
-      imageCount: 1,
-      imageTaskCount: 1,
-      videoCount: 0,
-      videoSeconds: 0,
-      creditsConsumed: 2,
-    },
-  ],
+  asOf: "2026-08-09T10:15:30.000Z", timeZone: "Asia/Shanghai", today: "2026-08-09",
+  range: { startDate: "2026-08-09", endDate: "2026-08-09", start: "2026-08-08T16:00:00.000Z", end: "2026-08-09T10:15:30.000Z" },
+  metrics: { imageCount: 1, videoSeconds: 0, creditsConsumed: 2, successRate: { succeeded: 1, failed: 0, terminal: 1, rate: 1 }, activeDays: 1, mostUsedModel: { model: "image-model", taskCount: 1 } },
+  buckets: [{ date: "2026-08-09", start: "2026-08-08T16:00:00.000Z", end: "2026-08-09T10:15:30.000Z", imageCount: 1, imageTaskCount: 1, videoCount: 0, videoSeconds: 0, creditsConsumed: 2 }],
   taskComposition: { imageTaskCount: 1, videoCount: 0, totalTasks: 1 },
 } as const;
+const SUMMARY = {
+  asOf: "2026-08-09T10:15:30.000Z", timeZone: "Asia/Shanghai", last24HoursRange: { start: "2026-08-08T10:15:30.000Z", end: "2026-08-09T10:15:30.000Z" },
+  last24Hours: { imageCount: 1, videoSeconds: 0, creditsConsumed: 2 }, modelDistribution: { models: [{ model: "image-model", taskCount: 1 }], totalTasks: 1 }, lifetime: { imageCount: 2, videoSeconds: 3, creditsConsumed: 4 },
+};
+const TRENDS = {
+  asOf: "2026-08-09T10:15:30.000Z", timeZone: "Asia/Shanghai", range: { start: "2026-08-08T10:15:30.000Z", end: "2026-08-09T10:15:30.000Z" }, granularity: "hour", metric: "imageCount", unit: "images",
+  buckets: [{ start: "2026-08-08T10:15:30.000Z", end: "2026-08-08T11:15:30.000Z", label: "2026-08-08 18:15", value: 1 }], distribution: { imageTasks: 1, videoTasks: 0, totalTasks: 1 },
+};
 
-describe("analytics.getMyDataDashboard binding", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.checkRateLimit.mockResolvedValue({
-      success: true,
-      limit: 30,
-      reset: Date.now() + 60_000,
-    });
-    mocks.getUserTimeZone.mockResolvedValue("Asia/Shanghai");
-    mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
-    mocks.loadDataDashboardSnapshot.mockResolvedValue(SNAPSHOT);
-  });
-
-  it("保持既有摘要与趋势 operation 继续绑定", () => {
-    expect(isOperationBound("analytics.getMyUsageSummary")).toBe(true);
-    expect(isOperationBound("analytics.getMyUsageTrends")).toBe(true);
-  });
-
-  it.each([
-    "user",
-    "admin",
-    "observer_admin",
-    "super_admin",
-  ] as const)("%s 会话只使用自己的 Principal 用户 ID", async (role) => {
-    await expect(
-      invokeOperation(
-        "analytics.getMyDataDashboard",
-        { startDate: "2026-08-09", endDate: "2026-08-09" },
-        { type: "user", userId: `${role}-1`, role }
-      )
-    ).resolves.toEqual(SNAPSHOT);
-
-    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
-      `analytics-dashboard:${role}-1`,
-      "global"
-    );
-    expect(mocks.getUserTimeZone).toHaveBeenCalledWith(`${role}-1`);
-    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
-      userId: `${role}-1`,
-      timeZone: "Asia/Shanghai",
-      rangeInput: {
-        startDate: "2026-08-09",
-        endDate: "2026-08-09",
-      },
-    });
-  });
-
-  it("在 strict schema 处拒绝伪造 userId 且不进入 binding", async () => {
-    await expect(
-      invokeOperation(
-        "analytics.getMyDataDashboard",
-        {
-          startDate: "2026-08-09",
-          endDate: "2026-08-09",
-          userId: "another-user",
-        },
-        { type: "user", userId: "session-user", role: "user" }
-      )
-    ).rejects.toMatchObject({ code: "validation_error" });
-    expect(mocks.checkRateLimit).not.toHaveBeenCalled();
-    expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { type: "system" as const, reason: "test" },
-    { type: "cron" as const, job: "analytics" },
-    { type: "webhook" as const, provider: "creem" as const },
-    { type: "proxy" as const, secretKind: "proxy" as const },
-    {
-      type: "apiKey" as const,
-      credentialKind: "external" as const,
-      userId: "user-1",
-      apiKeyId: "external-1",
-    },
-    {
-      type: "apiKey" as const,
-      credentialKind: "mcp" as const,
-      userId: "user-1",
-      apiKeyId: "mcp-1",
-    },
-  ])("拒绝非 session user Principal", async (principal) => {
-    await expect(
-      invokeOperation("analytics.getMyDataDashboard", {}, principal)
-    ).rejects.toMatchObject({ code: "unauthenticated" });
-    expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
-  });
-
-  it("限流失败发生在时区和聚合事务之前", async () => {
-    mocks.checkRateLimit.mockResolvedValue({
-      success: false,
-      limit: 30,
-      reset: Date.now() + 60_000,
-    });
-
-    await expect(
-      invokeOperation(
-        "analytics.getMyDataDashboard",
-        {},
-        { type: "user", userId: "user-1", role: "user" }
-      )
-    ).rejects.toMatchObject({ code: "rate_limited" });
-    expect(mocks.getUserTimeZone).not.toHaveBeenCalled();
-    expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["validation_error", "validation_error"],
-    ["not_ready", "not_ready"],
-    ["invalid_data", "internal_error"],
-  ] as const)("将 %s 服务错误映射为 %s", async (serviceCode, uolCode) => {
-    mocks.loadDataDashboardSnapshot.mockRejectedValue(
-      new DataDashboardServiceError(serviceCode, "safe failure")
-    );
-
-    await expect(
-      invokeOperation(
-        "analytics.getMyDataDashboard",
-        {},
-        { type: "user", userId: "user-1", role: "user" }
-      )
-    ).rejects.toMatchObject({ code: uolCode });
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.checkRateLimit.mockResolvedValue({ success: true });
+  mocks.requestGoJson.mockImplementation(async (path: string) => {
+    if (path === "/api/analytics/summary") return SUMMARY;
+    if (path === "/api/analytics/trends") return TRENDS;
+    if (path.startsWith("/api/admin/analytics/users")) return { users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }] };
+    return { status: "ready", snapshot: SNAPSHOT };
   });
 });
 
-describe("analytics.getAdminDataDashboard binding", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.checkRateLimit.mockResolvedValue({
-      success: true,
-      limit: 30,
-      reset: Date.now() + 60_000,
-    });
-    mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
-    mocks.loadDataDashboardSnapshot.mockResolvedValue(SNAPSHOT);
+describe("analytics Go bindings", () => {
+  it("keeps all five operations bound", () => {
+    for (const name of ["analytics.getMyDataDashboard", "analytics.getAdminDataDashboard", "analytics.searchAdminDataDashboardUsers", "analytics.getMyUsageSummary", "analytics.getMyUsageTrends"]) expect(isOperationBound(name)).toBe(true);
   });
-
-  it.each([
-    "admin",
-    "super_admin",
-  ] as const)("%s 只读取应用时区并加载全站快照", async (role) => {
-    await expect(
-      invokeOperation(
-        "analytics.getAdminDataDashboard",
-        { startDate: "2026-08-03", endDate: "2026-08-09" },
-        { type: "user", userId: `${role}-1`, role }
-      )
-    ).resolves.toEqual(SNAPSHOT);
-
-    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
-      `admin-analytics-dashboard:${role}-1`,
-      "global"
-    );
-    expect(mocks.getAppTimeZone).toHaveBeenCalledOnce();
-    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
-      timeZone: "Asia/Shanghai",
-      rangeInput: { startDate: "2026-08-03", endDate: "2026-08-09" },
-    });
+  it("calls Go for the user dashboard and derives scope from the session", async () => {
+    await expect(invokeOperation("analytics.getMyDataDashboard", { startDate: "2026-08-09", endDate: "2026-08-09" }, { type: "user", userId: "user-1", role: "user" })).resolves.toEqual(SNAPSHOT);
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/analytics/data-dashboard", { method: "POST", body: JSON.stringify({ startDate: "2026-08-09", endDate: "2026-08-09" }) });
   });
-
-  it("按用户 ID 传入单用户统计范围，不把筛选 ID 混入日期输入", async () => {
-    await expect(
-      invokeOperation(
-        "analytics.getAdminDataDashboard",
-        {
-          startDate: "2026-08-03",
-          endDate: "2026-08-09",
-          userId: "target-user",
-        },
-        { type: "user", userId: "admin-1", role: "admin" }
-      )
-    ).resolves.toEqual(SNAPSHOT);
-    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
-      userId: "target-user",
-      timeZone: "Asia/Shanghai",
-      rangeInput: { startDate: "2026-08-03", endDate: "2026-08-09" },
-    });
+  it("rejects non-session principals before touching Go", async () => {
+    await expect(invokeOperation("analytics.getMyDataDashboard", {}, { type: "apiKey", credentialKind: "external", userId: "user-1", apiKeyId: "key-1" })).rejects.toMatchObject({ code: "unauthenticated" });
+    expect(mocks.requestGoJson).not.toHaveBeenCalled();
   });
-
-  it.each([
-    "user",
-    "observer_admin",
-  ] as const)("%s 会话被拒绝且不进入全站聚合", async (role) => {
-    await expect(
-      invokeOperation(
-        "analytics.getAdminDataDashboard",
-        {},
-        { type: "user", userId: `${role}-1`, role }
-      )
-    ).rejects.toMatchObject({ code: "forbidden" });
-    expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
+  it("calls Go for admin dashboard and preserves selected user input", async () => {
+    await expect(invokeOperation("analytics.getAdminDataDashboard", { userId: "target-user", startDate: "2026-08-03", endDate: "2026-08-09" }, { type: "user", userId: "admin-1", role: "admin" })).resolves.toEqual(SNAPSHOT);
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/admin/analytics/data-dashboard", { method: "POST", body: JSON.stringify({ startDate: "2026-08-03", endDate: "2026-08-09", userId: "target-user" }) });
   });
-});
-
-describe("analytics.searchAdminDataDashboardUsers binding", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.checkRateLimit.mockResolvedValue({
-      success: true,
-      limit: 30,
-      reset: Date.now() + 60_000,
-    });
-    mocks.searchAdminDataDashboardUsers.mockResolvedValue({
-      users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
-    });
+  it("enforces admin permission before admin Go calls", async () => {
+    await expect(invokeOperation("analytics.getAdminDataDashboard", {}, { type: "user", userId: "user-1", role: "user" })).rejects.toMatchObject({ code: "forbidden" });
+    expect(mocks.requestGoJson).not.toHaveBeenCalled();
   });
-
-  it("管理员可搜索名称或邮箱，并返回有限用户选项", async () => {
-    await expect(
-      invokeOperation(
-        "analytics.searchAdminDataDashboardUsers",
-        { query: "张", limit: 20 },
-        { type: "user", userId: "admin-1", role: "super_admin" }
-      )
-    ).resolves.toEqual({
-      users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
-    });
-    expect(mocks.searchAdminDataDashboardUsers).toHaveBeenCalledWith({
-      query: "张",
-      limit: 20,
-    });
+  it("calls Go for bounded admin user search", async () => {
+    await expect(invokeOperation("analytics.searchAdminDataDashboardUsers", { query: "张", limit: 20 }, { type: "user", userId: "admin-1", role: "super_admin" })).resolves.toEqual({ users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }] });
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/admin/analytics/users?query=%E5%BC%A0&limit=20");
   });
-
-  it("普通用户不能调用搜索 operation", async () => {
-    await expect(
-      invokeOperation(
-        "analytics.searchAdminDataDashboardUsers",
-        { query: "张" },
-        { type: "user", userId: "user-1", role: "user" }
-      )
-    ).rejects.toMatchObject({ code: "forbidden" });
-    expect(mocks.searchAdminDataDashboardUsers).not.toHaveBeenCalled();
+  it("routes summary and trends to Go and validates their response contracts", async () => {
+    await expect(invokeOperation("analytics.getMyUsageSummary", {}, { type: "user", userId: "user-1", role: "user" })).resolves.toEqual(SUMMARY);
+    await expect(invokeOperation("analytics.getMyUsageTrends", { granularity: "hour", range: "last24Hours" }, { type: "user", userId: "user-1", role: "user" })).resolves.toEqual(TRENDS);
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/analytics/summary");
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/analytics/trends", { method: "POST", body: JSON.stringify({ granularity: "hour", metric: "imageCount", range: "last24Hours" }) });
+  });
+  it("enforces rate limiting before the user dashboard request", async () => {
+    mocks.checkRateLimit.mockResolvedValue({ success: false });
+    await expect(invokeOperation("analytics.getMyDataDashboard", {}, { type: "user", userId: "user-1", role: "user" })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(mocks.requestGoJson).not.toHaveBeenCalled();
   });
 });

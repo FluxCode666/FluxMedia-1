@@ -1,8 +1,8 @@
 /**
  * 用户 Analytics UOL 真实执行绑定。
  *
- * 使用方：uol-bindings.ts 启动副作用导入。既有摘要/趋势保持兼容；新数据看板只接受
- * session user Principal，并在数据库事务前执行每用户 global 限流和账号时区解析。
+ * 使用方：uol-bindings.ts 启动副作用导入。所有查询均通过 Go API 读取统一读模型；
+ * Web session Principal 只用于权限和限流，账号时区与数据范围由 Go 后端统一解析。
  */
 import {
   adminDataDashboardInputSchema,
@@ -13,62 +13,10 @@ import {
   usageTrendsInputSchema,
   usageTrendsOutputSchema,
 } from "@repo/shared/analytics/contracts";
-import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
-import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
 import { isAdminRole } from "@repo/shared/auth/roles";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
-
-import {
-  DataDashboardServiceError,
-  loadDataDashboardSnapshot,
-} from "@/features/data-dashboard/data-dashboard-service";
-import { searchAdminDataDashboardUsers } from "@/features/data-dashboard/admin-data-dashboard-user-search";
-import {
-  type AnalyticsReadModelState,
-  loadOutputUsageSummary,
-  loadOutputUsageTrends,
-  readAnalyticsReadModelStates,
-} from "@/features/dashboard/analytics-service";
-
-/** 判断单个既有统计读模型是否达到当前线上查询所需版本。 */
-function isAnalyticsReadModelReady(state: AnalyticsReadModelState): boolean {
-  return state?.version === 1 && state.status === "ready";
-}
-
-/** 查询既有 analytics readiness，未完成回填时返回相同暂不可用错误。 */
-async function assertAnalyticsReady(): Promise<void> {
-  const states = await readAnalyticsReadModelStates();
-  if (
-    !isAnalyticsReadModelReady(states.outputUsage) ||
-    !isAnalyticsReadModelReady(states.creditUsage)
-  ) {
-    throw new OperationError(
-      "not_ready",
-      "Analytics data is still being prepared",
-      undefined,
-      503
-    );
-  }
-}
-
-/** 将数据看板服务错误映射为 UOL 稳定错误，不暴露损坏行或 SQL。 */
-function throwDataDashboardOperationError(error: unknown): never {
-  if (error instanceof DataDashboardServiceError) {
-    if (error.code === "validation_error") {
-      throw new OperationError("validation_error", error.message);
-    }
-    if (error.code === "not_ready") {
-      throw new OperationError("not_ready", error.message, undefined, 503);
-    }
-    throw new OperationError(
-      "internal_error",
-      "Analytics data is temporarily unavailable"
-    );
-  }
-  throw error;
-}
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 绑定本人整页数据看板；身份只取 session Principal，且事务前按用户限流。 */
 bindExecute(
@@ -90,18 +38,14 @@ bindExecute(
         "Data dashboard requests are too frequent"
       );
     }
-    const timeZone = await getUserTimeZone(principal.userId);
-    try {
-      return dataDashboardOutputSchema.parse(
-        await loadDataDashboardSnapshot({
-          userId: principal.userId,
-          timeZone,
-          rangeInput: input,
-        })
-      );
-    } catch (error) {
-      throwDataDashboardOperationError(error);
-    }
+    const result = await requestGoJson<{
+      status: "ready";
+      snapshot: unknown;
+    }>("/api/analytics/data-dashboard", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return dataDashboardOutputSchema.parse(result.snapshot);
   }
 );
 
@@ -122,19 +66,15 @@ bindExecute(
         "Admin data dashboard requests are too frequent"
       );
     }
-    try {
-      const parsedInput = adminDataDashboardInputSchema.parse(input);
-      const { userId, ...rangeInput } = parsedInput;
-      return dataDashboardOutputSchema.parse(
-        await loadDataDashboardSnapshot({
-          ...(userId !== undefined ? { userId } : {}),
-          timeZone: getAppTimeZone(),
-          rangeInput,
-        })
-      );
-    } catch (error) {
-      throwDataDashboardOperationError(error);
-    }
+    const parsedInput = adminDataDashboardInputSchema.parse(input);
+    const result = await requestGoJson<{
+      status: "ready";
+      snapshot: unknown;
+    }>("/api/admin/analytics/data-dashboard", {
+      method: "POST",
+      body: JSON.stringify(parsedInput),
+    });
+    return dataDashboardOutputSchema.parse(result.snapshot);
   }
 );
 
@@ -155,18 +95,17 @@ bindExecute(
         "Admin data dashboard user searches are too frequent"
       );
     }
-    try {
-      return adminDataDashboardUserSearchOutputSchema.parse(
-        await searchAdminDataDashboardUsers(
-          adminDataDashboardUserSearchInputSchema.parse(input)
-        )
-      );
-    } catch (error) {
-      if (error instanceof RangeError) {
-        throw new OperationError("validation_error", error.message);
-      }
-      throw error;
+    const parsedInput = adminDataDashboardUserSearchInputSchema.parse(input);
+    const query = new URLSearchParams({
+      query: parsedInput.query,
+      limit: String(parsedInput.limit),
+    });
+    if (parsedInput.selectedUserId) {
+      query.set("selectedUserId", parsedInput.selectedUserId);
     }
+    return adminDataDashboardUserSearchOutputSchema.parse(
+      await requestGoJson<unknown>(`/api/admin/analytics/users?${query}`)
+    );
   }
 );
 
@@ -177,28 +116,9 @@ bindExecute(
     if (principal.type !== "user" && principal.type !== "apiKey") {
       throw new OperationError("unauthenticated", "User identity required");
     }
-    await assertAnalyticsReady();
-    const timeZone = await getUserTimeZone(principal.userId);
-    const asOf = new Date();
-    const last24HoursRange = {
-      start: new Date(asOf.getTime() - 24 * 60 * 60 * 1000),
-      end: asOf,
-    };
-    const result = await loadOutputUsageSummary({
-      userId: principal.userId,
-      last24HoursRange,
-    });
-    return usageSummaryOutputSchema.parse({
-      asOf: asOf.toISOString(),
-      timeZone,
-      last24HoursRange: {
-        start: last24HoursRange.start.toISOString(),
-        end: last24HoursRange.end.toISOString(),
-      },
-      last24Hours: result.last24Hours,
-      modelDistribution: result.modelDistribution,
-      lifetime: result.lifetime,
-    });
+    return usageSummaryOutputSchema.parse(
+      await requestGoJson<unknown>("/api/analytics/summary")
+    );
   }
 );
 
@@ -209,34 +129,12 @@ bindExecute(
     if (principal.type !== "user" && principal.type !== "apiKey") {
       throw new OperationError("unauthenticated", "User identity required");
     }
-    await assertAnalyticsReady();
     const parsed = usageTrendsInputSchema.parse(input);
-    const timeZone = await getUserTimeZone(principal.userId);
-    let range: ReturnType<typeof resolveUsageTimeRange>;
-    try {
-      range = resolveUsageTimeRange(parsed, {
-        timeZone,
-        asOf: new Date(),
-      });
-    } catch (error) {
-      if (error instanceof RangeError) {
-        throw new OperationError("validation_error", error.message);
-      }
-      throw error;
-    }
-    const result = await loadOutputUsageTrends({
-      userId: principal.userId,
-      range,
-    });
-    return usageTrendsOutputSchema.parse({
-      asOf: range.asOf.toISOString(),
-      timeZone,
-      range: { start: range.start.toISOString(), end: range.end.toISOString() },
-      granularity: range.granularity,
-      metric: range.metric,
-      unit: getAnalyticsMetricUnit(range.metric),
-      buckets: result.buckets,
-      distribution: result.distribution,
-    });
+    return usageTrendsOutputSchema.parse(
+      await requestGoJson<unknown>("/api/analytics/trends", {
+        method: "POST",
+        body: JSON.stringify(parsed),
+      })
+    );
   }
 );
