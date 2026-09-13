@@ -399,6 +399,19 @@ func (w *mediaWorker) failVideo(ctx context.Context, id string, cause error) err
 	return w.refundVideoTask(ctx, id, reason)
 }
 
+// videoLedgerSourceRef mirrors getVideoLedgerSourceRef in the Next video
+// operation. The metadata namespace is an immutable migration marker; missing
+// markers intentionally use the legacy adobe-video prefix for pre-migration
+// rows so a retry cannot charge/refund under a second idempotency key.
+func videoLedgerSourceRef(id string, metadataRaw []byte) string {
+	var metadata map[string]any
+	_ = json.Unmarshal(metadataRaw, &metadata)
+	if namespace, _ := metadata["videoLedgerNamespace"].(string); namespace == "video" {
+		return "video:" + id
+	}
+	return "adobe-video:" + id
+}
+
 // refundVideoTask settles a charged video exactly once and closes the task in
 // the same database transaction. The (user_id,type,source_ref) unique index is
 // the durable idempotency key used by the Next credit ledger; a worker crash
@@ -412,12 +425,13 @@ func (w *mediaWorker) refundVideoTask(ctx context.Context, id, reason string) er
 	defer rollback(tx)
 
 	var userID, stage, apiKeyID string
+	var metadataRaw []byte
 	var amount, reserved float64
 	var createdAt time.Time
 	err = tx.QueryRow(ctx, `SELECT user_id,COALESCE(stage,'created'),COALESCE(credits_consumed,0),created_at,
-		COALESCE(api_key_id,''),COALESCE(api_key_credits_reserved,0)
+		COALESCE(api_key_id,''),COALESCE(api_key_credits_reserved,0),COALESCE(metadata,'{}'::json)
 		FROM video_generation WHERE id=$1 FOR UPDATE`, id).
-		Scan(&userID, &stage, &amount, &createdAt, &apiKeyID, &reserved)
+		Scan(&userID, &stage, &amount, &createdAt, &apiKeyID, &reserved, &metadataRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -435,7 +449,7 @@ func (w *mediaWorker) refundVideoTask(ctx context.Context, id, reason string) er
 			return err
 		}
 
-		sourceRef := id + ":refund"
+		sourceRef := videoLedgerSourceRef(id, metadataRaw)
 		var existingAmount float64
 		existingErr := tx.QueryRow(ctx, `SELECT amount FROM credits_transaction WHERE user_id=$1 AND type='refund' AND source_ref=$2 LIMIT 1`, userID, sourceRef).Scan(&existingAmount)
 		if existingErr != nil && !errors.Is(existingErr, pgx.ErrNoRows) {

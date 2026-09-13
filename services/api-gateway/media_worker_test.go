@@ -22,6 +22,15 @@ func TestProviderPollURLEscapesTaskIDAndUsesQueryAdapterPath(t *testing.T) {
 	}
 }
 
+func TestVideoLedgerSourceRefPreservesMigrationNamespace(t *testing.T) {
+	if got := videoLedgerSourceRef("video-1", []byte(`{"videoLedgerNamespace":"video"}`)); got != "video:video-1" {
+		t.Fatalf("canonical source ref = %q", got)
+	}
+	if got := videoLedgerSourceRef("legacy-1", []byte(`{}`)); got != "adobe-video:legacy-1" {
+		t.Fatalf("legacy source ref = %q", got)
+	}
+}
+
 func TestExtractMediaURLTraversesScriptedOutputs(t *testing.T) {
 	got := extractMediaURL(map[string]any{
 		"status":  "completed",
