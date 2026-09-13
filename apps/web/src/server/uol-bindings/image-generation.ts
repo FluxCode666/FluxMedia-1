@@ -7,6 +7,7 @@
  */
 
 import type { GalleryListOutput } from "@repo/shared/image-generation/gallery-contract";
+import { galleryListOutputSchema } from "@repo/shared/image-generation/gallery-contract";
 import {
   assertImageMediaInputWithinPolicy,
   type MediaInputPolicy,
@@ -41,6 +42,7 @@ import type {
   ImageQuality,
 } from "@/features/image-generation/types";
 import { extractExecuteRows } from "@/server/database-result";
+import { requestGoJson } from "@/server/go-backend-client";
 
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
@@ -322,28 +324,13 @@ bindOperationExecute(imageMaintainHistoryCountProjection, async (input) => {
 bindOperationExecute(
   imageListMyGallery,
   async (input, principal): Promise<GalleryListOutput> => {
-    const userId = getPrincipalUserId(principal);
-    if (!userId || principal.type !== "user") {
+    if (principal.type !== "user") {
       throw new OperationError("unauthenticated", "User session required");
     }
-    const [{ databaseGalleryRepository }, { loadGalleryItems }] =
-      await Promise.all([
-        import("@/features/image-generation/gallery-repository"),
-        import("@/features/image-generation/gallery-service"),
-      ]);
-    try {
-      return await loadGalleryItems(
-        { userId, input },
-        { repository: databaseGalleryRepository }
-      );
-    } catch (error) {
-      const { GalleryServiceError } = await import(
-        "@/features/image-generation/gallery-service"
-      );
-      if (error instanceof GalleryServiceError) {
-        throw new OperationError(error.code, error.message);
-      }
-      throw error;
-    }
+    const output = await requestGoJson<GalleryListOutput>(
+      "/api/image-generation/gallery",
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    return galleryListOutputSchema.parse(output);
   }
 );
