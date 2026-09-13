@@ -180,7 +180,7 @@ func (b *backend) deliverVideoCallbacks(ctx context.Context) (int, error) {
 		token := newRequestID()
 		var id, videoID, callbackURL string
 		var attempt int
-		err := b.db.QueryRow(ctx, `WITH candidate AS (SELECT id FROM video_generation_callback_delivery d JOIN video_generation v ON v.id=d.video_generation_id WHERE v.status IN ('completed','failed') AND d.status IN ('pending','delivering') AND d.next_attempt_at<=now() AND (d.claim_expires_at IS NULL OR d.claim_expires_at<=now()) ORDER BY d.next_attempt_at,d.created_at,d.id LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE video_generation_callback_delivery d SET status='delivering',attempt_count=d.attempt_count+1,claim_token=$1,claim_expires_at=now()+interval '2 minutes',updated_at=now() FROM candidate WHERE d.id=candidate.id RETURNING d.id,d.video_generation_id,d.callback_url,d.attempt_count`, token).Scan(&id, &videoID, &callbackURL, &attempt)
+		err := b.db.QueryRow(ctx, `WITH candidate AS (SELECT d.id FROM video_generation_callback_delivery d JOIN video_generation v ON v.id=d.video_generation_id WHERE v.status IN ('completed','failed') AND d.status IN ('pending','delivering') AND d.next_attempt_at<=now() AND (d.claim_expires_at IS NULL OR d.claim_expires_at<=now()) ORDER BY d.next_attempt_at,d.created_at,d.id LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE video_generation_callback_delivery d SET status='delivering',attempt_count=d.attempt_count+1,claim_token=$1,claim_expires_at=now()+interval '2 minutes',updated_at=now() FROM candidate WHERE d.id=candidate.id RETURNING d.id,d.video_generation_id,d.callback_url,d.attempt_count`, token).Scan(&id, &videoID, &callbackURL, &attempt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			break
 		}
