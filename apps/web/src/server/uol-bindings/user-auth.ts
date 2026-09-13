@@ -1,4 +1,7 @@
 /** User administration UOL bindings backed by the Go admin API. */
+// Keep this domain registration explicit. The aggregate operations barrel can
+// be evaluated after this binding during Next's parallel module loading.
+import "@repo/shared/uol/operations/user-auth";
 import {
   adminUserListOutputSchema,
 } from "@repo/shared/support/admin-user-list-contract";
