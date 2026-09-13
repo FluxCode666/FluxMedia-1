@@ -8,8 +8,7 @@ import type {
   AdminDataDashboardUserOption,
   DataDashboardOutput,
 } from "@repo/shared/analytics/contracts";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
 import { OperationError } from "@repo/shared/uol";
@@ -77,7 +76,7 @@ export default async function AdminDataDashboardPage({
   ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
 
   const parsedQuery = parseAdminDataDashboardSearchParams(params);

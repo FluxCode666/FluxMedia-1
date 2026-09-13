@@ -1,7 +1,6 @@
 import "fumadocs-ui/style.css";
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { RootProvider } from "fumadocs-ui/provider/next";
@@ -14,7 +13,7 @@ import { docsSource } from "@/lib/source";
 /**
  * 管理员文档布局。
  *
- * 在渲染 Fumadocs 页面树前使用数据库真实角色做集中式授权。未登录用户前往登录页，
+ * 在渲染 Fumadocs 页面树前使用会话中的角色做集中式授权。未登录用户前往登录页，
  * 已登录普通用户前往公开 API 接入文档，避免任何 /docs 子页因新增路由而绕过保护。
  *
  * @param children - 管理员文档子页面。
@@ -34,7 +33,7 @@ export default async function Layout({
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) {
     redirect(`/${locale}/api-docs`);
   }

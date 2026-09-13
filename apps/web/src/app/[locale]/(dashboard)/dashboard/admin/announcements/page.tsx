@@ -5,8 +5,7 @@
  * 精确总数、当前页和独立全局统计；失败交由管理组件展示可重试错误态。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
@@ -36,7 +35,7 @@ export default async function DashboardAdminAnnouncementsPage({
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) {
     redirect(`/${locale}/dashboard`);
   }

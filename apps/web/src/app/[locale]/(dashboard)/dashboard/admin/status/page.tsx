@@ -4,8 +4,7 @@
  * 职责：只读聚合生成、财务、用户、工单以及统一媒体成员和调度指标，并以响应式卡片展示。
  * 使用方：具备后端池查看权限的管理员；本页不执行任何号池写操作。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canViewImageBackendPool } from "@repo/shared/auth/roles";
+import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatCredits } from "@repo/shared/credits/format";
 import type { AdminStatusErrorListOutput } from "@repo/shared/image-generation/admin-status-errors-contract";
@@ -977,7 +976,7 @@ export default async function GlobalStatusPage({
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewImageBackendPool(role)) {
     redirect(`/${locale}/dashboard`);
   }

@@ -5,8 +5,8 @@
  * 非法自定义深链回退动态默认七天，其他失败交给客户端完整不可用状态恢复。
  */
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
+import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { logError } from "@repo/shared/logger";
 import { OperationError } from "@repo/shared/uol";
 import { redirect } from "next/navigation";
@@ -71,7 +71,7 @@ export default async function DataDashboardPage({
   ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   const parsedQuery = parseDataDashboardSearchParams(params);
   let invalidDeepLink = parsedQuery.invalidDeepLink;
   let snapshot: DataDashboardOutput | null = null;

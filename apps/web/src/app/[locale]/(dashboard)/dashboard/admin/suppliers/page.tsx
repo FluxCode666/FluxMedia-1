@@ -4,8 +4,7 @@
  * 页面只负责会话、角色、时区、分页配置和双语标题装配；供应商读取、写入、脱敏与
  * image-backend-pool operation 继续由既有面板和 Server Action 负责。
  */
-import { canViewImageBackendPool } from "@repo/shared/auth/roles";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
@@ -31,7 +30,7 @@ export default async function DashboardAdminSuppliersPage() {
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewImageBackendPool(role)) {
     redirect(`/${locale}/dashboard`);
   }

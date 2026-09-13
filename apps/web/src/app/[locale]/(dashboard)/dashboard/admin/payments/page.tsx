@@ -4,8 +4,7 @@
  * 页面只解析日期范围 URL、复查人工管理员角色并调用支付 UOL Action；收入定义、币种
  * 隔离、自然日补零和数据库查询全部位于统一接口层及其绑定中。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
@@ -52,7 +51,7 @@ export default async function AdminPaymentOverviewPage({
     getTranslations("AdminPayments.overview"),
   ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
 
   const appTimeZone = getAppTimeZone();

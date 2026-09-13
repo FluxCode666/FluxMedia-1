@@ -4,8 +4,7 @@
  * 使用方：控制台支持中心。页面只解析公开 URL、调用 UOL Action 并组合卡片；
  * 工单归属、管理员范围、精确计数和页码收敛由统一接口层负责。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { isAdminRole } from "@repo/shared/auth/roles";
+import { isAdminRole, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
@@ -79,7 +78,7 @@ export default async function SupportPage({ searchParams }: SupportPageProps) {
 
   const [t, role, timeZone] = await Promise.all([
     getTranslations("Support"),
-    getUserRoleById(session.user.id),
+    normalizeUserRole((session.user as { role?: string | null }).role),
     getUserTimeZone(session.user.id),
   ]);
   const isAdmin = isAdminRole(role);

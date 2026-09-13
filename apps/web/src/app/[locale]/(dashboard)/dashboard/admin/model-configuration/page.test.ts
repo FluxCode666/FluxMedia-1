@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => {
     canViewImageBackendPool: vi.fn(),
     getLocale: vi.fn(),
     getServerSession: vi.fn(),
-    getUserRoleById: vi.fn(),
     loadPaginationConfig: vi.fn(),
     panel: vi.fn(() => null),
     redirect: vi.fn(() => {
@@ -23,10 +22,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@repo/shared/auth/roles", () => ({
+  normalizeUserRole: (role: string | null | undefined) => role ?? "user",
   canViewImageBackendPool: mocks.canViewImageBackendPool,
-}));
-vi.mock("@repo/shared/auth/role-server", () => ({
-  getUserRoleById: mocks.getUserRoleById,
 }));
 vi.mock("@repo/shared/auth/server", () => ({
   getServerSession: mocks.getServerSession,
@@ -60,14 +57,12 @@ describe("DashboardAdminModelConfigurationPage", () => {
     );
 
     expect(mocks.redirect).toHaveBeenCalledWith("/zh/sign-in");
-    expect(mocks.getUserRoleById).not.toHaveBeenCalled();
     expect(mocks.loadPaginationConfig).not.toHaveBeenCalled();
     expect(mocks.panel).not.toHaveBeenCalled();
   });
 
   it("普通用户在分页读取和面板装配前跳转 dashboard", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
-    mocks.getUserRoleById.mockResolvedValue("user");
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "user" } });
     mocks.canViewImageBackendPool.mockReturnValue(false);
 
     await expect(DashboardAdminModelConfigurationPage()).rejects.toBe(
@@ -84,8 +79,7 @@ describe("DashboardAdminModelConfigurationPage", () => {
     "admin",
     "super_admin",
   ] as const)("%s 可通过守卫装配现有面板", async (role) => {
-    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1` } });
-    mocks.getUserRoleById.mockResolvedValue(role);
+    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1`, role } });
     mocks.canViewImageBackendPool.mockReturnValue(true);
 
     const page = (await DashboardAdminModelConfigurationPage()) as {

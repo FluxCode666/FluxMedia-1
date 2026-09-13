@@ -4,8 +4,7 @@
  * 使用方：普通用户查看本人工单、管理员处理任意工单。页面只调用 UOL Action；
  * 消息读取与已读维护写入严格分离，失败不会伪装为空对话。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { isAdminRole } from "@repo/shared/auth/roles";
+import { isAdminRole, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { AdminTicketReplyForm } from "@repo/shared/support/components/admin-ticket-reply-form";
 import { AdminTicketStatusSelect } from "@repo/shared/support/components/admin-ticket-status-select";
@@ -79,7 +78,7 @@ export default async function TicketDetailPage({
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
   const [role, timeZone] = await Promise.all([
-    getUserRoleById(session.user.id),
+    normalizeUserRole((session.user as { role?: string | null }).role),
     getUserTimeZone(session.user.id),
   ]);
   const isAdmin = isAdminRole(role);

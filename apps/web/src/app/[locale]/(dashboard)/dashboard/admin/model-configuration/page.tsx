@@ -4,8 +4,7 @@
  * 页面只负责会话、角色、分页配置和双语标题装配；模型读取、编辑能力和 UOL 权限继续
  * 由 `ModelConfigurationPanel` 及其 Server Action 负责，避免路由层复制领域逻辑。
  */
-import { canViewImageBackendPool } from "@repo/shared/auth/roles";
-import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -30,7 +29,7 @@ export default async function DashboardAdminModelConfigurationPage() {
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewImageBackendPool(role)) {
     redirect(`/${locale}/dashboard`);
   }

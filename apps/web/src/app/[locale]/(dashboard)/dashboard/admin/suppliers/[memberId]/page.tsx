@@ -5,8 +5,7 @@
  * image-backend-pool action/UOL 负责。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canViewImageBackendPool } from "@repo/shared/auth/roles";
+import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
@@ -33,7 +32,7 @@ export default async function DashboardAdminSupplierDetailPage({
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewImageBackendPool(role)) {
     redirect(`/${locale}/dashboard`);
   }

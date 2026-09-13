@@ -4,8 +4,7 @@
  * 页面解析公开筛选、复查人工管理员角色，并并行调用订单列表与用户邮箱搜索 UOL
  * Action；全局数据作用域、精确订单号、状态筛选和 cursor 绑定都在统一接口层完成。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
@@ -47,7 +46,7 @@ export default async function AdminPaymentOrdersPage({
     getTranslations("AdminPayments.orders"),
   ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
 
   const paginationConfig = await loadPaginationConfig();

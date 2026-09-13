@@ -5,7 +5,7 @@
  * 标记全部活跃公告已读；读取失败时显示可重试错误，不伪装为空列表。
  */
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
@@ -106,7 +106,7 @@ export default async function DashboardAnnouncementsPage({
   }
 
   const pagination = parseAnnouncementPagination(rawSearchParams);
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   const principal = { userId: session.user.id, role };
   const retryHref = buildAnnouncementHref(pagination);
   const [announcementResult, timeZoneResult] = await Promise.allSettled([

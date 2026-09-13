@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => {
     getLocale: vi.fn(),
     getServerSession: vi.fn(),
     getTranslations: vi.fn(),
-    getUserRoleById: vi.fn(),
     loadPaginationConfig: vi.fn(),
     panel: vi.fn(() => null),
     redirect: vi.fn(() => {
@@ -24,10 +23,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@repo/shared/auth/roles", () => ({
+  normalizeUserRole: (role: string | null | undefined) => role ?? "user",
   canViewImageBackendPool: mocks.canViewImageBackendPool,
-}));
-vi.mock("@repo/shared/auth/role-server", () => ({
-  getUserRoleById: mocks.getUserRoleById,
 }));
 vi.mock("@repo/shared/auth/server", () => ({
   getServerSession: mocks.getServerSession,
@@ -62,15 +59,13 @@ describe("DashboardAdminSupplierGroupsPage", () => {
     );
 
     expect(mocks.redirect).toHaveBeenCalledWith("/zh/sign-in");
-    expect(mocks.getUserRoleById).not.toHaveBeenCalled();
     expect(mocks.getTranslations).not.toHaveBeenCalled();
     expect(mocks.loadPaginationConfig).not.toHaveBeenCalled();
     expect(mocks.panel).not.toHaveBeenCalled();
   });
 
   it("普通用户在翻译、分页和面板读取前跳转 dashboard", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
-    mocks.getUserRoleById.mockResolvedValue("user");
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "user" } });
     mocks.canViewImageBackendPool.mockReturnValue(false);
 
     await expect(DashboardAdminSupplierGroupsPage()).rejects.toBe(
@@ -88,8 +83,7 @@ describe("DashboardAdminSupplierGroupsPage", () => {
     ["admin", false],
     ["super_admin", false],
   ] as const)("%s 传递正确的分组只读状态", async (role, readOnly) => {
-    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1` } });
-    mocks.getUserRoleById.mockResolvedValue(role);
+    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1`, role } });
     mocks.canViewImageBackendPool.mockReturnValue(true);
 
     const page = (await DashboardAdminSupplierGroupsPage()) as {

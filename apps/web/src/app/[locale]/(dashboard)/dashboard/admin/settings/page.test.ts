@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => {
     canManageUserPermissions: vi.fn(),
     getLocale: vi.fn(),
     getServerSession: vi.fn(),
-    getUserRoleById: vi.fn(),
     getUserTimeZone: vi.fn(),
     settingsTabs: vi.fn(() => null),
     redirect: vi.fn(() => {
@@ -23,10 +22,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@repo/shared/auth/roles", () => ({
+  normalizeUserRole: (role: string | null | undefined) => role ?? "user",
   canManageUserPermissions: mocks.canManageUserPermissions,
-}));
-vi.mock("@repo/shared/auth/role-server", () => ({
-  getUserRoleById: mocks.getUserRoleById,
 }));
 vi.mock("@repo/shared/auth/server", () => ({
   getServerSession: mocks.getServerSession,
@@ -57,7 +54,6 @@ describe("DashboardAdminSettingsPage", () => {
     );
 
     expect(mocks.redirect).toHaveBeenCalledWith("/zh/sign-in");
-    expect(mocks.getUserRoleById).not.toHaveBeenCalled();
     expect(mocks.getUserTimeZone).not.toHaveBeenCalled();
     expect(mocks.settingsTabs).not.toHaveBeenCalled();
   });
@@ -67,8 +63,7 @@ describe("DashboardAdminSettingsPage", () => {
     "admin",
     "user",
   ] as const)("%s 不能进入高敏系统设置", async (role) => {
-    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1` } });
-    mocks.getUserRoleById.mockResolvedValue(role);
+    mocks.getServerSession.mockResolvedValue({ user: { id: `${role}-1`, role } });
     mocks.canManageUserPermissions.mockReturnValue(false);
 
     await expect(DashboardAdminSettingsPage()).rejects.toBe(
@@ -82,9 +77,8 @@ describe("DashboardAdminSettingsPage", () => {
 
   it("super_admin 只装配系统设置和推广奖励页签", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { id: "super-admin-1" },
+      user: { id: "super-admin-1", role: "super_admin" },
     });
-    mocks.getUserRoleById.mockResolvedValue("super_admin");
     mocks.canManageUserPermissions.mockReturnValue(true);
 
     const page = (await DashboardAdminSettingsPage()) as {

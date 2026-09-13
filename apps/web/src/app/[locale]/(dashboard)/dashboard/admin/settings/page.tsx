@@ -1,5 +1,4 @@
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canManageUserPermissions } from "@repo/shared/auth/roles";
+import { canManageUserPermissions, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 /**
@@ -26,7 +25,7 @@ export default async function DashboardAdminSettingsPage() {
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canManageUserPermissions(role)) {
     redirect(`/${locale}/dashboard`);
   }

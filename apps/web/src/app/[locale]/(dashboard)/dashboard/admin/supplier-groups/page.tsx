@@ -4,8 +4,7 @@
  * 页面只负责会话、角色、分页配置和双语标题装配；分组读取、筛选、计费覆盖与写入
  * 继续由既有 image-backend-pool Action/UOL 负责。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canViewImageBackendPool } from "@repo/shared/auth/roles";
+import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -29,7 +28,7 @@ export default async function DashboardAdminSupplierGroupsPage() {
     redirect(`/${locale}/sign-in`);
   }
 
-  const role = await getUserRoleById(session.user.id);
+  const role = normalizeUserRole((session.user as { role?: string | null }).role);
   if (!canViewImageBackendPool(role)) {
     redirect(`/${locale}/dashboard`);
   }
