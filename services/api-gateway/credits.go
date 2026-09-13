@@ -12,6 +12,19 @@ import (
 
 type apiPrincipal struct{ UserID, KeyID string }
 
+// handleExternalAuth exposes the same bearer validation used by the public
+// gateway to legacy Next adapters that still need a principal for a UOL call.
+// It never accepts user IDs from the body and returns only the minimum
+// identity/quota projection.
+func (b *backend) handleExternalAuth(w http.ResponseWriter, r *http.Request) error {
+	p, err := b.authenticateAPI(r)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"apiKeyId": p.KeyID, "userId": p.UserID})
+	return nil
+}
+
 func (b *backend) authenticateAPI(r *http.Request) (*apiPrincipal, error) {
 	fields := strings.Fields(r.Header.Get("Authorization"))
 	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || len(fields[1]) > 512 {
@@ -95,6 +108,7 @@ func (b *backend) externalEndpoint(fn endpoint) http.HandlerFunc {
 	})
 }
 func (b *backend) registerExternalAPI(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/internal/external-api/auth", b.endpoint(b.handleExternalAuth))
 	for _, prefix := range []string{"/api/v1", "/v1"} {
 		mux.HandleFunc("GET "+prefix+"/models", b.externalEndpoint(b.handleExternalModels))
 		mux.HandleFunc("OPTIONS "+prefix+"/models", b.externalEndpoint(b.handleExternalModels))

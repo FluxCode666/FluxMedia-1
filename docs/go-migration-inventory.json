@@ -1582,7 +1582,6 @@
     "apps/web/src/features/external-api/auth.ts",
     "apps/web/src/features/external-api/key-management-service.ts",
     "apps/web/src/features/external-api/platform-model-catalog-service.ts",
-    "apps/web/src/features/external-api/quota.ts",
     "apps/web/src/features/image-generation/admin-history-repository.ts",
     "apps/web/src/features/image-generation/generation-deletion-service.ts",
     "apps/web/src/features/image-generation/history-repository.ts",
