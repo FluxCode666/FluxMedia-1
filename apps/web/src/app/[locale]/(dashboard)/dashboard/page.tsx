@@ -4,15 +4,14 @@
  * 本页只负责会话鉴权、本人 Principal 和首屏快照装配；刷新状态与模型占比图表拆包由
  * dashboard feature 承担。摘要固定为滚动近 24 小时与累计口径，并附带当前积分余额。
  */
-import { auth } from "@repo/shared/auth";
 import { normalizeUserRole } from "@repo/shared/auth/roles";
+import { getServerSession } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
 import { getAvatarUrl } from "@repo/shared/storage";
 import {
   type DashboardSupportConfig,
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
 } from "@repo/shared/support/dashboard-config";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { DashboardAccountSupport } from "@/features/dashboard/components/dashboard-account-support";
@@ -60,10 +59,10 @@ function logDashboardLoadFailure(
 export default async function DashboardPage() {
   const locale = await getLocale();
   const isZh = locale === "zh";
-  let session: Awaited<ReturnType<typeof auth.api.getSession>> = null;
+  let session: Awaited<ReturnType<typeof getServerSession>> = null;
 
   try {
-    session = await auth.api.getSession({ headers: await headers() });
+    session = await getServerSession();
   } catch (error) {
     const reason = getDashboardLoadFailureReason(error);
     if (reason !== "query_timeout" && reason !== "query_unavailable") {

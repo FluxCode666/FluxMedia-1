@@ -1624,7 +1624,6 @@
     "packages/shared/src/auth/registration-identity.ts",
     "packages/shared/src/auth/registration-verification-plugin.ts",
     "packages/shared/src/auth/registration-verification.ts",
-    "packages/shared/src/auth/role-server.ts",
     "packages/shared/src/credits/core.ts",
     "packages/shared/src/credits/purchase-orders.ts",
     "packages/shared/src/credits/usage-read-model.ts",
@@ -1637,7 +1636,6 @@
     "packages/shared/src/system-settings/bootstrap.ts",
     "packages/shared/src/system-settings/env-file.ts",
     "packages/shared/src/system-settings/index.ts",
-    "packages/shared/src/time-zone/server.ts",
     "packages/shared/src/uol/invoke.ts"
   ]
 }

@@ -1,8 +1,7 @@
-import { headers } from "next/headers";
 import { createSafeActionClient } from "next-safe-action";
 import { z } from "zod";
 
-import { auth } from "./auth/index";
+import { getServerSession } from "./auth/server";
 import {
   canAccessAdminArea,
   canManageUserPermissions,
@@ -155,9 +154,7 @@ export const protectedAction = actionClient.use(async ({ next }) => {
    * 获取当前用户会话
    * 使用 Better Auth 的 getSession 方法
    */
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getServerSession();
 
   // 如果没有会话或用户信息，重定向到登录页
   if (!session || !session.user) {

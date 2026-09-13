@@ -261,6 +261,18 @@ func galleryImageURL(image map[string]any) *string {
 	return generationURL(&key, &bucket)
 }
 
+func galleryUploadCursorParts(id string) (string, int) {
+	marker := strings.LastIndex(id, "-upload-")
+	if marker <= 0 {
+		return "", 0
+	}
+	ordinal, err := strconv.Atoi(id[marker+len("-upload-"):])
+	if err != nil || ordinal < 1 {
+		return "", 0
+	}
+	return id[:marker], ordinal
+}
+
 func (b *backend) handleGenerationList(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireSession(r)
 	if e != nil {
@@ -404,8 +416,12 @@ func (b *backend) handleGallery(w http.ResponseWriter, r *http.Request) error {
 		query := `SELECT g.id,g.prompt,g.revised_prompt,g.model,g.size,g.metadata,g.created_at,(input_image.ordinality - 1)::integer FROM generation g CROSS JOIN LATERAL jsonb_array_elements(COALESCE((g.metadata::jsonb)->'inputImages'->'images','[]'::jsonb)) WITH ORDINALITY AS input_image(value,ordinality) WHERE g.user_id=$1 AND g.created_at <= $2 AND ((input_image.value->>'imageUrl') IS NOT NULL OR ((input_image.value->>'storageKey') IS NOT NULL AND (input_image.value->>'storageBucket') IS NOT NULL))`
 		args := []any{s.User.ID, createdBefore}
 		if idBefore != "" {
-			query += ` AND (g.created_at,g.id) < ($3,$4)`
-			args = append(args, createdBefore, idBefore)
+			parentID, ordinal := galleryUploadCursorParts(idBefore)
+			if parentID == "" {
+				return invalid("图库分页游标无效")
+			}
+			query += ` AND ((g.created_at,g.id) < ($3,$4) OR (g.created_at=$3 AND g.id=$4 AND input_image.ordinality > $5))`
+			args = append(args, createdBefore, parentID, ordinal)
 		}
 		query += ` ORDER BY g.created_at DESC,g.id DESC,input_image.ordinality ASC LIMIT $` + strconv.Itoa(len(args)+1)
 		args = append(args, limit)
