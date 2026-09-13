@@ -56,7 +56,6 @@ import {
   type ModerationImageInput,
   moderateContent,
 } from "@repo/shared/moderation";
-import { checkRateLimit } from "@repo/shared/rate-limit";
 import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -77,13 +76,6 @@ import {
   HistoryServiceError,
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
-import {
-  createCreditTopUpCheckout,
-  fulfillAlipayCreditTopUp,
-  getCreditPaymentStatus,
-  getCreditTopUpOptions,
-  getCreditTopUpOrderStatus,
-} from "@/features/payment/credit-top-up";
 import { databaseUsageLogRepository } from "@/features/usage-log/repository";
 import {
   loadUsageEventDetail,
@@ -326,7 +318,8 @@ bindExecute(
     _input: Record<string, never>,
     _principal: Principal,
     _ctx: OperationContext
-  ) => getCreditTopUpOptions()
+  ) =>
+    requestGoJson("/api/credits/top-up/options")
 );
 
 /** credits.createTopUpCheckout - 创建带 per-user clientRequestId 幂等键的充值订单。 */
@@ -348,19 +341,11 @@ bindExecute(
         "User session authentication required"
       );
     }
-    // 充值下单会触发第三方预下单，按用户而非 IP 限流，避免 Server Action
-    // 绕过 API middleware 后被反复调用消耗支付宝网关配额。
-    const rateLimit = await checkRateLimit(
-      `credit-top-up:${principal.userId}`,
-      "payment"
-    );
-    if (!rateLimit.success) {
-      throw new OperationError(
-        "rate_limited",
-        "Credit top-up requests are too frequent"
-      );
-    }
-    return createCreditTopUpCheckout({ ...input, userId: principal.userId });
+    void principal.userId;
+    return requestGoJson("/api/credits/top-up/checkout", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   }
 );
 
@@ -378,9 +363,10 @@ bindExecute(
         "User session authentication required"
       );
     }
-    return getCreditTopUpOrderStatus({
-      userId: principal.userId,
-      orderId: input.orderId,
+    void principal.userId;
+    return requestGoJson("/api/credits/top-up/order-status", {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   }
 );
@@ -399,9 +385,10 @@ bindExecute(
         "User session authentication required"
       );
     }
-    return getCreditPaymentStatus({
-      userId: principal.userId,
-      orderId: input.orderId,
+    void principal.userId;
+    return requestGoJson("/api/credits/payment/status", {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   }
 );
@@ -421,7 +408,18 @@ bindExecute(
     },
     _principal: Principal,
     _ctx: OperationContext
-  ) => fulfillAlipayCreditTopUp(input)
+  ) => {
+    // Provider signature verification remains at the webhook boundary.  This
+    // operation only forwards the verified notification to Go's durable
+    // fulfillment state machine using the scheduler credential.
+    const secret = process.env.CRON_SECRET?.trim();
+    if (!secret) throw new OperationError("internal_error", "支付服务未配置");
+    return requestGoJson("/api/internal/payment-fulfillment/alipay", {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+      body: JSON.stringify(input),
+    });
+  }
 );
 
 // TODO: image.generateAction - 委托 image.generate

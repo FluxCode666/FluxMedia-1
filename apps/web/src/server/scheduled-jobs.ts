@@ -4,11 +4,9 @@
  * 职责：执行图片清理、积分过期、媒体队列补投、图片租约恢复、运营 CSV 导出与
  * 定时任务；业务副作用通过各领域仓储、队列或 UOL operation 完成。
  */
-import { processExpiredBatches } from "@repo/shared/credits/core";
 import {
   destroyExpiredGenerationPhotos,
   destroyGenerationPhotosByMaxCount,
-  expireStalePendingGenerations,
 } from "@repo/shared/generation-maintenance";
 import { logError } from "@repo/shared/logger";
 import { getRuntimeSettingSelect } from "@repo/shared/system-settings";
@@ -31,10 +29,32 @@ import {
   defaultMediaTaskRecoveryRepository,
   type MediaTaskRecoveryRepository,
 } from "@/server/media-task-recovery-repository";
-import {
-  buildCreditsExpireResponse,
-  summarizeExpiredPendingGenerations,
-} from "@/server/scheduled-jobs-response";
+
+/**
+ * Invoke a Go-owned maintenance endpoint with the scheduler credential.
+ *
+ * Scheduler execution has no browser cookie.  The Go job endpoints therefore
+ * require the dedicated CRON_SECRET bearer token; keeping this call here makes
+ * the Next scheduler an orchestration client instead of a second database
+ * implementation of expiry semantics.
+ */
+async function requestGoMaintenance<T>(path: string): Promise<T> {
+  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) throw new Error("CRON_SECRET is required for Go maintenance jobs");
+  const response = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}` },
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | (T & { error?: { message?: string } })
+    | null;
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Go maintenance request failed (${response.status})`);
+  }
+  return payload as T;
+}
 
 /**
  * 运营导出任务通过 UOL 内部 cron Principal 调用，保证处理与保留任务只能使用各自
@@ -334,13 +354,15 @@ export async function runImageMaintenanceJob() {
           });
 
   const [pendingResults, photoRetention] = await Promise.all([
-    expireStalePendingGenerations({ limit: IMAGE_MAINTENANCE_BATCH_LIMIT }),
+    requestGoMaintenance<{ expired?: number; success?: boolean }>(
+      "/api/jobs/images/expire-pending"
+    ),
     photoRetentionTask,
   ]);
 
   return {
     success: true,
-    ...summarizeExpiredPendingGenerations(pendingResults),
+    expiredPending: pendingResults.expired ?? 0,
     details: pendingResults,
     retentionMode,
     photoRetention,
@@ -349,12 +371,10 @@ export async function runImageMaintenanceJob() {
 }
 
 export async function runCreditsExpireJob() {
-  const results = await processExpiredBatches();
-
-  return {
-    ...buildCreditsExpireResponse(results),
-    timestamp: new Date().toISOString(),
-  };
+  const result = await requestGoMaintenance<{ success?: boolean; expired?: number }>(
+    "/api/jobs/credits/expire"
+  );
+  return { ...result, timestamp: new Date().toISOString() };
 }
 
 /**

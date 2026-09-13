@@ -346,6 +346,30 @@ func (b *backend) handleModelConfiguration(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
+		// UOL and server actions submit the strict model configuration command as
+		// JSON.  Keep reads query driven while routing command shaped payloads
+		// through the same authenticated mutation path as multipart admin forms.
+		if rawString(body, "category") != "" && rawString(body, "configKey", "modelId") != "" {
+			if _, err := b.requireAdmin(r, true); err != nil {
+				return err
+			}
+			category := rawString(body, "category")
+			if category != "image" && category != "video" {
+				return invalid("模型配置参数无效")
+			}
+			key := rawString(body, "configKey", "modelId")
+			entry := map[string]any{"configKey": key, "category": category}
+			for field, raw := range body {
+				if field == "configKey" || field == "modelId" || field == "category" || field == "clientRequestId" || field == "expectedRevision" {
+					continue
+				}
+				var value any
+				if json.Unmarshal(raw, &value) == nil {
+					entry[field] = value
+				}
+			}
+			return b.mutateModelConfig(w, r, key, entry, false)
+		}
 		return b.handleModelConfigurationRead(w, r, body)
 	}
 	if _, err := b.requireAdmin(r, true); err != nil {

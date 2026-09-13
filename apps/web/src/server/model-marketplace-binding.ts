@@ -19,7 +19,6 @@ import {
   type UpdateModelConfigurationEntryInput,
   type UpdateModelConfigurationEntryOutput,
 } from "@repo/shared/model-marketplace";
-import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import {
   bindExecute,
   type OperationContext,
@@ -29,14 +28,11 @@ import {
 import type { ModelMarketplacePublicCatalogOutput } from "@repo/shared/uol/operations";
 import type { VideoCurrentQuote } from "@repo/shared/video-generation";
 import { ModelMarketplaceCoverImageError } from "@/features/model-configuration/cover-image";
-import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
   ModelConfigurationServiceError,
   type ModelConfigurationServiceErrorCode,
 } from "@/features/model-configuration/service-core";
-import { productionModelMarketplaceService } from "@/features/model-marketplace/service";
-import { loadVideoCurrentQuotes } from "./uol-bindings/video-current-quotes";
-import { executeVideoListCapabilitiesBinding } from "./uol-bindings/video-generation-capabilities";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 登录用户 Principal；公开模型目录只为该身份计算可信分组可达性。 */
 type UserPrincipal = Extract<Principal, { type: "user" }>;
@@ -82,33 +78,70 @@ export type ModelMarketplaceOperationBindingDependencies = {
 };
 
 const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
-  readModelConfiguration: (principal) =>
-    productionModelConfigurationService.read(principal),
-  readModelConfigurationPage: (principal, input) =>
-    productionModelConfigurationService.readPage(principal, input),
-  updateModelConfigurationEntry: (command) =>
-    productionModelConfigurationService.updateEntry(command),
-  deleteModelConfigurationEntry: (command) =>
-    productionModelConfigurationService.deleteEntry(command),
-  listPublicModels: () => productionModelMarketplaceService.listPublicModels(),
-  listVideoCapabilities: (principal) =>
-    executeVideoListCapabilitiesBinding({}, principal, {
-      async loadCapabilityOverrides() {
-        return getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES");
-      },
-      async loadMarketplaceConfig() {
-        return getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG");
-      },
-      async listConfiguredModelIds(selection) {
-        return (
-          await import("@/features/image-backend-pool/runtime-service")
-        ).listConfiguredRuntimeModelIds(selection);
-      },
-      loadCurrentQuotes: loadVideoCurrentQuotes,
-      reportFailure(error) {
-        logError(error, { source: "model-marketplace-video-reachability" });
-      },
-    }),
+  readModelConfiguration: async () =>
+    requestGoJson<ModelConfigurationSnapshot>("/api/admin/model-configuration"),
+  readModelConfigurationPage: async (_principal, input) =>
+    requestGoJson<ModelConfigurationListOutput>(
+      `/api/admin/model-configuration?${new URLSearchParams({
+        page: String(input.page),
+        pageSize: String(input.pageSize),
+        query: input.query,
+        category: input.category,
+      }).toString()}`
+    ),
+  updateModelConfigurationEntry: async ({ input }) =>
+    requestGoJson<UpdateModelConfigurationEntryOutput>(
+      "/api/admin/model-configuration",
+      { method: "POST", body: JSON.stringify(input) }
+    ),
+  deleteModelConfigurationEntry: async ({ input }) =>
+    requestGoJson<DeleteModelConfigurationEntryOutput>(
+      "/api/admin/model-configuration",
+      { method: "DELETE", body: JSON.stringify(input) }
+    ),
+  listPublicModels: () =>
+    requestGoJson<ModelMarketplacePublicCatalogOutput>(
+      "/api/model-marketplace/public"
+    ),
+  listVideoCapabilities: async () => {
+    const result = await requestGoJson<{
+      items: Array<{
+        model: string;
+        configuredReachable?: boolean;
+        billing?: Array<{
+          resolution: string;
+          mode: "per_item" | "per_second";
+          unitPrice: number;
+        }>;
+      }>;
+    }>("/api/videos/capabilities");
+    return {
+      items: result.items.map((item) => ({
+        model: item.model,
+        configuredReachable: item.configuredReachable !== false,
+        billing: (item.billing ?? []).map((quote) =>
+          quote.mode === "per_item"
+            ? {
+                kind: "current_quote" as const,
+                resolution: quote.resolution,
+                mode: "per_item" as const,
+                unit: "item" as const,
+                unitPrice: quote.unitPrice,
+                quoteToken: `go-${item.model}-${quote.resolution}`,
+              }
+            : {
+                kind: "current_quote" as const,
+                resolution: quote.resolution,
+                mode: "per_second" as const,
+                unit: "second" as const,
+                creditsPerSecond: quote.unitPrice,
+                unitPrice: quote.unitPrice,
+                quoteToken: `go-${item.model}-${quote.resolution}`,
+              }
+        ),
+      })),
+    };
+  },
   reportUpdateError(error, context) {
     logError(error, {
       source: "model-configuration-update",
