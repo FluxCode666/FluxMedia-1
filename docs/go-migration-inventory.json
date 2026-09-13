@@ -1612,7 +1612,6 @@
     "apps/web/src/features/site-branding/service.ts",
     "apps/web/src/features/usage-log/repository.ts",
     "apps/web/src/server/internal-job-scheduler.ts",
-    "apps/web/src/server/uol-bindings/admin-status.ts",
     "packages/shared/src/auth/bootstrap-super-admin.ts",
     "packages/shared/src/auth/index.ts",
     "packages/shared/src/auth/registration-identity.ts",
