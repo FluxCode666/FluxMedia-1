@@ -9,45 +9,21 @@ import {
   adminPaymentOverviewOutputSchema,
   adminPaymentUserSearchOutputSchema,
 } from "@repo/shared/payment/admin-contract";
-import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { bindOperationExecute, OperationError } from "@repo/shared/uol";
 import {
   getAdminPaymentOverview,
   listAdminPaymentOrders,
   searchAdminPaymentUsers,
 } from "@repo/shared/uol/operations/payment";
-
-import { databaseAdminPaymentRepository } from "@/features/payment/admin/admin-payment-repository";
-import {
-  AdminPaymentServiceError,
-  loadAdminPaymentOrders,
-  loadAdminPaymentOverview,
-  searchAdminPaymentOrderUsers,
-} from "@/features/payment/admin/admin-payment-service";
-
-/** 将支付应用服务校验错误映射为稳定 UOL 输入错误。 */
-async function invokeAdminPaymentService<T>(
-  operation: () => Promise<T>
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (error instanceof AdminPaymentServiceError) {
-      throw new OperationError(error.code, error.message);
-    }
-    throw error;
-  }
-}
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 绑定日期范围支付概览；报告时区固定为部署配置。 */
 bindOperationExecute(getAdminPaymentOverview, async (input) =>
   adminPaymentOverviewOutputSchema.parse(
-    await invokeAdminPaymentService(() =>
-      loadAdminPaymentOverview(
-        { timeZone: getAppTimeZone(), input },
-        { repository: databaseAdminPaymentRepository }
-      )
-    )
+    await requestGoJson("/api/admin/payment/overview", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
   )
 );
 
@@ -57,26 +33,19 @@ bindOperationExecute(listAdminPaymentOrders, async (input, principal) => {
     throw new OperationError("forbidden", "Admin access required");
   }
   return adminPaymentOrderListOutputSchema.parse(
-    await invokeAdminPaymentService(() =>
-      loadAdminPaymentOrders(
-        {
-          actorUserId: principal.userId,
-          input,
-          timeZone: getAppTimeZone(),
-        },
-        { repository: databaseAdminPaymentRepository }
-      )
-    )
+    await requestGoJson("/api/admin/payment/orders", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
   );
 });
 
 /** 绑定存在充值记录的用户邮箱搜索。 */
 bindOperationExecute(searchAdminPaymentUsers, async (input) =>
   adminPaymentUserSearchOutputSchema.parse(
-    await invokeAdminPaymentService(() =>
-      searchAdminPaymentOrderUsers(input, {
-        repository: databaseAdminPaymentRepository,
-      })
-    )
+    await requestGoJson("/api/admin/payment/users/search", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
   )
 );

@@ -4,8 +4,6 @@
  * 使用方：payment.listMyRecentOrders 的 Web 执行绑定。数据库适配器始终以当前
  * Principal 的 userId 过滤，并仅选择钱包列表需要的安全字段。
  */
-import { db } from "@repo/database";
-import { paymentOrder } from "@repo/database/schema";
 import { getCreditPaymentDisplayStatus } from "@repo/shared/credits/purchase-orders";
 import {
   type UserPaymentOrderListInput,
@@ -13,7 +11,7 @@ import {
   userPaymentOrderListInputSchema,
   userPaymentOrderListOutputSchema,
 } from "@repo/shared/payment/user-order-contract";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 数据库读取后进入用户态映射的最小订单行。 */
 export type UserPaymentOrderRow = {
@@ -40,28 +38,27 @@ export type UserPaymentOrderRepository = {
 /** PostgreSQL 仓储：按用户、创建时间和订单 ID 稳定倒序读取充值订单。 */
 export const databaseUserPaymentOrderRepository: UserPaymentOrderRepository = {
   async listRecentByUser(input) {
-    return db
-      .select({
-        id: paymentOrder.id,
-        provider: paymentOrder.provider,
-        purpose: paymentOrder.purpose,
-        status: paymentOrder.status,
-        currency: paymentOrder.currency,
-        amountMinor: paymentOrder.amountMinor,
-        creditsAmount: paymentOrder.creditsAmount,
-        createdAt: paymentOrder.createdAt,
-        expiresAt: paymentOrder.expiresAt,
-        fulfilledAt: paymentOrder.fulfilledAt,
-      })
-      .from(paymentOrder)
-      .where(
-        and(
-          eq(paymentOrder.userId, input.userId),
-          inArray(paymentOrder.purpose, ["credit_top_up", "credit_package"])
-        )
-      )
-      .orderBy(desc(paymentOrder.createdAt), desc(paymentOrder.id))
-      .limit(input.limit);
+    // Go derives the user from the authenticated cookie. Keep the legacy
+    // repository shape for callers/tests while removing the Next DB boundary.
+    const output = await requestGoJson<{
+      records: Array<{
+        id: string;
+        provider: string;
+        purpose: string;
+        status: string;
+        currency: string;
+        amountMinor: number;
+        creditsAmount: number;
+        createdAt: string;
+        fulfilledAt: string | null;
+      }>;
+    }>(`/api/credits/payment-orders?limit=${encodeURIComponent(String(input.limit))}`);
+    return output.records.map((row) => ({
+      ...row,
+      createdAt: new Date(row.createdAt),
+      expiresAt: null,
+      fulfilledAt: row.fulfilledAt ? new Date(row.fulfilledAt) : null,
+    }));
   },
 };
 
