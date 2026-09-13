@@ -1,10 +1,12 @@
 /** User administration UOL bindings backed by the Go admin API. */
-import "@repo/shared/uol/operations/user-auth";
+import { listUsers as registeredUserListOperation } from "@repo/shared/uol/operations";
 import {
   adminUserListOutputSchema,
 } from "@repo/shared/support/admin-user-list-contract";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
 import { requestGoJson } from "@/server/go-backend-client";
+
+void registeredUserListOperation;
 
 function requireUser(principal: Principal): Extract<Principal, { type: "user" }> {
   if (principal.type !== "user") {

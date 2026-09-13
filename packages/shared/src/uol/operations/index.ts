@@ -100,6 +100,10 @@ export {
   videoListCapabilities,
   videoRequestAccountInputCleanup,
 } from "./video-generation";
+// Named export keeps the user-auth registration module live when Next bundles
+// the server bindings; its defineOperation side effect is required before the
+// Go-backed admin binding is evaluated.
+export { listUsers } from "./user-auth";
 
 // 客服支持域
 import "./support";
