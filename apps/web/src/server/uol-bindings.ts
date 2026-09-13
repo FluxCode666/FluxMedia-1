@@ -39,8 +39,6 @@ import "@/server/site-branding-binding";
 
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import {
-  type UsageEvent,
-  type UsageEventDetail,
   usageEventDetailSchema,
   usageEventListOutputSchema,
 } from "@repo/shared/credits/usage-log-contract";
@@ -56,7 +54,6 @@ import {
   type ModerationImageInput,
   moderateContent,
 } from "@repo/shared/moderation";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -65,12 +62,6 @@ import {
   OperationError,
 } from "@repo/shared/uol";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
-import { databaseUsageLogRepository } from "@/features/usage-log/repository";
-import {
-  loadUsageEventDetail,
-  loadUsageEvents,
-  UsageLogServiceError,
-} from "@/features/usage-log/service";
 import { bindHomepageReliabilityOperation } from "@/server/homepage-reliability-binding";
 import { bindModelMarketplaceOperations } from "@/server/model-marketplace-binding";
 import { requestGoJson } from "@/server/go-backend-client";
@@ -216,14 +207,6 @@ bindHomepageReliabilityOperation();
 // 管理模型配置与公开模型广场共用专用 binding，保持错误和 DTO 边界单点收敛。
 bindModelMarketplaceOperations();
 
-/** 将 usage-log 服务稳定错误映射为 UOL 错误，不附带 token 或业务 ID。 */
-function throwUsageLogOperationError(error: unknown): never {
-  if (error instanceof UsageLogServiceError) {
-    throw new OperationError(error.code, error.message);
-  }
-  throw error;
-}
-
 // ---------------------------------------------------------------------------
 // credits 使用日志域
 // ---------------------------------------------------------------------------
@@ -235,20 +218,13 @@ bindExecute(
     if (principal.type !== "user") {
       throw new OperationError("unauthenticated", "User identity required");
     }
-    try {
-      const timeZone = await getUserTimeZone(principal.userId);
-      const output = await loadUsageEvents(
-        { userId: principal.userId, timeZone, input },
-        { repository: databaseUsageLogRepository }
-      );
-      return usageEventListOutputSchema.parse(output) as {
-        asOf: string;
-        events: UsageEvent[];
-        nextCursor: string | null;
-      };
-    } catch (error) {
-      throwUsageLogOperationError(error);
-    }
+    void principal.userId;
+    return usageEventListOutputSchema.parse(
+      await requestGoJson("/api/credits/usage-log", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    );
   }
 );
 
@@ -259,15 +235,13 @@ bindExecute(
     if (principal.type !== "user") {
       throw new OperationError("unauthenticated", "User identity required");
     }
-    try {
-      const output = await loadUsageEventDetail(
-        { userId: principal.userId, eventRef: input.eventRef },
-        { repository: databaseUsageLogRepository }
-      );
-      return usageEventDetailSchema.parse(output) as UsageEventDetail;
-    } catch (error) {
-      throwUsageLogOperationError(error);
-    }
+    void principal.userId;
+    return usageEventDetailSchema.parse(
+      await requestGoJson("/api/credits/usage-log/detail", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    );
   }
 );
 
