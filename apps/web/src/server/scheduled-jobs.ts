@@ -22,8 +22,6 @@ import {
   renewImageGenerationAdmission,
   restoreImageGenerationAdmissionLease,
 } from "@/features/image-generation/redis-image-generation-slots";
-import { runVideoCallbackDeliveryJob } from "@/features/image-generation/video-callback-delivery";
-import { runVideoInputCleanupJob } from "@/features/image-generation/video-input-cleanup-queue";
 import { enqueueImageTask, enqueueVideoTask } from "@/server/media-task-queues";
 import {
   defaultMediaTaskRecoveryRepository,
@@ -492,16 +490,20 @@ export async function runMediaTaskQueueRecovery(
  * @returns 本轮补投、租约恢复、回调投递和输入清理统计；不直接处理媒体生成任务。
  */
 export async function runVideoRecoveryJob() {
-  const [queueRecovery, callbackDelivery, inputCleanup] = await Promise.all([
-    runMediaTaskQueueRecovery(),
-    runVideoCallbackDeliveryJob(),
-    runVideoInputCleanupJob(),
-  ]);
+  // Media recovery is owned by the Go scheduler. Keep this Next entrypoint as
+  // a thin cron bridge during rollout so a second Node worker cannot duplicate
+  // queue claims, callback delivery, or input cleanup.
+  const result = await requestGoMaintenance<{
+    success?: boolean;
+    queueRecovered?: number;
+    callbacksDelivered?: number;
+    inputsDeleted?: number;
+  }>("/api/jobs/media/recover");
   return {
-    success: true,
-    queueRecovery,
-    callbackDelivery,
-    inputCleanup,
+    success: result.success !== false,
+    queueRecovery: { discovered: result.queueRecovered ?? 0, enqueued: 0, renewed: 0, released: 0, deferred: 0, failed: 0 },
+    callbackDelivery: { claimed: result.callbacksDelivered ?? 0, delivered: result.callbacksDelivered ?? 0, failed: 0 },
+    inputCleanup: { claimed: result.inputsDeleted ?? 0, deleted: result.inputsDeleted ?? 0, failed: 0 },
     timestamp: new Date().toISOString(),
   };
 }

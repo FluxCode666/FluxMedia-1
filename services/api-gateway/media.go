@@ -104,6 +104,7 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/jobs/images/expire-pending", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("POST /api/jobs/credits/expire", b.endpoint(b.handleCreditsExpireJob))
 	mux.HandleFunc("POST /api/jobs/images/expire-pending", b.endpoint(b.handleImagesExpireJob))
+	mux.HandleFunc("POST /api/jobs/media/recover", b.endpoint(b.handleMediaRecoveryJob))
 
 	// Remaining application endpoints now terminate in Go.  They return a
 	// stable JSON envelope and enforce the same session boundary, allowing the
@@ -791,6 +792,29 @@ func (b *backend) handleImagesExpireJob(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	writeJSON(w, 200, map[string]any{"success": true, "expired": expired})
+	return nil
+}
+
+// handleMediaRecoveryJob exposes the same bounded recovery pass used by the
+// native scheduler for rollout environments where an external cron still
+// drives maintenance. It is CRON_SECRET protected and idempotent.
+func (b *backend) handleMediaRecoveryJob(w http.ResponseWriter, r *http.Request) error {
+	if !b.cronAuthorized(r) {
+		return &apiError{http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized"}
+	}
+	queue, err := b.recoverMediaQueue(r.Context())
+	if err != nil {
+		return err
+	}
+	delivered, callbackErr := b.deliverVideoCallbacks(r.Context())
+	if callbackErr != nil {
+		return callbackErr
+	}
+	deleted, cleanupErr := b.cleanupVideoInputs(r.Context())
+	if cleanupErr != nil {
+		return cleanupErr
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "queueRecovered": queue, "callbacksDelivered": delivered, "inputsDeleted": deleted})
 	return nil
 }
 
