@@ -344,7 +344,7 @@ func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL,
 		}
 		return nil, errors.New("media provider poll returned invalid JSON")
 	}
-	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, "videos.query", output, resp.StatusCode, taskID, model)
+	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, "videos.query", output, resp.StatusCode, resp.Header, taskID, model)
 	if scriptErr != nil {
 		return nil, scriptErr
 	}
@@ -637,7 +637,7 @@ func (b *backend) callProvider(ctx context.Context, cfg providerConfig, operatio
 		}
 		return nil, errors.New("media provider returned invalid JSON")
 	}
-	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, operation, out, resp.StatusCode, taskID, model)
+	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, operation, out, resp.StatusCode, resp.Header, taskID, model)
 	if scriptErr != nil {
 		return nil, scriptErr
 	}
@@ -656,7 +656,19 @@ func (b *backend) callProvider(ctx context.Context, cfg providerConfig, operatio
 // response stage. Adapters are allowed to return the stable media contract
 // (status/outputs/error) while keeping vendor response shapes out of the
 // worker. An empty script preserves the provider JSON unchanged.
-func (b *backend) applyProviderResponseScript(ctx context.Context, cfg providerConfig, operation string, body map[string]any, statusCode int, taskID, model string) (map[string]any, error) {
+func providerResponseHeaders(headers http.Header) map[string]any {
+	result := make(map[string]any, len(headers))
+	for key, values := range headers {
+		if len(values) == 1 {
+			result[key] = values[0]
+		} else {
+			result[key] = append([]string(nil), values...)
+		}
+	}
+	return result
+}
+
+func (b *backend) applyProviderResponseScript(ctx context.Context, cfg providerConfig, operation string, body map[string]any, statusCode int, headers http.Header, taskID, model string) (map[string]any, error) {
 	op, ok := cfg.operations[operation].(map[string]any)
 	if !ok {
 		return body, nil
@@ -673,7 +685,7 @@ func (b *backend) applyProviderResponseScript(ctx context.Context, cfg providerC
 		Script: script, Operation: operation, Stage: "response",
 		Input: map[string]any{
 			"statusCode": statusCode,
-			"headers":    map[string]any{},
+			"headers":    providerResponseHeaders(headers),
 			"body":       body,
 		},
 		Context: map[string]any{

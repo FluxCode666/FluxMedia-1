@@ -70,7 +70,7 @@ func TestApplyProviderResponseScriptUsesResponseStage(t *testing.T) {
 			"videos.query": map[string]any{"responseScript": `return { status: "completed", outputs: [{ url: response.body.output }] };`},
 		},
 	}
-	got, err := b.applyProviderResponseScript(context.Background(), cfg, "videos.query", map[string]any{"output": "https://cdn.example.test/video.mp4"}, http.StatusOK, "task-1", "model-1")
+	got, err := b.applyProviderResponseScript(context.Background(), cfg, "videos.query", map[string]any{"output": "https://cdn.example.test/video.mp4"}, http.StatusOK, http.Header{"X-Provider": []string{"ok"}}, "task-1", "model-1")
 	if err != nil {
 		t.Fatalf("applyProviderResponseScript() error = %v", err)
 	}
