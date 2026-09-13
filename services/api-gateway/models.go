@@ -132,12 +132,18 @@ func visibleModelIDs(groups [][]string, config marketplaceModels) []string {
 }
 func (b *backend) handleExternalModels(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
-	p, err := b.authenticateAPI(r)
-	if err != nil {
-		return err
+	var userID, keyID string
+	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" && principal.CredentialKind == "external" {
+		userID, keyID = principal.UserID, principal.APIKeyID
+	} else {
+		p, err := b.authenticateAPI(r)
+		if err != nil {
+			return err
+		}
+		userID, keyID = p.UserID, p.KeyID
 	}
 	var group *string
-	err = b.db.QueryRow(r.Context(), `SELECT COALESCE(generation_group_id,(SELECT CASE WHEN count(*)=1 THEN min(id) END FROM image_backend_group WHERE is_enabled AND is_default)) FROM external_api_key WHERE id=$1 AND user_id=$2`, p.KeyID, p.UserID).Scan(&group)
+	err := b.db.QueryRow(r.Context(), `SELECT COALESCE(generation_group_id,(SELECT CASE WHEN count(*)=1 THEN min(id) END FROM image_backend_group WHERE is_enabled AND is_default)) FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, userID).Scan(&group)
 	if err != nil {
 		return err
 	}
@@ -182,6 +188,52 @@ func (b *backend) handleExternalModels(w http.ResponseWriter, r *http.Request) e
 		}
 	}
 	writeJSON(w, 200, map[string]any{"object": "list", "data": data})
+	return nil
+}
+
+// handleRuntimeModelCatalog returns the executable image/video IDs used by
+// model configuration. It shares the Go member/group and marketplace source of truth.
+func (b *backend) handleRuntimeModelCatalog(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdminViewer(r); err != nil {
+		return err
+	}
+	value, err := b.setting(r.Context(), "MODEL_MARKETPLACE_CONFIG", nil)
+	if err != nil {
+		return err
+	}
+	config, err := parseMarketplaceModels(value)
+	if err != nil {
+		return err
+	}
+	rows, err := b.db.Query(r.Context(), `SELECT m.supported_model_ids FROM image_backend_member m JOIN image_backend_member_group mg ON mg.member_id=m.id JOIN image_backend_group g ON g.id=mg.group_id WHERE m.is_enabled AND m.status<>'error' AND g.is_enabled AND (g.is_default OR g.is_user_selectable) ORDER BY m.priority ASC,m.id ASC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	groups := make([][]string, 0)
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return err
+		}
+		var ids []string
+		if err := json.Unmarshal(raw, &ids); err != nil {
+			continue
+		}
+		groups = append(groups, ids)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	images, videos := []string{}, []string{}
+	for _, id := range visibleModelIDs(groups, config) {
+		if isVideoModel(strings.ToLower(strings.TrimSpace(id))) {
+			videos = append(videos, id)
+		} else {
+			images = append(images, id)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"image": images, "video": videos})
 	return nil
 }
 

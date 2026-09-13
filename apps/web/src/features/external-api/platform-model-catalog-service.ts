@@ -6,14 +6,9 @@
  */
 import "server-only";
 
-import { db } from "@repo/database";
-import { imageBackendGroup } from "@repo/database/schema";
+import { requestGoJson } from "@/server/go-backend-client";
 import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
-import { asc } from "drizzle-orm";
-
-import { backendMemberService } from "@/features/image-backend-pool/member-service";
-
 import {
   buildPlatformModelCatalog,
   type PlatformModelCatalog,
@@ -33,38 +28,6 @@ export interface PlatformModelCatalogServiceDependencies {
   loadMarketplaceConfig(): Promise<unknown>;
 }
 
-/** 默认数据库仓储，只读取媒体目录需要的白名单字段。 */
-export const databasePlatformModelCatalogRepository: PlatformModelCatalogRepository =
-  {
-    async listGroups() {
-      const rows = await db
-        .select({
-          id: imageBackendGroup.id,
-          isEnabled: imageBackendGroup.isEnabled,
-          isDefault: imageBackendGroup.isDefault,
-          isUserSelectable: imageBackendGroup.isUserSelectable,
-        })
-        .from(imageBackendGroup)
-        .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id));
-      return rows.map((row) => ({
-        id: row.id,
-        isEnabled: row.isEnabled,
-        isDefault: row.isDefault,
-        isUserSelectable: row.isUserSelectable,
-      }));
-    },
-    async listMembers() {
-      const members = await backendMemberService.listMembers();
-      return members.map((member) => ({
-        groupIds: member.groupIds,
-        type: member.type,
-        supportedModelIds: member.supportedModelIds,
-        isEnabled: member.isEnabled,
-        status: member.status,
-      }));
-    },
-  };
-
 /**
  * 实时加载平台媒体模型目录。
  *
@@ -74,11 +37,12 @@ export const databasePlatformModelCatalogRepository: PlatformModelCatalogReposit
 export async function loadPlatformModelCatalog(
   overrides: Partial<PlatformModelCatalogServiceDependencies> = {}
 ): Promise<PlatformModelCatalog> {
-  const repository =
-    overrides.repository ?? databasePlatformModelCatalogRepository;
+  if (!overrides.repository) {
+    return requestGoJson<PlatformModelCatalog>("/api/model-marketplace/runtime-catalog");
+  }
+  const repository = overrides.repository;
   const loadMarketplaceConfig =
-    overrides.loadMarketplaceConfig ??
-    (() => getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"));
+    overrides.loadMarketplaceConfig ?? (() => getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"));
   const [groups, members, marketplaceConfigValue] = await Promise.all([
     repository.listGroups(),
     repository.listMembers(),

@@ -78,6 +78,7 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/images/status/{id}", b.endpoint(b.handleImageStatusSession))
 	mux.HandleFunc("GET /api/image-generation/page-data", b.endpoint(b.handleImageGenerationPageData))
 	mux.HandleFunc("GET /api/model-marketplace/public", b.endpoint(b.handlePublicModelMarketplace))
+	mux.HandleFunc("GET /api/model-marketplace/runtime-catalog", b.endpoint(b.handleRuntimeModelCatalog))
 	mux.HandleFunc("POST /api/videos/generate", b.endpoint(b.handleVideoCreateSession))
 	mux.HandleFunc("GET /api/videos/{taskId}", b.endpoint(b.handleVideoStatusSession))
 	mux.HandleFunc("GET /api/videos/capabilities", b.endpoint(b.handleVideoCapabilitiesSession))
