@@ -1580,7 +1580,6 @@
     "apps/web/src/features/data-dashboard/admin-data-dashboard-user-search.ts",
     "apps/web/src/features/data-dashboard/data-dashboard-service.ts",
     "apps/web/src/features/external-api/key-management-service.ts",
-    "apps/web/src/features/external-api/platform-model-catalog-service.ts",
     "apps/web/src/features/image-generation/admin-history-repository.ts",
     "apps/web/src/features/image-generation/generation-deletion-service.ts",
     "apps/web/src/features/image-generation/history-repository.ts",
