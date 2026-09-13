@@ -1,15 +1,22 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // handleProfile serves the settings profile mutation previously implemented as
@@ -229,6 +236,132 @@ func randomAPIKey() (string, error) {
 	return "sk-" + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// API keys are recoverable by their owner after creation.  Keep the format
+// byte-compatible with the web implementation so keys created before this
+// endpoint was moved to Go remain readable by either process.
+func (b *backend) encryptAPIKey(secret string) (string, error) {
+	if strings.TrimSpace(b.config.authSecret) == "" {
+		return "", errors.New("BETTER_AUTH_SECRET is required for API key encryption")
+	}
+	keyMaterial := sha256.Sum256([]byte("FluxMedia external API key encryption v1\x00" + b.config.authSecret))
+	block, err := aes.NewCipher(keyMaterial[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCMWithNonceSize(block, 12)
+	if err != nil {
+		return "", err
+	}
+	iv := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", err
+	}
+	sealed := gcm.Seal(nil, iv, []byte(secret), []byte("external-api-key:v1"))
+	tagSize := gcm.Overhead()
+	tag := sealed[len(sealed)-tagSize:]
+	ciphertext := sealed[:len(sealed)-tagSize]
+	return "v1." + base64.RawURLEncoding.EncodeToString(iv) + "." + base64.RawURLEncoding.EncodeToString(tag) + "." + base64.RawURLEncoding.EncodeToString(ciphertext), nil
+}
+
+func (b *backend) decryptAPIKey(value string) (string, error) {
+	parts := strings.Split(value, ".")
+	if len(parts) != 4 || parts[0] != "v1" || strings.TrimSpace(b.config.authSecret) == "" {
+		return "", errors.New("invalid encrypted API key")
+	}
+	iv, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(iv) != 12 {
+		return "", errors.New("invalid encrypted API key")
+	}
+	tag, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(tag) != 16 {
+		return "", errors.New("invalid encrypted API key")
+	}
+	ciphertext, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil {
+		return "", errors.New("invalid encrypted API key")
+	}
+	keyMaterial := sha256.Sum256([]byte("FluxMedia external API key encryption v1\x00" + b.config.authSecret))
+	block, err := aes.NewCipher(keyMaterial[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCMWithNonceSize(block, 12)
+	if err != nil {
+		return "", err
+	}
+	sealed := append(append([]byte{}, ciphertext...), tag...)
+	plain, err := gcm.Open(nil, iv, sealed, []byte("external-api-key:v1"))
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+func normalizeAPIKeyCreditLimit(value *float64) (*float64, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if *value < 0 || *value != *value || *value > 1e15 {
+		return nil, invalid("API Key 额度必须是大于等于 0 的数字")
+	}
+	rounded := float64(int64(*value*100+0.5000000001)) / 100
+	return &rounded, nil
+}
+
+func (b *backend) selectableAPIKeyGroups(r *http.Request) ([]map[string]any, error) {
+	rows, err := b.db.Query(r.Context(), `SELECT id,name,is_enabled FROM image_backend_group WHERE is_enabled AND is_user_selectable ORDER BY priority ASC,id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	groups := []map[string]any{}
+	for rows.Next() {
+		var id, name string
+		var enabled bool
+		if err := rows.Scan(&id, &name, &enabled); err != nil {
+			return nil, err
+		}
+		groups = append(groups, map[string]any{"id": id, "name": name, "enabled": enabled, "selectable": true})
+	}
+	return groups, rows.Err()
+}
+
+func (b *backend) apiKeySummary(r *http.Request, userID, keyID string, includeSecret bool) (map[string]any, error) {
+	var id, name, prefix, last4 string
+	var group *string
+	var limit, used *float64
+	var last *time.Time
+	var active bool
+	var created, updated time.Time
+	var encrypted *string
+	err := b.db.QueryRow(r.Context(), `SELECT id,name,key_prefix,last_four,generation_group_id,credit_limit,credits_used,last_used_at,is_active,created_at,updated_at,encrypted_key FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, userID).Scan(&id, &name, &prefix, &last4, &group, &limit, &used, &last, &active, &created, &updated, &encrypted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &apiError{http.StatusNotFound, "NOT_FOUND", "API 密钥不存在"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	creditsUsed := float64(0)
+	if used != nil {
+		creditsUsed = float64(int64(*used*100+0.5000000001)) / 100
+	}
+	var currentGroup map[string]any
+	if group != nil && *group != "" {
+		var groupName string
+		var groupEnabled bool
+		if e := b.db.QueryRow(r.Context(), `SELECT name,is_enabled FROM image_backend_group WHERE id=$1`, *group).Scan(&groupName, &groupEnabled); e == nil {
+			currentGroup = map[string]any{"id": *group, "name": groupName, "enabled": groupEnabled, "selectable": groupEnabled}
+		}
+	}
+	result := map[string]any{"id": id, "name": name, "keyPrefix": prefix, "lastFour": last4, "generationGroupId": group, "creditLimit": limit, "creditsUsed": creditsUsed, "lastUsedAt": last, "isActive": active, "createdAt": created, "updatedAt": updated, "currentGroup": currentGroup, "apiKey": nil}
+	if includeSecret && encrypted != nil {
+		if secret, e := b.decryptAPIKey(*encrypted); e == nil {
+			result["apiKey"] = secret
+		}
+	}
+	return result, nil
+}
+
 func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 	s, err := b.requireSession(r)
 	if err != nil {
@@ -237,25 +370,28 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 	keyID := strings.TrimPrefix(r.URL.Path, "/api/external-api/keys/")
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := b.db.Query(r.Context(), `SELECT id,name,key_prefix,last_four,generation_group_id,credit_limit,credits_used,last_used_at,is_active,created_at,updated_at FROM external_api_key WHERE user_id=$1 ORDER BY created_at DESC,id DESC`, s.User.ID)
+		rows, err := b.db.Query(r.Context(), `SELECT id FROM external_api_key WHERE user_id=$1 ORDER BY created_at DESC,id DESC`, s.User.ID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		out := []any{}
 		for rows.Next() {
-			var id, name, prefix, last4 string
-			var group *string
-			var limit, used *float64
-			var last *time.Time
-			var active bool
-			var created, updated time.Time
-			if err := rows.Scan(&id, &name, &prefix, &last4, &group, &limit, &used, &last, &active, &created, &updated); err != nil {
+			var id string
+			if err := rows.Scan(&id); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "name": name, "keyPrefix": prefix, "lastFour": last4, "generationGroupId": group, "creditLimit": limit, "creditsUsed": used, "lastUsedAt": last, "isActive": active, "createdAt": created, "updatedAt": updated, "apiKey": nil})
+			item, e := b.apiKeySummary(r, s.User.ID, id, true)
+			if e != nil {
+				return e
+			}
+			out = append(out, item)
 		}
-		writeJSON(w, 200, map[string]any{"keys": out, "editableGroups": []any{}})
+		groups, err := b.selectableAPIKeyGroups(r)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, 200, map[string]any{"keys": out, "editableGroups": groups})
 		return nil
 	case http.MethodPost:
 		var in struct {
@@ -269,7 +405,23 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 		if strings.TrimSpace(in.Name) == "" {
 			in.Name = "默认 API 密钥"
 		}
+		limit, err := normalizeAPIKeyCreditLimit(in.CreditLimit)
+		if err != nil {
+			return err
+		}
+		if in.GenerationGroupID != nil && strings.TrimSpace(*in.GenerationGroupID) != "" && *in.GenerationGroupID != "default" {
+			var selectable bool
+			if err := b.db.QueryRow(r.Context(), `SELECT is_enabled AND is_user_selectable FROM image_backend_group WHERE id=$1`, *in.GenerationGroupID).Scan(&selectable); err != nil || !selectable {
+				return invalid("所选生图分组当前不可用")
+			}
+		} else {
+			in.GenerationGroupID = nil
+		}
 		secret, err := randomAPIKey()
+		if err != nil {
+			return err
+		}
+		encrypted, err := b.encryptAPIKey(secret)
 		if err != nil {
 			return err
 		}
@@ -277,37 +429,136 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 		id := newRequestID()
 		now := time.Now().UTC()
 		var outID string
-		err = b.db.QueryRow(r.Context(), `INSERT INTO external_api_key(id,user_id,name,key_prefix,key_hash,last_four,generation_group_id,credit_limit,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`, id, s.User.ID, in.Name, secret[:7], hex.EncodeToString(hash[:]), secret[len(secret)-4:], in.GenerationGroupID, in.CreditLimit, now).Scan(&outID)
+		err = b.db.QueryRow(r.Context(), `INSERT INTO external_api_key(id,user_id,name,key_prefix,key_hash,encrypted_key,last_four,generation_group_id,credit_limit,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING id`, id, s.User.ID, in.Name, secret[:7], hex.EncodeToString(hash[:]), encrypted, secret[len(secret)-4:], in.GenerationGroupID, limit, now).Scan(&outID)
 		if err != nil {
 			return err
 		}
-		writeJSON(w, 201, map[string]any{"apiKey": secret, "key": map[string]any{"id": outID, "name": in.Name, "keyPrefix": secret[:7], "lastFour": secret[len(secret)-4:], "isActive": true, "creditLimit": in.CreditLimit, "creditsUsed": 0, "generationGroupId": in.GenerationGroupID, "createdAt": now, "updatedAt": now}})
+		key, err := b.apiKeySummary(r, s.User.ID, outID, false)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, 201, map[string]any{"apiKey": secret, "key": key})
 		return nil
 	case http.MethodPatch:
-		var in struct {
-			GenerationGroupID *string  `json:"generationGroupId"`
-			CreditLimit       *float64 `json:"creditLimit"`
-		}
-		if err := decodeBody(r, &in); err != nil {
+		body, err := decodeObject(r)
+		if err != nil {
 			return err
+		}
+		for field := range body {
+			if field != "keyId" && field != "generationGroupId" && field != "creditLimit" {
+				return invalid("请求包含未知字段")
+			}
+		}
+		var suppliedKeyID string
+		if raw, ok := body["keyId"]; ok {
+			if e := json.Unmarshal(raw, &suppliedKeyID); e != nil {
+				return invalid("API 密钥 ID 无效")
+			}
 		}
 		if keyID == "" {
 			return invalid("API 密钥 ID 无效")
 		}
-		_, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET generation_group_id=COALESCE($3,generation_group_id),credit_limit=CASE WHEN $4::boolean THEN $5 ELSE credit_limit END,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active`, keyID, s.User.ID, in.GenerationGroupID, in.CreditLimit != nil, in.CreditLimit)
+		if suppliedKeyID != "" && suppliedKeyID != keyID {
+			return invalid("API 密钥 ID 无效")
+		}
+		groupSupplied := false
+		var groupValue *string
+		if raw, ok := body["generationGroupId"]; ok {
+			groupSupplied = true
+			if string(raw) != "null" {
+				var value string
+				if e := json.Unmarshal(raw, &value); e != nil {
+					return invalid("生图分组无效")
+				}
+				groupValue = &value
+			}
+		}
+		if groupSupplied {
+			group := ""
+			if groupValue != nil {
+				group = strings.TrimSpace(*groupValue)
+			}
+			if group == "" || group == "default" {
+				groupValue = nil
+			} else {
+				var selectable bool
+				if err := b.db.QueryRow(r.Context(), `SELECT is_enabled AND is_user_selectable FROM image_backend_group WHERE id=$1`, group).Scan(&selectable); err != nil || !selectable {
+					return invalid("所选生图分组当前不可用")
+				}
+			}
+		}
+		quotaSupplied := false
+		var requestedLimit *float64
+		if raw, ok := body["creditLimit"]; ok {
+			quotaSupplied = true
+			if string(raw) != "null" {
+				var value float64
+				if e := json.Unmarshal(raw, &value); e != nil {
+					return invalid("API Key 额度无效")
+				}
+				requestedLimit = &value
+			}
+		}
+		limit, err := normalizeAPIKeyCreditLimit(requestedLimit)
 		if err != nil {
 			return err
 		}
-		writeJSON(w, 200, map[string]any{"id": keyID})
+		var tag pgconn.CommandTag
+		if groupSupplied || quotaSupplied {
+			if groupSupplied {
+				tag, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET generation_group_id=$3,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active`, keyID, s.User.ID, groupValue)
+			} else {
+				tag, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET credit_limit=$3,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active`, keyID, s.User.ID, limit)
+			}
+		} else {
+			return invalid("请至少提供一个更新字段")
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			var active bool
+			if e := b.db.QueryRow(r.Context(), `SELECT is_active FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, s.User.ID).Scan(&active); errors.Is(e, pgx.ErrNoRows) {
+				return &apiError{http.StatusNotFound, "NOT_FOUND", "API 密钥不存在"}
+			} else if e == nil && !active {
+				return &apiError{http.StatusConflict, "STATE_CONFLICT", "已撤销的 API 密钥不能修改"}
+			}
+		}
+		key, err := b.apiKeySummary(r, s.User.ID, keyID, false)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, 200, key)
 		return nil
 	case http.MethodDelete:
 		if keyID == "" {
 			return invalid("API 密钥 ID 无效")
 		}
 		if r.URL.Query().Get("hard") == "1" {
-			_, err = b.db.Exec(r.Context(), `DELETE FROM external_api_key WHERE id=$1 AND user_id=$2 AND NOT is_active`, keyID, s.User.ID)
+			result, e := b.db.Exec(r.Context(), `DELETE FROM external_api_key WHERE id=$1 AND user_id=$2 AND NOT is_active`, keyID, s.User.ID)
+			err = e
+			if e == nil && result.RowsAffected() == 0 {
+				var active bool
+				if e = b.db.QueryRow(r.Context(), `SELECT is_active FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, s.User.ID).Scan(&active); errors.Is(e, pgx.ErrNoRows) {
+					return &apiError{http.StatusNotFound, "NOT_FOUND", "API 密钥不存在"}
+				} else if e == nil {
+					return &apiError{http.StatusConflict, "STATE_CONFLICT", "请先撤销 API 密钥再删除"}
+				}
+			}
 		} else {
-			_, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET is_active=false,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active`, keyID, s.User.ID)
+			result, e := b.db.Exec(r.Context(), `UPDATE external_api_key SET is_active=false,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active`, keyID, s.User.ID)
+			err = e
+			if e == nil && result.RowsAffected() == 0 {
+				var active bool
+				if e = b.db.QueryRow(r.Context(), `SELECT is_active FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, s.User.ID).Scan(&active); errors.Is(e, pgx.ErrNoRows) {
+					return &apiError{http.StatusNotFound, "NOT_FOUND", "API 密钥不存在"}
+				} else if e == nil {
+					return &apiError{http.StatusConflict, "STATE_CONFLICT", "API 密钥已被撤销"}
+				}
+			}
+		}
+		if err != nil {
+			return err
 		}
 		if err != nil {
 			return err
