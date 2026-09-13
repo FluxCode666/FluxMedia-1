@@ -117,8 +117,9 @@ func (w *mediaWorker) claimNext(ctx context.Context) (string, string, error) {
 	if err := w.backend.db.QueryRow(ctx, `WITH candidate AS (
 		SELECT id FROM video_generation
 		WHERE stage IN ('charged','submitting','retrying','polling','downloading','refunding')
+		   OR (stage='failed' AND COALESCE(credits_consumed,0)>0 AND refund_exhausted_at IS NULL)
 		  AND (claim_expires_at IS NULL OR claim_expires_at<now())
-		  AND (next_poll_at IS NULL OR next_poll_at<=now() OR stage='refunding')
+		  AND (next_poll_at IS NULL OR next_poll_at<=now() OR stage IN ('refunding','failed'))
 		ORDER BY COALESCE(next_poll_at,created_at),created_at,id
 		LIMIT 1 FOR UPDATE SKIP LOCKED
 	)
@@ -211,17 +212,24 @@ func (w *mediaWorker) failImage(ctx context.Context, id string, cause error) err
 
 func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	var uid, model, prompt, pollURL, upstreamJobID, persistedVideoURL, stage string
+	var credits float64
 	var duration int
 	var ratio, resolution string
 	var meta []byte
 	err := w.backend.db.QueryRow(ctx, `SELECT user_id,model,prompt,duration_seconds,aspect_ratio,resolution,
-		COALESCE(poll_url,''),COALESCE(upstream_job_id,''),COALESCE(metadata,'{}'::json),COALESCE(stage,'created') FROM video_generation WHERE id=$1`, id).
-		Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &pollURL, &upstreamJobID, &meta, &stage)
+		COALESCE(poll_url,''),COALESCE(upstream_job_id,''),COALESCE(metadata,'{}'::json),COALESCE(stage,'created'),COALESCE(credits_consumed,0) FROM video_generation WHERE id=$1`, id).
+		Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &pollURL, &upstreamJobID, &meta, &stage, &credits)
 	if err != nil {
 		return err
 	}
 	if stage == "refunding" {
 		return w.refundVideoTask(ctx, id, "视频任务失败退款")
+	}
+	if stage == "failed" {
+		if credits <= 0 {
+			return nil
+		}
+		return w.refundVideoTask(ctx, id, "视频任务遗留失败状态退款")
 	}
 	body := map[string]any{"model": model, "prompt": prompt, "duration": duration, "aspectRatio": ratio, "resolution": resolution}
 	var stored map[string]any
