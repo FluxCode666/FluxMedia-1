@@ -176,11 +176,11 @@ func (w *mediaWorker) failImage(ctx context.Context, id string, cause error) err
 }
 
 func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
-	var uid, model, prompt string
+	var uid, model, prompt, pollURL string
 	var duration int
 	var ratio, resolution string
 	var meta []byte
-	err := w.backend.db.QueryRow(ctx, `SELECT user_id,model,prompt,duration_seconds,aspect_ratio,resolution,COALESCE(metadata,'{}'::json) FROM video_generation WHERE id=$1`, id).Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &meta)
+	err := w.backend.db.QueryRow(ctx, `SELECT user_id,model,prompt,duration_seconds,aspect_ratio,resolution,COALESCE(poll_url,''),COALESCE(metadata,'{}'::json) FROM video_generation WHERE id=$1`, id).Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &pollURL, &meta)
 	if err != nil {
 		return err
 	}
@@ -191,12 +191,24 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	if err != nil {
 		return w.failVideo(ctx, id, err)
 	}
-	output, err := w.backend.callProvider(ctx, cfg, "videos.generate", body, id, model)
+	var output map[string]any
+	if pollURL != "" {
+		output, err = w.backend.queryProvider(ctx, cfg, pollURL)
+	} else {
+		output, err = w.backend.callProvider(ctx, cfg, "videos.generate", body, id, model)
+	}
 	if err != nil {
 		return w.failVideo(ctx, id, err)
 	}
 	videoURL := extractMediaURL(output)
 	if videoURL == "" { // accepted async response; retain poll URL and retry on next scan
+		if pollURL != "" {
+			state := strings.ToLower(extractString(output, "status", "state"))
+			if state == "" || state == "pending" || state == "processing" || state == "queued" {
+				_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET claim_token=NULL,claim_expires_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1`, id)
+				return err
+			}
+		}
 		if poll := extractString(output, "poll_url", "pollUrl", "status_url", "statusUrl"); poll != "" {
 			_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET poll_url=$2,upstream_job_id=$3,claim_token=NULL,claim_expires_at=now()+interval '2 seconds',updated_at=now() WHERE id=$1`, id, poll, extractString(output, "id", "task_id", "taskId"))
 			return err
@@ -217,6 +229,45 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	}
 	_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET status='completed',storage_key=$2,storage_bucket=$3,video_url=$4,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, key, bucket, "/api/storage/"+url.PathEscape(bucket)+"/"+url.PathEscape(key))
 	return err
+}
+
+func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL string) (map[string]any, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return nil, errors.New("provider returned invalid polling URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if cfg.apiKey != "" {
+		if strings.EqualFold(cfg.auth, "api-key") {
+			req.Header.Set("x-api-key", cfg.apiKey)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+		}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, mediaWorkerMaxResponse+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > mediaWorkerMaxResponse {
+		return nil, errors.New("media provider response too large")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("media provider poll HTTP %d", resp.StatusCode)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(raw, &output); err != nil {
+		return nil, errors.New("media provider poll returned invalid JSON")
+	}
+	return output, nil
 }
 func (w *mediaWorker) failVideo(ctx context.Context, id string, cause error) error {
 	_, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='failed',error=$2,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, sanitizeWorkerError(cause))
