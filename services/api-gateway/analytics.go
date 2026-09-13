@@ -468,7 +468,7 @@ func (b *backend) writeGoDataDashboard(w http.ResponseWriter, r *http.Request, u
 		userFilter = " AND user_id=$3"
 		failedArgs = append(failedArgs, userID)
 	}
-	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE((SELECT count(*) FROM generation WHERE status='failed' AND created_at >= $1 AND created_at < $2`+userFilter+`),0)+COALESCE((SELECT count(*) FROM video_generation WHERE status='failed' AND created_at >= $1 AND created_at < $2`+userFilter+`),0)`, failedArgs...).Scan(&failed); err != nil {
+	if err = b.db.QueryRow(r.Context(), `SELECT COALESCE((SELECT count(*) FROM generation WHERE status='failed' AND created_at >= $1 AND created_at < $2 AND coalesce(nullif(lower(btrim(metadata->>'mode')), ''), 'generate') IN ('generate','edit')`+userFilter+`),0)+COALESCE((SELECT count(*) FROM video_generation WHERE status='failed' AND created_at >= $1 AND created_at < $2`+userFilter+`),0)`, failedArgs...).Scan(&failed); err != nil {
 		return err
 	}
 	var model string
