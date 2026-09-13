@@ -393,8 +393,62 @@ func (b *backend) handleOperationsDetail(w http.ResponseWriter, r *http.Request)
 	if selection == nil {
 		selection = map[string]any{"module": "growth", "detail": "users"}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"selection": selection, "range": rng, "rows": []any{}, "nextCursor": nil})
+	rows := []any{}
+	if selection["module"] == "content" {
+		rows, err = b.readOperationsContentDetails(r.Context(), rng, selection, input.Limit)
+		if err != nil {
+			return err
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"selection": selection, "range": rng, "rows": rows, "nextCursor": nil})
 	return nil
+}
+
+func (b *backend) readOperationsContentDetails(ctx context.Context, rng map[string]any, selection map[string]any, limit int) ([]any, error) {
+	start, err := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	if err != nil {
+		return nil, err
+	}
+	end, err := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	if err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	where := "e.operation_created_at >= $1 AND e.operation_created_at < $2"
+	args := []any{start, end}
+	detail, _ := selection["detail"].(string)
+	if detail == "image_outputs" {
+		where += " AND e.output_kind='image'"
+	}
+	if detail == "video_outputs" {
+		where += " AND e.output_kind='video'"
+	}
+	query := `SELECT e.source_task_id,e.user_id,e.output_kind,e.operation_created_at,COALESCE(e.image_count,0),COALESCE(e.video_seconds,0),COALESCE(NULLIF(TRIM(g.model),''),NULLIF(TRIM(v.model),''),'unknown'),COALESCE(c.net_consumed,0) FROM user_output_usage_event e LEFT JOIN generation g ON e.output_kind='image' AND e.source_task_id=g.id AND e.user_id=g.user_id LEFT JOIN video_generation v ON e.output_kind='video' AND e.source_task_id=v.id AND e.user_id=v.user_id LEFT JOIN LATERAL (SELECT net_consumed FROM credit_usage_operation c0 WHERE c0.user_id=e.user_id AND c0.operation_id=e.source_task_id ORDER BY c0.updated_at DESC LIMIT 1) c ON TRUE WHERE ` + where + ` ORDER BY e.operation_created_at DESC,e.source_task_id DESC LIMIT $3`
+	rows, err := b.db.Query(ctx, query, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]any, 0, limit)
+	for rows.Next() {
+		var id, uid, media, model string
+		var at time.Time
+		var quantity, seconds int
+		var credits float64
+		if err := rows.Scan(&id, &uid, &media, &at, &quantity, &seconds, &model, &credits); err != nil {
+			return nil, err
+		}
+		if quantity <= 0 && media == "video" {
+			quantity = 1
+		}
+		if quantity <= 0 {
+			continue
+		}
+		out = append(out, map[string]any{"taskId": id, "userId": uid, "model": model, "mediaType": media, "businessTime": at.UTC().Format(time.RFC3339Nano), "status": "completed", "quantity": quantity, "videoSeconds": seconds, "netCredits": credits})
+	}
+	return out, rows.Err()
 }
 
 type operationsExportInput struct {
