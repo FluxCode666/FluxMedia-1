@@ -556,6 +556,9 @@ func (b *backend) handleInternalPaymentEpay(w http.ResponseWriter, r *http.Reque
 			return &apiError{404, "NOT_FOUND", "支付订单不存在"}
 		}
 	}
+	if err := b.validateEpayWebhook(r.Context(), orderID, input.OutTradeNo, input.TradeNo, input.Money, metadata); err != nil {
+		return err
+	}
 	source := "epay:" + input.OutTradeNo
 	if _, err := b.confirmPaymentWorkItem(r.Context(), orderID, "epay", userID, input.TradeNo, "epay:"+input.TradeNo, source, metadata); err != nil {
 		return err
@@ -565,6 +568,50 @@ func (b *backend) handleInternalPaymentEpay(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"metadataType": paymentStringValueDefault(metadata["type"], "credit_purchase"), "status": status})
+	return nil
+}
+
+// validateEpayWebhook keeps the provider-specific checks that used to live in
+// the Next service at the Go boundary. The signature proves origin; this check
+// proves the notification belongs to the frozen local credit order.
+func (b *backend) validateEpayWebhook(ctx context.Context, orderID, outTradeNo, tradeNo, money string, metadata map[string]any) error {
+	var userID, purpose, provider string
+	var credits float64
+	var amountMinor int64
+	var snapshotRaw []byte
+	var existingTrade *string
+	err := b.db.QueryRow(ctx, `SELECT user_id,purpose,provider,amount_minor,credits_amount,pricing_snapshot::text,provider_trade_no FROM payment_order WHERE id=$1`, orderID).Scan(&userID, &purpose, &provider, &amountMinor, &credits, &snapshotRaw, &existingTrade)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &apiError{404, "NOT_FOUND", "支付订单不存在"}
+	}
+	if err != nil {
+		return err
+	}
+	if provider != "epay" || purpose != "credit_package" || orderID == "" || outTradeNo == "" || tradeNo == "" {
+		return &apiError{400, "PAYMENT_ORDER_MISMATCH", "Epay 通知与本地订单不匹配"}
+	}
+	if existingTrade != nil && *existingTrade != tradeNo {
+		return &apiError{400, "PAYMENT_TRADE_MISMATCH", "Epay 渠道交易号与本地订单不匹配"}
+	}
+	if paid := parseMinor(money); paid < 0 || paid < amountMinor || paid > amountMinor+10 {
+		return &apiError{400, "PAYMENT_AMOUNT_MISMATCH", "Epay 支付金额不匹配"}
+	}
+	if v := paymentStringValue(metadata["userId"]); v != "" && v != userID {
+		return &apiError{400, "PAYMENT_ORDER_MISMATCH", "Epay 通知用户与本地订单不匹配"}
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(snapshotRaw, &snapshot); err != nil {
+		return &apiError{400, "INVALID_PAYMENT_ORDER", "支付订单冻结快照无效"}
+	}
+	if value, ok := snapshot["amountMinor"].(float64); ok && int64(value) != amountMinor {
+		return &apiError{400, "INVALID_PAYMENT_ORDER", "支付订单冻结快照不一致"}
+	}
+	if value, ok := snapshot["creditsAmount"].(float64); ok && math.Abs(value-credits) > 0.000001 {
+		return &apiError{400, "INVALID_PAYMENT_ORDER", "支付订单积分快照不一致"}
+	}
+	if rawOut := paymentStringValue(metadata["outTradeNo"]); rawOut != "" && rawOut != outTradeNo {
+		return &apiError{400, "PAYMENT_ORDER_MISMATCH", "Epay 商户订单号不匹配"}
+	}
 	return nil
 }
 

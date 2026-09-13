@@ -161,6 +161,10 @@ func (b *backend) handleEpayWebhook(w http.ResponseWriter, r *http.Request) erro
 	if orderID == "" {
 		orderID = p["out_trade_no"]
 	}
+	if err := b.validateEpayWebhook(r.Context(), orderID, p["out_trade_no"], p["trade_no"], p["money"], m); err != nil {
+		_, _ = w.Write([]byte("fail"))
+		return nil
+	}
 	if err := b.fulfillCredit(r.Context(), orderID, "epay", p["trade_no"], "epay:"+p["out_trade_no"], 0, m); err != nil {
 		_, _ = w.Write([]byte("fail"))
 		return nil
