@@ -56,7 +56,7 @@ import {
   type ModerationImageInput,
   moderateContent,
 } from "@repo/shared/moderation";
-import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -65,17 +65,6 @@ import {
   OperationError,
 } from "@repo/shared/uol";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
-import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
-import {
-  AdminHistoryServiceError,
-  loadAdminHistoryRecords,
-  loadAdminHistoryRequestSnapshot,
-} from "@/features/image-generation/admin-history-service";
-import { databaseHistoryRepository } from "@/features/image-generation/history-repository";
-import {
-  HistoryServiceError,
-  loadHistoryRecords,
-} from "@/features/image-generation/history-service";
 import { databaseUsageLogRepository } from "@/features/usage-log/repository";
 import {
   loadUsageEventDetail,
@@ -144,20 +133,13 @@ bindExecute(
         "User session or MCP authentication required"
       );
     }
-    try {
-      const timeZone = await getUserTimeZone(principal.userId);
-      return historyListOutputSchema.parse(
-        await loadHistoryRecords(
-          { userId: principal.userId, timeZone, input },
-          { repository: databaseHistoryRepository }
-        )
-      );
-    } catch (error) {
-      if (error instanceof HistoryServiceError) {
-        throw new OperationError(error.code, error.message);
-      }
-      throw error;
-    }
+    void principal.userId;
+    return historyListOutputSchema.parse(
+      await requestGoJson("/api/image-generation/history", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    );
   }
 );
 
@@ -174,23 +156,12 @@ bindExecute(
     ) {
       throw new OperationError("forbidden", "Admin access required");
     }
-    try {
-      return adminHistoryListOutputSchema.parse(
-        await loadAdminHistoryRecords(
-          {
-            actorUserId: principal.userId,
-            timeZone: getAppTimeZone(),
-            input,
-          },
-          { repository: databaseAdminHistoryRepository }
-        )
-      );
-    } catch (error) {
-      if (error instanceof AdminHistoryServiceError) {
-        throw new OperationError(error.code, error.message);
-      }
-      throw error;
-    }
+    return adminHistoryListOutputSchema.parse(
+      await requestGoJson("/api/admin/image-generation/history", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    );
   }
 );
 
@@ -207,19 +178,12 @@ bindExecute(
     ) {
       throw new OperationError("forbidden", "Admin access required");
     }
-    try {
-      return adminHistoryRequestSnapshotOutputSchema.parse(
-        await loadAdminHistoryRequestSnapshot(
-          { input },
-          { repository: databaseAdminHistoryRepository }
-        )
-      );
-    } catch (error) {
-      if (error instanceof AdminHistoryServiceError) {
-        throw new OperationError(error.code, error.message);
-      }
-      throw error;
-    }
+    return adminHistoryRequestSnapshotOutputSchema.parse(
+      await requestGoJson("/api/admin/image-generation/request-snapshot", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    );
   }
 );
 
