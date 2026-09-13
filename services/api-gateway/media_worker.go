@@ -313,11 +313,74 @@ func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL,
 	if baseErr != nil || base.Host == "" || !strings.EqualFold(u.Host, base.Host) || !strings.EqualFold(u.Scheme, base.Scheme) {
 		return nil, errors.New("provider polling URL origin does not match configured provider")
 	}
+	requestHeaders := make(http.Header)
+	if op, ok := cfg.operations["videos.query"].(map[string]any); ok {
+		if script, _ := op["requestScript"].(string); strings.TrimSpace(script) != "" {
+			client := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken)
+			if client == nil {
+				return nil, errors.New("media provider query script runtime unavailable")
+			}
+			queryInput := make(map[string]any)
+			for key, values := range u.Query() {
+				if len(values) == 1 {
+					queryInput[key] = values[0]
+				} else {
+					queryInput[key] = append([]string(nil), values...)
+				}
+			}
+			raw, scriptErr := client.execute(ctx, scriptRuntimeRequest{
+				Script: script, Operation: "videos.query", Stage: "request",
+				Input:   map[string]any{"query": queryInput},
+				Context: map[string]any{"operation": "videos.query", "stage": "request", "contentType": "application/json", "platformModelId": model, "upstreamModelId": model, "taskId": taskID},
+			})
+			if scriptErr != nil {
+				return nil, scriptErr
+			}
+			var envelope map[string]any
+			if err := json.Unmarshal(raw, &envelope); err != nil || envelope == nil {
+				return nil, errors.New("media provider query script returned invalid JSON")
+			}
+			if query, ok := envelope["query"].(map[string]any); ok {
+				values := u.Query()
+				for key, value := range query {
+					values.Del(key)
+					switch item := value.(type) {
+					case nil:
+					case string:
+						values.Set(key, item)
+					case []any:
+						for _, element := range item {
+							if text, ok := element.(string); ok {
+								values.Add(key, text)
+							}
+						}
+					case []string:
+						for _, text := range item {
+							values.Add(key, text)
+						}
+					}
+				}
+				u.RawQuery = values.Encode()
+			}
+			if headers, ok := envelope["headers"].(map[string]any); ok {
+				for key, value := range headers {
+					if text, ok := value.(string); ok {
+						requestHeaders.Set(key, text)
+					}
+				}
+			}
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	for key, values := range requestHeaders {
+		if len(values) > 0 {
+			req.Header.Set(key, values[0])
+		}
+	}
 	if cfg.apiKey != "" {
 		if strings.EqualFold(cfg.auth, "api-key") {
 			req.Header.Set("x-api-key", cfg.apiKey)
@@ -588,7 +651,7 @@ func (b *backend) callProvider(ctx context.Context, cfg providerConfig, operatio
 			if c == nil {
 				return nil, errors.New("media provider request script runtime unavailable")
 			}
-			raw, e := c.execute(ctx, scriptRuntimeRequest{Script: script, Operation: operation, Stage: "request", Input: body, Context: map[string]any{"operation": operation, "stage": "request", "contentType": "application/json", "platformModelId": model, "upstreamModelId": model, "taskId": taskID}})
+			raw, e := c.execute(ctx, scriptRuntimeRequest{Script: script, Operation: operation, Stage: "request", Input: map[string]any{"query": map[string]any{}, "body": body}, Context: map[string]any{"operation": operation, "stage": "request", "contentType": "application/json", "platformModelId": model, "upstreamModelId": model, "taskId": taskID}})
 			if e != nil {
 				return nil, e
 			}

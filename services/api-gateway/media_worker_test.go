@@ -86,3 +86,39 @@ func TestQueryProviderRejectsUntrustedOrigin(t *testing.T) {
 		t.Fatal("queryProvider accepted an untrusted polling origin")
 	}
 }
+
+func TestQueryProviderRequestScriptMergesQueryAndHeaders(t *testing.T) {
+	var seenURL string
+	var seenHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenURL = r.URL.String()
+		seenHeader = r.Header.Get("X-Vendor-Mode")
+		_, _ = w.Write([]byte(`{"status":"processing"}`))
+	}))
+	defer upstream.Close()
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"output": map[string]any{
+					"query":   map[string]any{"detail": "full"},
+					"headers": map[string]any{"X-Vendor-Mode": "fast"},
+				},
+			},
+		})
+	}))
+	defer runtime.Close()
+
+	b := &backend{config: config{scriptRuntimeURL: runtime.URL}}
+	cfg := providerConfig{
+		baseURL: upstream.URL,
+		operations: map[string]any{
+			"videos.query": map[string]any{"requestScript": `return { query: { detail: "full" }, headers: { "X-Vendor-Mode": "fast" } };`},
+		},
+	}
+	if _, err := b.queryProvider(context.Background(), cfg, upstream.URL+"/task?keep=true", "task-1", "model-1"); err != nil {
+		t.Fatalf("queryProvider() error = %v", err)
+	}
+	if seenURL != "/task?detail=full&keep=true" || seenHeader != "fast" {
+		t.Fatalf("request script envelope not applied: url=%q header=%q", seenURL, seenHeader)
+	}
+}
