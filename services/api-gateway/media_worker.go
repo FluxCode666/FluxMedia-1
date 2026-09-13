@@ -136,9 +136,21 @@ func (w *mediaWorker) processImage(ctx context.Context, id string) error {
 	if err != nil {
 		return w.failImage(ctx, id, err)
 	}
-	var body map[string]any
-	if json.Unmarshal(input, &body) != nil {
+	var persisted any
+	if json.Unmarshal(input, &persisted) != nil {
 		return w.failImage(ctx, id, errors.New("invalid persisted image input"))
+	}
+	var body map[string]any
+	switch value := persisted.(type) {
+	case map[string]any:
+		body = value
+	case []any:
+		if len(value) > 0 {
+			body, _ = value[0].(map[string]any)
+		}
+	}
+	if body == nil {
+		return w.failImage(ctx, id, errors.New("persisted image input must be an object"))
 	}
 	model, _ = body["model"].(string)
 	cfg, err := w.backend.pickProvider(ctx, model, "images.generate")
