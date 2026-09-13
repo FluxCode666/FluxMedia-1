@@ -92,8 +92,9 @@ func (w *mediaWorker) claimNext(ctx context.Context) (string, string, error) {
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", err
 	}
-	if err := w.backend.db.QueryRow(ctx, `SELECT id FROM video_generation WHERE status IN ('pending','processing') ORDER BY created_at,id LIMIT 1`).Scan(&id); err == nil {
-		tag, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='processing',updated_at=now() WHERE id=$1 AND status IN ('pending','processing')`, id)
+	if err := w.backend.db.QueryRow(ctx, `SELECT id FROM video_generation WHERE status IN ('pending','processing') AND (claim_expires_at IS NULL OR claim_expires_at<now()) ORDER BY created_at,id LIMIT 1`).Scan(&id); err == nil {
+		token := newWorkerToken()
+		tag, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='processing',claim_token=$2,claim_expires_at=now()+$3::interval,updated_at=now() WHERE id=$1 AND status IN ('pending','processing') AND (claim_expires_at IS NULL OR claim_expires_at<now())`, id, token, mediaWorkerClaimTTL.String())
 		if err != nil {
 			return "", "", err
 		}
@@ -188,7 +189,7 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	videoURL := extractMediaURL(output)
 	if videoURL == "" { // accepted async response; retain poll URL and retry on next scan
 		if poll := extractString(output, "poll_url", "pollUrl", "status_url", "statusUrl"); poll != "" {
-			_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET poll_url=$2,upstream_job_id=$3,updated_at=now() WHERE id=$1`, id, poll, extractString(output, "id", "task_id", "taskId"))
+			_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET poll_url=$2,upstream_job_id=$3,claim_token=NULL,claim_expires_at=now()+interval '2 seconds',updated_at=now() WHERE id=$1`, id, poll, extractString(output, "id", "task_id", "taskId"))
 			return err
 		}
 		return w.failVideo(ctx, id, errors.New("video provider response omitted output URL"))
@@ -205,11 +206,11 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	if err = w.backend.putStorageObject(ctx, bucket, key, data, ct); err != nil {
 		return w.failVideo(ctx, id, err)
 	}
-	_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET status='completed',storage_key=$2,storage_bucket=$3,video_url=$4,completed_at=now(),updated_at=now() WHERE id=$1`, id, key, bucket, "/api/storage/"+url.PathEscape(bucket)+"/"+url.PathEscape(key))
+	_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET status='completed',storage_key=$2,storage_bucket=$3,video_url=$4,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, key, bucket, "/api/storage/"+url.PathEscape(bucket)+"/"+url.PathEscape(key))
 	return err
 }
 func (w *mediaWorker) failVideo(ctx context.Context, id string, cause error) error {
-	_, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='failed',error=$2,completed_at=now(),updated_at=now() WHERE id=$1`, id, sanitizeWorkerError(cause))
+	_, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='failed',error=$2,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, sanitizeWorkerError(cause))
 	return err
 }
 
