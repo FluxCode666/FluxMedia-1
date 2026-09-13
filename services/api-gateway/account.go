@@ -3,12 +3,15 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -362,6 +365,90 @@ func (b *backend) apiKeySummary(r *http.Request, userID, keyID string, includeSe
 	return result, nil
 }
 
+// handleInternalExternalQuota is the bridge used by the remaining Go-backed
+// media operation callers.  It is authenticated with a body HMAC so a public
+// client cannot submit an arbitrary user/key pair; PostgreSQL remains the
+// authority for the atomic reservation and refund.
+func (b *backend) handleInternalExternalQuota(w http.ResponseWriter, r *http.Request) error {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, b.config.maxBodyBytes+1))
+	if err != nil || int64(len(raw)) > b.config.maxBodyBytes {
+		return &apiError{http.StatusRequestEntityTooLarge, "REQUEST_BODY_TOO_LARGE", "请求体过大"}
+	}
+	signature := strings.TrimSpace(r.Header.Get("X-Go-Internal-Signature"))
+	mac := hmac.New(sha256.New, []byte(b.config.authSecret))
+	_, _ = mac.Write(raw)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if signature == "" || subtle.ConstantTimeCompare([]byte(signature), []byte(expected)) != 1 {
+		return &apiError{http.StatusUnauthorized, "UNAUTHORIZED", "内部调用签名无效"}
+	}
+	var in struct {
+		Action string  `json:"action"`
+		UserID string  `json:"userId"`
+		KeyID  string  `json:"apiKeyId"`
+		Amount float64 `json:"amount"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return invalid("请求 JSON 无效")
+	}
+	if strings.TrimSpace(in.UserID) == "" || strings.TrimSpace(in.KeyID) == "" {
+		return invalid("API 密钥身份无效")
+	}
+	switch in.Action {
+	case "get":
+		key, err := b.apiKeySummary(r, in.UserID, in.KeyID, false)
+		if err != nil {
+			return err
+		}
+		limit, _ := key["creditLimit"].(*float64)
+		used, _ := key["creditsUsed"].(float64)
+		var remaining any
+		if limit != nil {
+			remaining = maxFloat(0, *limit-used)
+		}
+		key["creditsRemaining"] = remaining
+		writeJSON(w, http.StatusOK, key)
+		return nil
+	case "reserve", "refund":
+		if in.Amount <= 0 || in.Amount > 1e15 || in.Amount != in.Amount {
+			return invalid("额度数量无效")
+		}
+		amount := float64(int64(in.Amount*100+0.5000000001)) / 100
+		var tag pgconn.CommandTag
+		if in.Action == "reserve" {
+			tag, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET credits_used=credits_used+$3,updated_at=now() WHERE id=$1 AND user_id=$2 AND is_active AND (credit_limit IS NULL OR credit_limit-credits_used >= $3)`, in.KeyID, in.UserID, amount)
+		} else {
+			tag, err = b.db.Exec(r.Context(), `UPDATE external_api_key SET credits_used=GREATEST(0,credits_used-$3),updated_at=now() WHERE id=$1 AND user_id=$2`, in.KeyID, in.UserID, amount)
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 && in.Action == "reserve" {
+			key, e := b.apiKeySummary(r, in.UserID, in.KeyID, false)
+			if e != nil {
+				return e
+			}
+			limit, _ := key["creditLimit"].(*float64)
+			used, _ := key["creditsUsed"].(float64)
+			remaining := maxFloat(0, amount)
+			if limit != nil {
+				remaining = maxFloat(0, *limit-used)
+			}
+			return &apiError{http.StatusTooManyRequests, "api_key_quota_exceeded", fmt.Sprintf("API key quota exceeded: required %.2f, remaining %.2f", amount, remaining)}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"amount": amount})
+		return nil
+	default:
+		return invalid("未知额度操作")
+	}
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 	s, err := b.requireSession(r)
 	if err != nil {
@@ -579,6 +666,7 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (b *backend) registerAccountRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/internal/external-api/quota", b.endpoint(b.handleInternalExternalQuota))
 	mux.HandleFunc("GET /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("PATCH /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("GET /api/credits/balance", b.endpoint(b.handleCreditsBalance))
