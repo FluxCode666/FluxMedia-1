@@ -313,6 +313,10 @@ func (b *backend) handleGoAnalyticsTrends(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
 	rows.Close()
 	buckets := make([]any, len(values))
 	for i, value := range values {
@@ -459,6 +463,10 @@ func (b *backend) writeGoDataDashboard(w http.ResponseWriter, r *http.Request, u
 			values[i].videos++
 			values[i].seconds += seconds
 		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
 	}
 	rows.Close()
 	var failed int
