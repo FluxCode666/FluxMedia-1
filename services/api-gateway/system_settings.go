@@ -18,6 +18,36 @@ func (b *backend) registerSystemSettingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system-settings/model-pricing", b.endpoint(b.handleSystemModelPricing))
 	mux.HandleFunc("GET /api/system-settings/moderation-policy", b.endpoint(b.handleSystemModerationPolicyGet))
 	mux.HandleFunc("PUT /api/system-settings/moderation-policy", b.endpoint(b.handleSystemModerationPolicyPut))
+	mux.HandleFunc("GET /api/pagination/config", b.endpoint(b.handlePaginationConfig))
+}
+
+// handlePaginationConfig exposes the validated public page-size allowlist used
+// by dashboard list controls. The setting contains no secrets and falls back to
+// the stable application defaults when absent or malformed.
+func (b *backend) handlePaginationConfig(w http.ResponseWriter, r *http.Request) error {
+	value, err := b.setting(r.Context(), "PAGINATION_PAGE_SIZE_OPTIONS", []any{float64(10), float64(20), float64(50)})
+	if err != nil {
+		return err
+	}
+	options := []int{10, 20, 50}
+	if raw, ok := value.([]any); ok {
+		candidate := make([]int, 0, len(raw))
+		seen := map[int]bool{}
+		for _, item := range raw {
+			n, ok := item.(float64)
+			if !ok || n < 1 || n > 100 || n != float64(int(n)) || seen[int(n)] {
+				candidate = nil
+				break
+			}
+			seen[int(n)] = true
+			candidate = append(candidate, int(n))
+		}
+		if len(candidate) > 0 && seen[20] && len(candidate) <= 10 {
+			options = candidate
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"defaultPageSize": 20, "pageSizeOptions": options})
+	return nil
 }
 
 func (b *backend) handleSystemModelPricing(w http.ResponseWriter, r *http.Request) error {

@@ -4,8 +4,7 @@
  * 使用方：settings.getPaginationConfig UOL operation。读取动态系统设置，并在
  * 配置缺失、JSON 损坏或业务校验失败时回退安全默认值。
  */
-import { logError } from "../logger";
-import { getRuntimeSettingJson } from "../system-settings/index";
+import { requestGoBackendJson } from "../http/go-backend";
 import { type PaginationConfig, parsePaginationConfig } from "./config";
 
 /**
@@ -16,11 +15,12 @@ import { type PaginationConfig, parsePaginationConfig } from "./config";
  */
 export async function getPaginationConfig(): Promise<PaginationConfig> {
   try {
-    return parsePaginationConfig(
-      await getRuntimeSettingJson("PAGINATION_PAGE_SIZE_OPTIONS")
-    );
+    const payload = await requestGoBackendJson<unknown>("/api/pagination/config");
+    if (payload && typeof payload === "object" && "pageSizeOptions" in payload) {
+      return parsePaginationConfig((payload as { pageSizeOptions?: unknown }).pageSizeOptions);
+    }
+    return parsePaginationConfig(undefined);
   } catch (error) {
-    logError(error, { source: "pagination-config" });
     return parsePaginationConfig(undefined);
   }
 }
