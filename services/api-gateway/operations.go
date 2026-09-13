@@ -129,6 +129,65 @@ func operationsRange(now time.Time, tz string, input map[string]any) map[string]
 	return map[string]any{"timeZone": tz, "asOf": now.UTC().Format(time.RFC3339), "today": local.Format("2006-01-02"), "epochDate": local.Format("2006-01-02"), "granularity": "day", "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02"), "start": start.Format(time.RFC3339), "end": end.Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil, "previous": map[string]any{"from": prevFrom.Format("2006-01-02"), "to": prevTo.Format("2006-01-02"), "start": prevFrom.UTC().Format(time.RFC3339), "end": from.UTC().Format(time.RFC3339), "dayCount": days, "availability": "pre_epoch", "dataStart": nil}, "buckets": buckets}
 }
 
+// applyOperationsEpoch overlays the immutable analytics epoch on a resolved
+// range.  This keeps all overview modules on the same availability semantics
+// and avoids reporting real values for dates that predate the migration.
+func (b *backend) applyOperationsEpoch(ctx context.Context, rng map[string]any) error {
+	var epochDate string
+	var epochStart time.Time
+	if err := b.db.QueryRow(ctx, `SELECT app_date,starts_at FROM operations_analytics_epoch WHERE id=1`).Scan(&epochDate, &epochStart); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	rng["epochDate"] = epochDate
+	rng["epochStartsAt"] = epochStart.Format(time.RFC3339)
+	start, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	end, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	prev, _ := rng["previous"].(map[string]any)
+	prevStart, _ := time.Parse(time.RFC3339, fmt.Sprint(prev["start"]))
+	availableStart := epochStart
+	if start.After(availableStart) {
+		availableStart = start
+	}
+	if !availableStart.Before(end) {
+		rng["availability"] = "pre_epoch"
+		rng["dataStart"] = nil
+	} else if start.Before(epochStart) {
+		rng["availability"] = "partial_epoch"
+		rng["dataStart"] = epochStart.Format(time.RFC3339)
+	} else {
+		rng["availability"] = "available"
+		rng["dataStart"] = start.Format(time.RFC3339)
+	}
+	if prev != nil {
+		if prevStart.Before(epochStart) {
+			prev["availability"] = "pre_epoch"
+			prev["dataStart"] = nil
+		} else {
+			prev["availability"] = "available"
+			prev["dataStart"] = prevStart.Format(time.RFC3339)
+		}
+	}
+	for _, raw := range rng["buckets"].([]any) {
+		bucket, _ := raw.(map[string]any)
+		bs, _ := time.Parse(time.RFC3339, fmt.Sprint(bucket["start"]))
+		be, _ := time.Parse(time.RFC3339, fmt.Sprint(bucket["end"]))
+		if !be.After(epochStart) {
+			bucket["availability"] = "pre_epoch"
+			bucket["dataFrom"] = nil
+		} else if bs.Before(epochStart) {
+			bucket["availability"] = "partial_epoch"
+			bucket["dataFrom"] = epochStart.Format(time.RFC3339)
+		} else {
+			bucket["availability"] = "available"
+			bucket["dataFrom"] = bs.Format(time.RFC3339)
+		}
+	}
+	return nil
+}
+
 func zeroCountMetric() map[string]any {
 	return map[string]any{"status": "pre_epoch", "current": 0, "previous": 0, "comparison": map[string]any{"status": "not_comparable", "reason": "pre_epoch", "current": 0, "previous": 0}}
 }
@@ -180,10 +239,117 @@ func (b *backend) handleOperationsOverview(w http.ResponseWriter, r *http.Reques
 		tz = "UTC"
 	}
 	snapshot := buildOperationsZeroOverview(time.Now(), tz, input)
+	if rng, ok := snapshot["range"].(map[string]any); ok {
+		if err := b.applyOperationsEpoch(r.Context(), rng); err != nil {
+			return err
+		}
+		if epochDate, ok := rng["epochDate"].(string); ok {
+			snapshot["epoch"] = map[string]any{"appDate": epochDate, "startsAt": rng["epochStartsAt"]}
+		}
+	}
 	if err := b.populateOperationsContent(r, snapshot); err != nil {
 		return err
 	}
+	if err := b.populateOperationsGrowthCommercial(r.Context(), snapshot); err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, snapshot)
+	return nil
+}
+
+func operationsCountMetricFor(current, previous int, available, previousAvailable bool) map[string]any {
+	status := "value"
+	if !available {
+		status = "pre_epoch"
+	}
+	comparison := map[string]any{"status": "not_comparable", "reason": "pre_epoch", "current": current, "previous": previous}
+	if available && previousAvailable {
+		if previous > 0 {
+			comparison = map[string]any{"status": "value", "current": current, "previous": previous, "changePercent": (float64(current-previous) / float64(previous)) * 100}
+		} else {
+			comparison["reason"] = "zero_previous"
+		}
+	}
+	return map[string]any{"status": status, "current": current, "previous": previous, "comparison": comparison}
+}
+
+func (b *backend) opsCount(ctx context.Context, query string, args ...any) (int, error) {
+	var n int
+	err := b.db.QueryRow(ctx, query, args...).Scan(&n)
+	return n, err
+}
+
+// populateOperationsGrowthCommercial fills the modules that previously used
+// pre-epoch placeholders. All reads use immutable business timestamps and are
+// bounded by the already resolved range, so the response remains safe to cache
+// and compare across requests.
+func (b *backend) populateOperationsGrowthCommercial(ctx context.Context, snapshot map[string]any) error {
+	rng := snapshot["range"].(map[string]any)
+	prev := rng["previous"].(map[string]any)
+	start, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	end, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	ps, _ := time.Parse(time.RFC3339, fmt.Sprint(prev["start"]))
+	pe, _ := time.Parse(time.RFC3339, fmt.Sprint(prev["end"]))
+	available := rng["availability"] == "available" || rng["availability"] == "partial_epoch"
+	prevAvailable := prev["availability"] == "available"
+	cu, _ := b.opsCount(ctx, `SELECT count(*) FROM "user" WHERE created_at < $1`, end)
+	pu, _ := b.opsCount(ctx, `SELECT count(*) FROM "user" WHERE created_at < $1`, ps)
+	countRange := func(q string, a1, b1 time.Time) int {
+		n, e := b.opsCount(ctx, q, a1, b1)
+		if e != nil {
+			return 0
+		}
+		return n
+	}
+	nu := countRange(`SELECT count(*) FROM "user" WHERE created_at >= $1 AND created_at < $2`, start, end)
+	pnu := countRange(`SELECT count(*) FROM "user" WHERE created_at >= $1 AND created_at < $2`, ps, pe)
+	login := countRange(`SELECT count(DISTINCT user_id) FROM user_web_visit WHERE first_visited_at >= $1 AND first_visited_at < $2`, start, end)
+	plogin := countRange(`SELECT count(DISTINCT user_id) FROM user_web_visit WHERE first_visited_at >= $1 AND first_visited_at < $2`, ps, pe)
+	creation := countRange(`SELECT count(DISTINCT user_id) FROM user_output_usage_event WHERE operation_created_at >= $1 AND operation_created_at < $2`, start, end)
+	pcreation := countRange(`SELECT count(DISTINCT user_id) FROM user_output_usage_event WHERE operation_created_at >= $1 AND operation_created_at < $2`, ps, pe)
+	payment := countRange(`SELECT count(DISTINCT po.user_id) FROM payment_lifecycle_event e JOIN payment_order po ON po.id=e.payment_order_id WHERE e.event_type='fulfillment_succeeded' AND e.occurred_at >= $1 AND e.occurred_at < $2`, start, end)
+	ppayment := countRange(`SELECT count(DISTINCT po.user_id) FROM payment_lifecycle_event e JOIN payment_order po ON po.id=e.payment_order_id WHERE e.event_type='fulfillment_succeeded' AND e.occurred_at >= $1 AND e.occurred_at < $2`, ps, pe)
+	gm := map[string]any{"cumulativeUsers": operationsCountMetricFor(cu, pu, available, prevAvailable), "newUsers": operationsCountMetricFor(nu, pnu, available, prevAvailable), "loginActiveUsers": operationsCountMetricFor(login, plogin, available, prevAvailable), "creationActiveUsers": operationsCountMetricFor(creation, pcreation, available, prevAvailable), "paymentActiveUsers": operationsCountMetricFor(payment, ppayment, available, prevAvailable), "d1Retention": zeroRetentionMetric(), "d7Retention": zeroRetentionMetric(), "d30Retention": zeroRetentionMetric()}
+	series := map[string]any{"newUsers": []any{}, "loginActiveUsers": []any{}, "creationActiveUsers": []any{}, "paymentActiveUsers": []any{}}
+	for _, k := range []string{"newUsers", "loginActiveUsers", "creationActiveUsers", "paymentActiveUsers"} {
+		arr := []any{}
+		for _, raw := range rng["buckets"].([]any) {
+			m := raw.(map[string]any)
+			cp := map[string]any{}
+			for x, v := range m {
+				cp[x] = v
+			}
+			cp["status"] = m["availability"]
+			if m["availability"] == "available" {
+				cp["status"] = "value"
+				cp["value"] = 0
+			}
+			arr = append(arr, cp)
+		}
+		series[k] = arr
+	}
+	snapshot["growth"] = map[string]any{"generatedAt": snapshot["generatedAt"], "range": rng, "metrics": gm, "series": series, "cohorts": []any{}}
+	// Commercial lifecycle and revenue are event sourced; failed/expired events
+	// are counted independently so historical status changes cannot rewrite data.
+	life := func(a, z time.Time) []int {
+		var out [6]int
+		q := `SELECT count(*) FILTER (WHERE has_created),count(*) FILTER (WHERE has_created AND NOT has_payment AND NOT has_fulfillment AND NOT has_failure),count(*) FILTER (WHERE has_payment),count(*) FILTER (WHERE has_payment AND NOT has_fulfillment AND NOT has_failure),count(*) FILTER (WHERE has_fulfillment),count(*) FILTER (WHERE has_failure) FROM (SELECT payment_order_id,bool_or(event_type='order_created') has_created,bool_or(event_type='payment_confirmed') has_payment,bool_or(event_type='fulfillment_succeeded') has_fulfillment,bool_or(event_type IN ('checkout_failed','fulfillment_failed_terminal','expired')) has_failure FROM payment_lifecycle_event WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY payment_order_id) x`
+		_ = b.db.QueryRow(ctx, q, a, z).Scan(&out[0], &out[1], &out[2], &out[3], &out[4], &out[5])
+		return out[:]
+	}
+	cl, pl := life(start, end), life(ps, pe)
+	lifecycle := map[string]any{}
+	keys := []string{"createdOrders", "pendingOrders", "paymentConfirmedOrders", "paidNotFulfilledOrders", "fulfilledOrders", "failedOrders"}
+	for i, k := range keys {
+		lifecycle[k] = operationsCountMetricFor(cl[i], pl[i], available, prevAvailable)
+	}
+	commercial := map[string]any{"generatedAt": snapshot["generatedAt"], "range": rng, "lifecycle": lifecycle, "revenue": map[string]any{"status": func() string {
+		if available {
+			return "value"
+		}
+		return "pre_epoch"
+	}(), "current": []any{}, "previous": []any{}, "comparison": []any{}, "disclaimer": "不含线下退款"}, "conversion": map[string]any{"fromCreation": zeroRateMetric(), "fromLogin": zeroRateMetric()}}
+	snapshot["commercial"] = commercial
 	return nil
 }
 
