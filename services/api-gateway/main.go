@@ -69,6 +69,7 @@ type backend struct {
 	db              *pgxpool.Pool
 	redis           *redis.Client
 	logger          *slog.Logger
+	mediaWorker     *mediaWorker
 }
 
 func main() {
@@ -119,6 +120,7 @@ func main() {
 	if os.Getenv("GO_BACKEND_MIGRATE_ONLY") == "true" || (len(os.Args) > 1 && os.Args[1] == "--migrate") {
 		return
 	}
+	server.mediaWorker = server.startMediaWorker(ctx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.bind,
@@ -176,6 +178,9 @@ func newBackend(ctx context.Context, cfg config, logger *slog.Logger) (*backend,
 }
 
 func (b *backend) close() {
+	if b.mediaWorker != nil {
+		b.mediaWorker.close()
+	}
 	b.db.Close()
 	_ = b.redis.Close()
 }
