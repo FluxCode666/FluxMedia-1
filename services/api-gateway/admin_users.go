@@ -96,7 +96,7 @@ func (b *backend) handleAdminUsers(w http.ResponseWriter, r *http.Request) error
 	if e != nil {
 		return e
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("query"))
+	q, status, cs := strings.TrimSpace(r.URL.Query().Get("query")), r.URL.Query().Get("status"), r.URL.Query().Get("creditsStatus")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -105,38 +105,43 @@ func (b *backend) handleAdminUsers(w http.ResponseWriter, r *http.Request) error
 	if size != 10 && size != 20 && size != 50 {
 		size = 20
 	}
-	status := r.URL.Query().Get("status")
-	cs := r.URL.Query().Get("creditsStatus")
 	where := []string{"TRUE"}
 	args := []any{}
 	if q != "" {
 		args = append(args, "%"+q+"%")
-		where = append(where, "(u.name ILIKE $1 OR u.email ILIKE $1 OR u.id=$1)")
+		where = append(where, "(u.name ILIKE $1 OR u.email ILIKE $1 OR u.id ILIKE $1)")
 	}
 	if status == "active" {
 		where = append(where, "NOT u.banned")
-	}
-	if status == "banned" {
+	} else if status == "banned" {
 		where = append(where, "u.banned")
-	}
-	if status == "unverified" {
+	} else if status == "unverified" {
 		where = append(where, "NOT u.email_verified")
 	}
 	if cs == "frozen" {
 		where = append(where, "COALESCE(cb.status,'active')='frozen'")
-	}
-	if cs == "active" {
+	} else if cs == "active" {
 		where = append(where, "COALESCE(cb.status,'active')='active'")
 	}
-	base := len(args)
+	whereSQL := strings.Join(where, " AND ")
+	var total int
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*) FROM "user" u LEFT JOIN credits_balance cb ON cb.user_id=u.id WHERE `+whereSQL, args...).Scan(&total); e != nil {
+		return e
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + size - 1) / size
+	}
+	if page > totalPages {
+		page = totalPages
+	}
 	args = append(args, size, (page-1)*size)
-	rows, e := b.db.Query(r.Context(), `SELECT u.id,u.name,u.email,u.image,u.role,u.banned,u.banned_reason,u.email_verified,u.image_generation_concurrency_override,u.created_at,u.updated_at,COALESCE(cb.balance,0),COALESCE(cb.total_earned,0),COALESCE(cb.total_spent,0),COALESCE(cb.status,'active'),(SELECT count(*) FROM generation g WHERE g.user_id=u.id),(SELECT count(*) FROM generation g WHERE g.user_id=u.id AND g.status='failed'),(SELECT count(*) FROM external_api_key k WHERE k.user_id=u.id),(SELECT count(*) FROM external_api_key k WHERE k.user_id=u.id AND k.is_active),count(*) OVER() FROM "user" u LEFT JOIN credits_balance cb ON cb.user_id=u.id WHERE `+strings.Join(where, " AND ")+` ORDER BY u.created_at DESC LIMIT $`+strconv.Itoa(base+1)+` OFFSET $`+strconv.Itoa(base+2), args...)
+	rows, e := b.db.Query(r.Context(), `SELECT u.id,u.name,u.email,u.image,u.role,u.banned,u.banned_reason,u.email_verified,u.image_generation_concurrency_override,u.created_at,u.updated_at,COALESCE(cb.balance,0),COALESCE(cb.total_earned,0),COALESCE(cb.total_spent,0),COALESCE(cb.status,'active'),(SELECT count(*) FROM generation g WHERE g.user_id=u.id),(SELECT count(*) FROM generation g WHERE g.user_id=u.id AND g.status='failed'),(SELECT count(*) FROM external_api_key k WHERE k.user_id=u.id),(SELECT count(*) FROM external_api_key k WHERE k.user_id=u.id AND k.is_active) FROM "user" u LEFT JOIN credits_balance cb ON cb.user_id=u.id WHERE `+whereSQL+` ORDER BY u.created_at DESC,u.id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if e != nil {
 		return e
 	}
 	defer rows.Close()
 	users := []any{}
-	total := 0
 	for rows.Next() {
 		var id, name, email string
 		var image, br *string
@@ -147,16 +152,22 @@ func (b *backend) handleAdminUsers(w http.ResponseWriter, r *http.Request) error
 		var bal, earned, spent float64
 		var cst string
 		var gc, fg, kc, ak int
-		if e = rows.Scan(&id, &name, &email, &image, &role, &banned, &br, &ev, &ov, &ca, &ua, &bal, &earned, &spent, &cst, &gc, &fg, &kc, &ak, &total); e != nil {
+		if e = rows.Scan(&id, &name, &email, &image, &role, &banned, &br, &ev, &ov, &ca, &ua, &bal, &earned, &spent, &cst, &gc, &fg, &kc, &ak); e != nil {
 			return e
 		}
 		users = append(users, map[string]any{"id": id, "name": name, "email": email, "image": image, "role": role, "banned": banned, "bannedReason": br, "emailVerified": ev, "imageGenerationConcurrencyOverride": ov, "createdAt": ca, "updatedAt": ua, "creditsBalance": bal, "creditsTotalEarned": earned, "creditsTotalSpent": spent, "creditsStatus": cst, "generationCount": gc, "failedGenerationCount": fg, "apiKeyCount": kc, "activeApiKeyCount": ak})
 	}
+	if e = rows.Err(); e != nil {
+		return e
+	}
 	var all, admins, banned int
-	b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE role IN ('admin','super_admin')),count(*) FILTER(WHERE banned) FROM "user"`).Scan(&all, &admins, &banned)
-	writeJSON(w, 200, map[string]any{"users": users, "pagination": map[string]any{"page": page, "pageSize": size, "totalCount": total, "totalPages": (total + size - 1) / size}, "stats": map[string]any{"totalUsers": all, "admins": admins, "banned": banned}, "actorId": s.User.ID})
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE role IN ('observer_admin','admin','super_admin')),count(*) FILTER(WHERE banned) FROM "user"`).Scan(&all, &admins, &banned); e != nil {
+		return e
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": users, "pagination": map[string]any{"page": page, "pageSize": size, "totalCount": total, "totalPages": totalPages}, "stats": map[string]any{"totalUsers": all, "admins": admins, "banned": banned}, "actorId": s.User.ID})
 	return nil
 }
+
 func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) error {
 	if _, e := b.requireAdmin(r, false); e != nil {
 		return e

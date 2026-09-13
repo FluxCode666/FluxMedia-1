@@ -182,11 +182,11 @@ func (b *backend) handleTicketList(w http.ResponseWriter, r *http.Request) error
 	if size != 10 && size != 20 && size != 50 {
 		size = 20
 	}
-	status := r.URL.Query().Get("status")
-	search := r.URL.Query().Get("search")
+	status, search := r.URL.Query().Get("status"), strings.TrimSpace(r.URL.Query().Get("search"))
+	isAdmin := s.User.Role == "admin" || s.User.Role == "super_admin"
 	where := "t.user_id=$1"
 	args := []any{s.User.ID}
-	if s.User.Role == "admin" || s.User.Role == "super_admin" {
+	if isAdmin {
 		where = "TRUE"
 		args = nil
 	}
@@ -196,33 +196,55 @@ func (b *backend) handleTicketList(w http.ResponseWriter, r *http.Request) error
 	}
 	if search != "" {
 		args = append(args, "%"+search+"%")
-		where += " AND (t.subject ILIKE $" + strconv.Itoa(len(args)) + " OR u.email ILIKE $" + strconv.Itoa(len(args)) + " OR u.name ILIKE $" + strconv.Itoa(len(args)) + " )"
+		n := strconv.Itoa(len(args))
+		if isAdmin {
+			where += " AND (t.subject ILIKE $" + n + " OR u.email ILIKE $" + n + " OR u.name ILIKE $" + n + ")"
+		} else {
+			where += " AND t.subject ILIKE $" + n
+		}
 	}
-	offset := (page - 1) * size
-	args = append(args, size, offset)
-	q := `SELECT t.id,t.user_id,t.subject,t.category,t.priority,t.status,t.user_last_seen_at,t.last_admin_activity_at,t.created_at,t.updated_at,u.name,u.email, count(*) OVER() FROM ticket t JOIN "user" u ON u.id=t.user_id WHERE ` + where + ` ORDER BY t.updated_at DESC LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
+	var total int
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*) FROM ticket t LEFT JOIN "user" u ON u.id=t.user_id WHERE `+where, args...).Scan(&total); e != nil {
+		return e
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + size - 1) / size
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	args = append(args, size, (page-1)*size)
+	q := `SELECT t.id,t.user_id,t.subject,t.category,t.priority,t.status,t.user_last_seen_at,t.last_admin_activity_at,t.admin_last_seen_at,t.last_user_activity_at,t.created_at,t.updated_at,u.name,u.email FROM ticket t LEFT JOIN "user" u ON u.id=t.user_id WHERE ` + where + ` ORDER BY t.updated_at DESC,t.id DESC LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
 	rows, e := b.db.Query(r.Context(), q, args...)
 	if e != nil {
 		return e
 	}
 	defer rows.Close()
 	items := []any{}
-	total := 0
 	for rows.Next() {
 		var id, uid, sub, cat, pri, st string
 		var ul, ca, ua time.Time
-		var la *time.Time
+		var la, al, lu *time.Time
 		var n, em *string
-		var cnt int
-		if e = rows.Scan(&id, &uid, &sub, &cat, &pri, &st, &ul, &la, &ca, &ua, &n, &em, &cnt); e != nil {
+		if e = rows.Scan(&id, &uid, &sub, &cat, &pri, &st, &ul, &la, &al, &lu, &ca, &ua, &n, &em); e != nil {
 			return e
 		}
-		total = cnt
-		items = append(items, map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "unread": false, "createdAt": ca, "updatedAt": ua, "userName": n, "userEmail": em})
+		unread := false
+		if isAdmin {
+			unread = lu != nil && (al == nil || lu.After(*al))
+		} else {
+			unread = la != nil && la.After(ul)
+		}
+		items = append(items, map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "unread": unread, "createdAt": ca, "updatedAt": ua, "userName": n, "userEmail": em})
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "page": page, "pageSize": size, "total": total, "totalPages": (total + size - 1) / size})
+	if e = rows.Err(); e != nil {
+		return e
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"records": items, "items": items, "page": page, "pageSize": size, "totalCount": total, "total": total, "totalPages": totalPages})
 	return nil
 }
+
 func (b *backend) ticketAccess(ctx context.Context, s *sessionResponse, id string) (bool, error) {
 	if s.User.Role == "admin" || s.User.Role == "super_admin" {
 		return true, nil
@@ -242,19 +264,39 @@ func (b *backend) handleTicketMessages(w http.ResponseWriter, r *http.Request) e
 		return e
 	}
 	if !ok {
-		return forbidden()
+		return invalid("工单不存在")
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if size != 10 && size != 20 && size != 50 {
+		size = 20
 	}
 	var sub, uid, cat, pri, st string
 	var ul, ca, ua time.Time
 	var la, al, lu *time.Time
-	e = b.db.QueryRow(r.Context(), `SELECT id,user_id,subject,category,priority,status,user_last_seen_at,last_admin_activity_at,admin_last_seen_at,last_user_activity_at,created_at,updated_at FROM ticket WHERE id=$1`, id).Scan(new(string), &uid, &sub, &cat, &pri, &st, &ul, &la, &al, &lu, &ca, &ua)
+	var uname, uemail, uimage *string
+	e = b.db.QueryRow(r.Context(), `SELECT t.id,t.user_id,t.subject,t.category,t.priority,t.status,t.user_last_seen_at,t.last_admin_activity_at,t.admin_last_seen_at,t.last_user_activity_at,t.created_at,t.updated_at,u.name,u.email,u.image FROM ticket t LEFT JOIN "user" u ON u.id=t.user_id WHERE t.id=$1`, id).Scan(new(string), &uid, &sub, &cat, &pri, &st, &ul, &la, &al, &lu, &ca, &ua, &uname, &uemail, &uimage)
 	if e != nil {
 		if e == pgx.ErrNoRows {
 			return invalid("工单不存在")
 		}
 		return e
 	}
-	rows, e := b.db.Query(r.Context(), `SELECT m.id,m.content,m.is_admin_response,m.created_at,u.id,u.name,u.image FROM ticket_message m LEFT JOIN "user" u ON u.id=m.user_id WHERE m.ticket_id=$1 ORDER BY m.created_at ASC`, id)
+	var total int
+	if e = b.db.QueryRow(r.Context(), `SELECT count(*) FROM ticket_message WHERE ticket_id=$1`, id).Scan(&total); e != nil {
+		return e
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + size - 1) / size
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	rows, e := b.db.Query(r.Context(), `SELECT m.id,m.content,m.is_admin_response,m.created_at,u.id,u.name,u.image FROM ticket_message m LEFT JOIN "user" u ON u.id=m.user_id WHERE m.ticket_id=$1 ORDER BY m.created_at DESC,m.id DESC LIMIT $2 OFFSET $3`, id, size, (page-1)*size)
 	if e != nil {
 		return e
 	}
@@ -270,9 +312,22 @@ func (b *backend) handleTicketMessages(w http.ResponseWriter, r *http.Request) e
 		}
 		msgs = append(msgs, map[string]any{"id": mid, "content": c, "isAdminResponse": adm, "createdAt": t, "user": map[string]any{"id": xid, "name": xn, "image": xi}})
 	}
-	writeJSON(w, 200, map[string]any{"ticket": map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "userLastSeenAt": ul, "lastAdminActivityAt": la, "adminLastSeenAt": al, "lastUserActivityAt": lu, "createdAt": ca, "updatedAt": ua}, "messages": map[string]any{"items": msgs, "page": 1, "pageSize": len(msgs), "total": len(msgs), "totalPages": 1}})
+	if e = rows.Err(); e != nil {
+		return e
+	}
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	ticket := map[string]any{"id": id, "userId": uid, "subject": sub, "category": cat, "priority": pri, "status": st, "userLastSeenAt": ul, "lastAdminActivityAt": la, "adminLastSeenAt": al, "lastUserActivityAt": lu, "createdAt": ca, "updatedAt": ua}
+	user := any(nil)
+	if uname != nil || uemail != nil || uimage != nil {
+		user = map[string]any{"id": uid, "name": uname, "email": uemail, "image": uimage}
+	}
+	msgPage := map[string]any{"records": msgs, "items": msgs, "page": page, "pageSize": size, "totalCount": total, "total": total, "totalPages": totalPages}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": ticket, "ticketUser": user, "messages": msgPage})
 	return nil
 }
+
 func (b *backend) handleTicketAddMessage(w http.ResponseWriter, r *http.Request) error {
 	s, e := b.requireSession(r)
 	if e != nil {
