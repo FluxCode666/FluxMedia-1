@@ -13,45 +13,13 @@ import {
   apiUpstreamScriptContextSchema,
   parseApiUpstreamRequestEnvelope,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
-import type { BackendGroupInput } from "@repo/shared/image-backend/group-contract";
-import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
-import { logError } from "@repo/shared/logger";
-import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
-import type { Principal } from "@repo/shared/uol";
-import { bindExecute, OperationError } from "@repo/shared/uol";
-import type {
-  AdminPoolGroupListInput,
-  AdminPoolMemberListInput,
-} from "@repo/shared/uol/operations/image-backend-pool";
-import {
-  deleteImageSizeConfig,
-  listImageSizeConfigs,
-  saveImageSizeConfig,
-} from "@/features/image-backend-pool/image-size-config-service";
-import {
-  filterBackendGroups,
-  filterBackendMembers,
-} from "@/features/image-backend-pool/admin-pool-view-model";
-import {
-  assertApiUpstreamOpaqueValuesPreserved,
-  createApiUpstreamOpaqueToken,
-  restoreApiUpstreamOpaqueValues,
-} from "@/features/image-backend-pool/api-upstream-opaque-values";
+import type { BackendMemberAdminSummary } from "@/features/image-backend-pool/member-service";
+import { assertApiUpstreamOpaqueValuesPreserved, createApiUpstreamOpaqueToken, restoreApiUpstreamOpaqueValues } from "@/features/image-backend-pool/api-upstream-opaque-values";
 import { getApiUpstreamScriptPoolDiagnostics } from "@/features/image-backend-pool/api-upstream-script-pool";
 import { runApiUpstreamScript } from "@/features/image-backend-pool/api-upstream-script-runtime";
-import {
-  BackendGroupServiceError,
-  backendGroupService,
-} from "@/features/image-backend-pool/group-service";
-import {
-  buildBackendMemberModelOptions,
-  findUnavailableBackendMemberModelIds,
-} from "@/features/image-backend-pool/member-model-options";
-import {
-  type BackendMemberAdminSummary,
-  BackendMemberServiceError,
-  backendMemberService,
-} from "@/features/image-backend-pool/member-service";
+import { bindExecute, OperationError } from "@repo/shared/uol";
+import { requestGoJson, GoBackendRequestError } from "@/server/go-backend-client";
+
 
 /** 无网络脚本测试 operation 的严格输入。 */
 export interface ApiUpstreamAdapterTestInput {
@@ -61,36 +29,13 @@ export interface ApiUpstreamAdapterTestInput {
   sample: unknown;
 }
 
-/** 号池 binding 可替换依赖；单测注入桩，生产使用真实服务和 Worker。 */
+/** UOL 绑定只保留脚本测试端口；持久化操作统一通过 Go HTTP。 */
 export interface ImageBackendPoolBindingDependencies {
-  groupService: Pick<
-    typeof backendGroupService,
-    "listGroupOptions" | "listGroups" | "saveGroup" | "deleteGroup"
-  >;
-  memberService: Pick<
-    typeof backendMemberService,
-    | "listMembers"
-    | "saveMember"
-    | "resetMemberStatus"
-    | "setMemberEnabled"
-    | "deleteMember"
-  >;
-  readModelConfiguration(
-    principal: Principal
-  ): Promise<ModelConfigurationSnapshot>;
   runScript: typeof runApiUpstreamScript;
   getRuntimeDiagnostics: typeof getApiUpstreamScriptPoolDiagnostics;
 }
 
 const defaultDependencies: ImageBackendPoolBindingDependencies = {
-  groupService: backendGroupService,
-  memberService: backendMemberService,
-  async readModelConfiguration(principal) {
-    const { productionModelConfigurationService } = await import(
-      "@/features/model-configuration/service"
-    );
-    return productionModelConfigurationService.read(principal);
-  },
   runScript: runApiUpstreamScript,
   getRuntimeDiagnostics: getApiUpstreamScriptPoolDiagnostics,
 };
@@ -118,25 +63,6 @@ export function buildAdminPoolMembers(
     const config: Record<string, unknown> = { ...member.config };
     return { ...member, config };
   });
-}
-
-/** 把筛选后的内存快照收敛为统一 offset 分页信封。 */
-function paginateAdminPoolRecords<Record>(
-  records: readonly Record[],
-  page: number,
-  pageSize: number
-) {
-  const totalCount = records.length;
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-  const normalizedPage = Math.min(page, totalPages);
-  const offset = (normalizedPage - 1) * pageSize;
-  return {
-    records: records.slice(offset, offset + pageSize),
-    page: normalizedPage,
-    pageSize,
-    totalCount,
-    totalPages,
-  };
 }
 
 /** 从管理员样例中读取模型 ID，仅用于构造脱敏脚本上下文。 */
@@ -195,131 +121,6 @@ function tokenizeMockMedia(
       key,
       tokenizeMockMedia(child, opaqueValues),
     ])
-  );
-}
-
-/** 将号池领域错误映射为可由任意传输稳定编码的 UOL 错误。 */
-function throwBackendPoolOperationError(error: unknown): never {
-  if (
-    error instanceof BackendGroupServiceError ||
-    error instanceof BackendMemberServiceError
-  ) {
-    throw new OperationError(error.code, error.message);
-  }
-  throw error;
-}
-
-/**
- * 校验成员能力只引用模型配置目录中的模型 ID。
- *
- * 编辑时允许原样保留迁移历史 ID；新增加的未知 ID 会在进入保存事务前失败。
- */
-async function assertBackendMemberModelsComeFromConfiguration(
-  input: BackendMemberInput,
-  principal: Principal,
-  dependencies: ImageBackendPoolBindingDependencies
-): Promise<void> {
-  let modelConfiguration: ModelConfigurationSnapshot;
-  try {
-    modelConfiguration = await dependencies.readModelConfiguration(principal);
-  } catch (error) {
-    logError(error, {
-      source: "image-backend-pool",
-      operation: "validate-member-model-options",
-    });
-    throw new OperationError(
-      "not_ready",
-      "模型配置暂不可用，无法校验成员支持的模型"
-    );
-  }
-
-  const existingModelIds = input.id
-    ? ((await dependencies.memberService.listMembers()).find(
-        (member) => member.id === input.id
-      )?.supportedModelIds ?? [])
-    : [];
-  const modelOptions = buildBackendMemberModelOptions(modelConfiguration);
-  const unavailableModelIds = findUnavailableBackendMemberModelIds(
-    input,
-    modelOptions,
-    existingModelIds
-  );
-  const optionByModelId = new Map(
-    modelOptions.map((option) => [option.id.toLowerCase(), option])
-  );
-  const selectedModelSet = new Set(
-    input.supportedModelIds.map((modelId) => modelId.toLowerCase())
-  );
-  const orphanResolutionModels = Object.keys(
-    input.supportedResolutionsByModel ?? {}
-  ).filter((modelId) => !selectedModelSet.has(modelId.toLowerCase()));
-  if (orphanResolutionModels.length > 0) {
-    throw new OperationError(
-      "validation_error",
-      `分辨率能力不能配置未选择的模型：${orphanResolutionModels
-        .slice(0, 3)
-        .join("、")}`
-    );
-  }
-  const invalidResolutionModels = Object.entries(
-    input.supportedResolutionsByModel ?? {}
-  ).filter(([modelId, resolutions]) => {
-    const supported = optionByModelId.get(
-      modelId.toLowerCase()
-    )?.supportedResolutions;
-    return (
-      !supported ||
-      resolutions.some((resolution) => !supported.includes(resolution))
-    );
-  });
-  if (invalidResolutionModels.length > 0) {
-    throw new OperationError(
-      "validation_error",
-      `以下模型包含全局配置未声明的分辨率：${invalidResolutionModels
-        .slice(0, 3)
-        .map(([modelId]) => modelId)
-        .join("、")}`
-    );
-  }
-  if (input.type === "api") {
-    const invalidInputCapabilityModels = Object.keys(
-      input.config.videoInputCapabilitiesByModel
-    ).filter(
-      (modelId) =>
-        optionByModelId.get(modelId.toLowerCase())?.category !== "video"
-    );
-    if (invalidInputCapabilityModels.length > 0) {
-      throw new OperationError(
-        "validation_error",
-        `参考视频和音频能力只能配置到视频模型：${invalidInputCapabilityModels
-          .slice(0, 3)
-          .join("、")}`
-      );
-    }
-    const invalidImageReferenceLimitModels = Object.keys(
-      input.config.imageMaxReferenceImagesByModel ?? {}
-    ).filter(
-      (modelId) =>
-        optionByModelId.get(modelId.toLowerCase())?.category !== "image"
-    );
-    if (invalidImageReferenceLimitModels.length > 0) {
-      throw new OperationError(
-        "validation_error",
-        `参考图数量上限只能配置到生图模型：${invalidImageReferenceLimitModels
-          .slice(0, 3)
-          .join("、")}`
-      );
-    }
-  }
-  if (unavailableModelIds.length === 0) return;
-
-  const displayedIds = unavailableModelIds.slice(0, 3).join("、");
-  const remainingCount = unavailableModelIds.length - 3;
-  throw new OperationError(
-    "validation_error",
-    `以下模型不在当前模型配置可选范围：${displayedIds}${
-      remainingCount > 0 ? ` 等 ${unavailableModelIds.length} 个` : ""
-    }`
   );
 }
 
@@ -433,199 +234,57 @@ export function executeApiUpstreamRuntimeDiagnosticsBinding(
   } as const;
 }
 
+/** 把 Go HTTP 错误映射为 UOL 稳定错误码。 */
+function throwGoPoolError(error: unknown): never {
+  if (error instanceof GoBackendRequestError) {
+    const code = error.code === "FORBIDDEN" ? "forbidden" : error.code === "NOT_FOUND" ? "not_found" : error.code === "CONFLICT" ? "conflict" : error.code === "INVALID_REQUEST" ? "validation_error" : "internal_error";
+    throw new OperationError(code, error.message);
+  }
+  throw error;
+}
+
+async function requestPool<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  try {
+    return await requestGoJson<T>(path, {
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch (error) {
+    throwGoPoolError(error);
+  }
+}
+
 /** 获取用户可选择的启用分组。 */
-bindExecute("pool.getGroupOptions", async () => ({
-  options: await defaultDependencies.groupService.listGroupOptions(),
-}));
+bindExecute("pool.getGroupOptions", async () => requestPool("/api/image-backend/groups/options"));
 
 /** 读取统一分组和成员的脱敏管理快照。 */
-bindExecute("pool.getAdminPool", async () => {
-  const [groups, members] = await Promise.all([
-    defaultDependencies.groupService.listGroups(),
-    defaultDependencies.memberService.listMembers(),
-  ]);
-  return { groups, members: buildAdminPoolMembers(members) };
-});
+bindExecute("pool.getAdminPool", async () => requestPool("/api/admin/image-backend/pool"));
 
-/** 按人工页面筛选分页成员。 */
-bindExecute(
-  "pool.listAdminMembers",
-  async (input: AdminPoolMemberListInput, principal) => {
-    const [members, modelConfigurationResult] = await Promise.all([
-      defaultDependencies.memberService.listMembers(),
-      defaultDependencies
-        .readModelConfiguration(principal)
-        .then((configuration) => ({
-          status: "ready" as const,
-          configuration,
-        }))
-        .catch(() => ({ status: "unavailable" as const })),
-    ]);
-    const pageMembers = members.map((member) => ({
-      ...member,
-      credentialHealthStatus: null,
-    }));
-    const modelResolutionsById =
-      modelConfigurationResult.status === "ready"
-        ? new Map(
-            modelConfigurationResult.configuration.entries.map((entry) => [
-              entry.configKey.trim().toLowerCase(),
-              entry.supportedResolutions ?? [],
-            ])
-          )
-        : null;
-    const filterableMembers = pageMembers.map((member) => {
-      if (!modelResolutionsById) return member;
-      const memberOverrides = member.supportedResolutionsByModel ?? {};
-      const effectiveResolutionsByModel = Object.fromEntries(
-        member.supportedModelIds.map((modelId) => {
-          const modelKey = modelId.trim().toLowerCase();
-          const override = Object.entries(memberOverrides).find(
-            ([candidate]) => candidate.trim().toLowerCase() === modelKey
-          )?.[1];
-          return [
-            modelKey,
-            override ?? modelResolutionsById.get(modelKey) ?? [],
-          ];
-        })
-      );
-      return {
-        ...member,
-        supportedResolutionsByModel: effectiveResolutionsByModel,
-      };
-    });
-    const filteredIds = new Set(
-      filterBackendMembers(
-        filterableMembers,
-        {
-          name: input.name,
-          credentialStatus: input.credentialStatus,
-          modelId: input.modelId,
-          resolution: input.resolution,
-          createdFrom: input.createdFrom,
-          createdTo: input.createdTo,
-        },
-        input.timeZone
-      ).map((member) => member.id)
-    );
-    return paginateAdminPoolRecords(
-      pageMembers.filter((member) => filteredIds.has(member.id)),
-      input.page,
-      input.pageSize
-    );
-  }
-);
+/** 按人工页面筛选分页成员。Go 端负责权限和分页。 */
+bindExecute("pool.listAdminMembers", async (input: Record<string, unknown>) => {
+  const query = new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)]));
+  return requestPool(`/api/admin/image-backend/members?${query}`);
+});
 
 /** 按人工页面名称条件分页分组。 */
-bindExecute("pool.listAdminGroups", async (input: AdminPoolGroupListInput) => {
-  const groups = await defaultDependencies.groupService.listGroups();
-  return paginateAdminPoolRecords(
-    filterBackendGroups(groups, input.name),
-    input.page,
-    input.pageSize
-  );
+bindExecute("pool.listAdminGroups", async (input: Record<string, unknown>) => {
+  const query = new URLSearchParams(Object.entries(input).map(([key, value]) => [key, String(value)]));
+  return requestPool(`/api/admin/image-backend/groups?${query}`);
 });
 
-bindExecute("pool.listImageSizeConfigs", async () => ({
-  configs: await listImageSizeConfigs(),
-}));
-
-bindExecute("pool.getImageSizeConfigOptions", async () => ({
-  options: (await listImageSizeConfigs()).map(({ id, name }) => ({ id, name })),
-}));
-
-bindExecute("pool.saveImageSizeConfig", async (input: unknown) => {
-  try {
-    return await saveImageSizeConfig(input);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
+bindExecute("pool.listImageSizeConfigs", async () => requestPool("/api/admin/image-backend/size-configs"));
+bindExecute("pool.getImageSizeConfigOptions", async () => {
+  const result = await requestPool<{ configs: Array<{ id: string; name: string }> }>("/api/admin/image-backend/size-configs");
+  return { options: result.configs.map(({ id, name }) => ({ id, name })) };
 });
+bindExecute("pool.saveImageSizeConfig", async (input: unknown) => requestPool("/api/admin/image-backend/size-configs", "POST", input));
+bindExecute("pool.deleteImageSizeConfig", async (input: { id: string }) => requestPool(`/api/admin/image-backend/size-configs/${encodeURIComponent(input.id)}`, "DELETE"));
+bindExecute("pool.saveGroup", async (input: unknown) => requestPool("/api/admin/image-backend/groups", "POST", input));
+bindExecute("pool.deleteGroup", async (input: { id: string }) => requestPool(`/api/admin/image-backend/groups/${encodeURIComponent(input.id)}`, "DELETE"));
+bindExecute("pool.saveMember", async (input: unknown) => requestPool("/api/admin/image-backend/members", "POST", input));
+bindExecute("pool.testApiUpstreamAdapter", async (input: ApiUpstreamAdapterTestInput) => requestPool("/api/admin/image-backend/script-runtime/test", "POST", input));
+bindExecute("pool.getApiUpstreamRuntimeDiagnostics", async () => requestPool("/api/admin/image-backend/script-runtime/diagnostics"));
+bindExecute("pool.resetMemberStatus", async (input: { id: string }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/reset-status`, "POST"));
+bindExecute("pool.setMemberEnabled", async (input: { id: string; isEnabled: boolean }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/enabled`, "POST", { isEnabled: input.isEnabled }));
+bindExecute("pool.deleteMember", async (input: { id: string }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}`, "DELETE"));
 
-bindExecute("pool.deleteImageSizeConfig", async (input: { id: string }) => {
-  try {
-    return await deleteImageSizeConfig(input.id);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
-});
-
-/** 保存统一分组。 */
-bindExecute("pool.saveGroup", async (input: BackendGroupInput) => {
-  try {
-    return await defaultDependencies.groupService.saveGroup(input);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
-});
-
-/** 删除不再被使用的非默认分组。 */
-bindExecute("pool.deleteGroup", async (input: { id: string }) => {
-  try {
-    return await defaultDependencies.groupService.deleteGroup(input.id);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
-});
-
-/** 保存 API 成员及其适配配置。 */
-bindExecute(
-  "pool.saveMember",
-  async (input: BackendMemberInput, principal: Principal) => {
-    try {
-      await assertBackendMemberModelsComeFromConfiguration(
-        input,
-        principal,
-        defaultDependencies
-      );
-      return await defaultDependencies.memberService.saveMember(input);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** 使用生产 Worker 执行无网络适配脚本测试。 */
-bindExecute(
-  "pool.testApiUpstreamAdapter",
-  async (input: ApiUpstreamAdapterTestInput) =>
-    executeApiUpstreamAdapterTestBinding(input)
-);
-
-/** 返回当前 Web 进程的 Worker Pool 诊断。 */
-bindExecute("pool.getApiUpstreamRuntimeDiagnostics", async () =>
-  executeApiUpstreamRuntimeDiagnosticsBinding()
-);
-
-/** 清除成员暂态运行故障并恢复新租约资格。 */
-bindExecute("pool.resetMemberStatus", async (input: { id: string }) => {
-  try {
-    return await defaultDependencies.memberService.resetMemberStatus(input.id);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
-});
-
-/** 原子修改成员启用状态，并保留当前租约及运行指标。 */
-bindExecute(
-  "pool.setMemberEnabled",
-  async (input: { id: string; isEnabled: boolean }) => {
-    try {
-      return await defaultDependencies.memberService.setMemberEnabled(
-        input.id,
-        input.isEnabled
-      );
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** 按统一成员 ID 执行运行中任务保护删除。 */
-bindExecute("pool.deleteMember", async (input: { id: string }) => {
-  try {
-    return await defaultDependencies.memberService.deleteMember(input.id);
-  } catch (error) {
-    throwBackendPoolOperationError(error);
-  }
-});

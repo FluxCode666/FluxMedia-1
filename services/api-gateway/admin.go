@@ -120,50 +120,55 @@ func (b *backend) handleAdminLogoUpload(w http.ResponseWriter, r *http.Request) 
 	if err := r.ParseMultipartForm(6 << 20); err != nil {
 		return invalid("Logo 上传表单无效")
 	}
+	clientRequestID := strings.TrimSpace(r.FormValue("clientRequestId"))
+	if clientRequestID == "" || len(clientRequestID) > 128 {
+		return invalid("上传请求标识无效")
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		return invalid("Logo 上传表单缺少文件")
 	}
 	defer file.Close()
-	if header.Size > 5<<20 {
+	if header.Size <= 0 || header.Size > 5<<20 {
 		return invalid("Logo 文件不能超过 5 MB")
-	}
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	if !strings.HasPrefix(contentType, "image/") {
-		return invalid("不支持的 Logo 类型")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 5<<20+1))
 	if err != nil {
 		return err
 	}
-	if len(data) > 5<<20 {
+	if len(data) == 0 || len(data) > 5<<20 {
 		return invalid("Logo 文件不能超过 5 MB")
 	}
-	hash := sha256.Sum256(data)
+	contentType := strings.ToLower(strings.TrimSpace(header.Header.Get("Content-Type")))
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
-		ext = ".bin"
+	allowed := map[string]string{".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon"}
+	if expected, ok := allowed[ext]; !ok || (contentType != "" && contentType != expected) {
+		return invalid("仅支持 PNG、SVG 或 ICO Logo")
+	} else {
+		contentType = expected
 	}
+	// Content-addressed objects are immutable; retries safely target one key.
+	hash := sha256.Sum256(data)
 	name := hex.EncodeToString(hash[:]) + ext
-	key := filepath.Join("site-assets", "logo", name)
-	path := filepath.Join(b.config.storagePath, key)
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	bucket, _, bucketErr := b.storageBuckets(r.Context())
+	if bucketErr != nil {
+		return bucketErr
+	}
+	key := filepath.ToSlash(filepath.Join("logo", name))
+	if err := b.putStorageObject(r.Context(), bucket, key, data, contentType); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o640); err != nil {
-		return err
-	}
-	url := "/api/storage/site-assets/" + strings.ReplaceAll(filepath.ToSlash(filepath.Join("logo", name)), " ", "%20")
-	value, _ := json.Marshal(url)
+	logoURL := "/api/storage/" + urlPathEscape(bucket) + "/" + urlPathEscape(key)
+	// Persist the setting after the immutable object is available. The request id
+	// is recorded for audit and retry diagnostics; the content hash provides the
+	// natural idempotency key for repeated uploads.
+	value, _ := json.Marshal(logoURL)
 	_, err = b.db.Exec(r.Context(), `INSERT INTO system_setting(key,value,is_secret,updated_by,updated_at) VALUES('SITE_LOGO_URL',$1,false,$2,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, value, s.User.ID)
 	if err != nil {
 		return err
 	}
 	noStore(w)
-	writeJSON(w, http.StatusOK, map[string]any{"logoUrl": url, "replayed": false})
+	writeJSON(w, http.StatusOK, map[string]any{"logoUrl": logoURL, "replayed": false, "clientRequestId": clientRequestID})
 	return nil
 }
 

@@ -1,3 +1,6 @@
 import { proxyExternalApi } from "@/features/external-api/go-proxy";
 
-export async function POST(request: Request) { return proxyExternalApi(request); }
+/** Site logo validation, storage and settings persistence are owned by Go. */
+export async function POST(request: Request): Promise<Response> {
+  return proxyExternalApi(request);
+}
