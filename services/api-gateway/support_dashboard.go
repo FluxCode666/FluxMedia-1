@@ -421,11 +421,12 @@ func (b *backend) handleTicketStatus(w http.ResponseWriter, r *http.Request) err
 	if in.Status != "open" && in.Status != "in_progress" && in.Status != "resolved" && in.Status != "closed" {
 		return invalid("invalid status")
 	}
-	_, e := b.db.Exec(r.Context(), `UPDATE ticket SET status=$1,last_admin_activity_at=now(),admin_last_seen_at=now(),updated_at=now() WHERE id=$2`, in.Status, r.PathValue("id"))
+	now := time.Now()
+	_, e := b.db.Exec(r.Context(), `UPDATE ticket SET status=$1,last_admin_activity_at=$3,admin_last_seen_at=$3,updated_at=$3 WHERE id=$2`, in.Status, r.PathValue("id"), now)
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]string{"message": "状态更新成功"})
+	writeJSON(w, 200, map[string]any{"message": "状态更新成功", "ticketId": r.PathValue("id"), "status": in.Status, "updatedAt": now.UTC()})
 	return nil
 }
 

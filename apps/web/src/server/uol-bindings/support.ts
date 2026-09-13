@@ -14,9 +14,16 @@ const userOnly = (principal: { type: string }) => {
     throw new OperationError("unauthenticated", "User session authentication required");
   }
 };
+const adminOnly = (principal: { type: string; role?: string }) => {
+  if (
+    principal.type !== "user" ||
+    (principal.role !== "admin" && principal.role !== "super_admin")
+  ) {
+    throw new OperationError("forbidden", "Admin access required");
+  }
+};
 
-bindExecute("support.getMyTickets", async (input, principal) => {
-  userOnly(principal);
+const listTicketsFromGo = async (input: unknown) => {
   const parsedInput = ticketListInputSchema.parse(input);
   const q = new URLSearchParams({
     page: String(parsedInput.page),
@@ -36,6 +43,16 @@ bindExecute("support.getMyTickets", async (input, principal) => {
     totalCount: raw.total ?? raw.totalCount ?? 0,
     totalPages: raw.totalPages ?? 1,
   });
+};
+
+bindExecute("support.getMyTickets", async (input, principal) => {
+  userOnly(principal);
+  return listTicketsFromGo(input);
+});
+
+bindExecute("support.getAllTickets", async (input, principal) => {
+  adminOnly(principal);
+  return listTicketsFromGo(input);
 });
 
 bindExecute("support.getTicketDetail", async (input, principal) => {
@@ -90,8 +107,56 @@ bindExecute("support.markMyTicketSeen", async (input, principal) => {
   return { seenAt: new Date(raw.seenAt) };
 });
 
+bindExecute("support.markAdminTicketSeen", async (input, principal) => {
+  adminOnly(principal);
+  const parsedInput = markTicketSeenInputSchema.parse(input);
+  const raw = await requestGoJson<{ seenAt: string }>(
+    `/api/support/tickets/${encodeURIComponent(parsedInput.ticketId)}/seen`,
+    { method: "POST", body: "{}" }
+  );
+  return { seenAt: new Date(raw.seenAt) };
+});
+
+bindExecute("support.getAdminTicketDetail", async (input, principal) => {
+  adminOnly(principal);
+  const parsedInput = ticketMessageListInputSchema.parse(input);
+  const q = new URLSearchParams({
+    page: String(parsedInput.page),
+    pageSize: String(parsedInput.pageSize),
+  });
+  const raw = await requestGoJson<any>(
+    `/api/support/tickets/${encodeURIComponent(parsedInput.ticketId)}/messages?${q}`
+  );
+  const ticket = raw.ticket;
+  const messages = raw.messages ?? {};
+  return ticketMessageListOutputSchema.parse({
+    ticket: {
+      ...ticket,
+      userLastSeenAt: new Date(ticket.userLastSeenAt),
+      lastAdminActivityAt: ticket.lastAdminActivityAt ? new Date(ticket.lastAdminActivityAt) : null,
+      adminLastSeenAt: ticket.adminLastSeenAt ? new Date(ticket.adminLastSeenAt) : null,
+      lastUserActivityAt: ticket.lastUserActivityAt ? new Date(ticket.lastUserActivityAt) : null,
+      createdAt: new Date(ticket.createdAt),
+      updatedAt: new Date(ticket.updatedAt),
+    },
+    ticketUser: raw.ticketUser ?? null,
+    messages: {
+      records: (messages.items ?? messages.records ?? []).map((item: any) => ({ ...item, createdAt: new Date(item.createdAt) })),
+      page: messages.page ?? parsedInput.page,
+      pageSize: messages.pageSize ?? parsedInput.pageSize,
+      totalCount: messages.total ?? messages.totalCount ?? 0,
+      totalPages: messages.totalPages ?? 1,
+    },
+  });
+});
+
 bindExecute("support.getMyUnreadCount", async (_input, principal) => {
   userOnly(principal);
+  return requestGoJson<{ count: number }>("/api/support/tickets/unread-count");
+});
+
+bindExecute("support.getAdminUnreadCount", async (_input, principal) => {
+  adminOnly(principal);
   return requestGoJson<{ count: number }>("/api/support/tickets/unread-count");
 });
 
@@ -124,5 +189,23 @@ bindExecute("support.addMessage", async (input, principal) => {
       method: "POST",
       body: JSON.stringify({ content: parsed.message }),
     }
+  );
+});
+
+bindExecute("support.adminReply", async (input, principal) => {
+  adminOnly(principal);
+  const parsed = input as { ticketId: string; message: string };
+  return requestGoJson<{ messageId: string; createdAt: string }>(
+    `/api/support/tickets/${encodeURIComponent(parsed.ticketId)}/messages`,
+    { method: "POST", body: JSON.stringify({ content: parsed.message }) }
+  );
+});
+
+bindExecute("support.updateTicketStatus", async (input, principal) => {
+  adminOnly(principal);
+  const parsed = input as { ticketId: string; status: string };
+  return requestGoJson<{ ticketId: string; status: string; updatedAt: string }>(
+    `/api/support/tickets/${encodeURIComponent(parsed.ticketId)}/status`,
+    { method: "PATCH", body: JSON.stringify({ status: parsed.status }) }
   );
 });
