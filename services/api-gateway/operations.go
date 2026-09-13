@@ -614,9 +614,96 @@ func (b *backend) handleOperationsDetail(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
+	} else if selection["module"] == "growth" {
+		rows, err = b.readOperationsGrowthDetails(r.Context(), rng, selection, input.Limit)
+		if err != nil {
+			return err
+		}
+	} else if selection["module"] == "commercialization" {
+		rows, err = b.readOperationsCommercialDetails(r.Context(), rng, selection, input.Limit)
+		if err != nil {
+			return err
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"selection": selection, "range": rng, "rows": rows, "nextCursor": nil})
 	return nil
+}
+
+func (b *backend) readOperationsGrowthDetails(ctx context.Context, rng map[string]any, selection map[string]any, limit int) ([]any, error) {
+	start, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	end, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	detail, _ := selection["detail"].(string)
+	base := `SELECT u.id,COALESCE(u.name,''),u.email,COALESCE(u.role,'user'),COALESCE(u.banned,false),u.created_at FROM "user" u WHERE u.created_at >= $1 AND u.created_at < $2`
+	args := []any{start, end}
+	if detail == "login_activity" {
+		base = `SELECT u.id,COALESCE(u.name,''),u.email,COALESCE(u.role,'user'),COALESCE(u.banned,false),v.first_visited_at FROM "user" u JOIN user_web_visit v ON v.user_id=u.id WHERE v.first_visited_at >= $1 AND v.first_visited_at < $2`
+	}
+	if detail == "creation_activity" {
+		base = `SELECT u.id,COALESCE(u.name,''),u.email,COALESCE(u.role,'user'),COALESCE(u.banned,false),e.operation_created_at FROM "user" u JOIN user_output_usage_event e ON e.user_id=u.id WHERE e.operation_created_at >= $1 AND e.operation_created_at < $2`
+	}
+	if detail == "payment_activity" {
+		base = `SELECT u.id,COALESCE(u.name,''),u.email,COALESCE(u.role,'user'),COALESCE(u.banned,false),e.occurred_at FROM "user" u JOIN payment_order p ON p.user_id=u.id JOIN payment_lifecycle_event e ON e.payment_order_id=p.id WHERE e.event_type='fulfillment_succeeded' AND e.occurred_at >= $1 AND e.occurred_at < $2`
+	}
+	rows, err := b.db.Query(ctx, base+` ORDER BY 6 DESC,1 DESC LIMIT $3`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id, name, email, role string
+		var banned bool
+		var at time.Time
+		if err := rows.Scan(&id, &name, &email, &role, &banned, &at); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"userId": id, "name": name, "email": email, "role": role, "banned": banned, "businessTime": at.UTC().Format(time.RFC3339Nano), "retained": nil})
+	}
+	return out, rows.Err()
+}
+
+func (b *backend) readOperationsCommercialDetails(ctx context.Context, rng map[string]any, selection map[string]any, limit int) ([]any, error) {
+	start, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["start"]))
+	end, _ := time.Parse(time.RFC3339, fmt.Sprint(rng["end"]))
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	where := `p.created_at >= $1 AND p.created_at < $2`
+	orderBy := `p.created_at`
+	detail, _ := selection["detail"].(string)
+	if detail == "fulfilled_orders" {
+		where = `p.fulfilled_at >= $1 AND p.fulfilled_at < $2`
+		orderBy = `p.fulfilled_at`
+	}
+	q := `SELECT p.id,p.provider_trade_no,p.user_id,upper(p.currency),p.amount_minor,p.status,p.created_at,p.fulfilled_at,e.event_type,COALESCE(e.occurred_at,p.created_at) FROM payment_order p LEFT JOIN LATERAL (SELECT event_type,occurred_at FROM payment_lifecycle_event WHERE payment_order_id=p.id ORDER BY occurred_at DESC LIMIT 1) e ON true WHERE ` + where + ` ORDER BY ` + orderBy + ` DESC,p.id DESC LIMIT $3`
+	rows, err := b.db.Query(ctx, q, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id, uid, currency, status string
+		var trade, event *string
+		var amount int64
+		var created time.Time
+		var fulfilled, bt *time.Time
+		if err := rows.Scan(&id, &trade, &uid, &currency, &amount, &status, &created, &fulfilled, &event, &bt); err != nil {
+			return nil, err
+		}
+		item := map[string]any{"paymentOrderId": id, "providerTradeNo": trade, "userId": uid, "currency": currency, "amountMinor": amount, "orderStatus": status, "createdAt": created.UTC().Format(time.RFC3339Nano), "fulfilledAt": nil, "businessTime": created.UTC().Format(time.RFC3339Nano), "eventType": event}
+		if fulfilled != nil {
+			item["fulfilledAt"] = fulfilled.UTC().Format(time.RFC3339Nano)
+		}
+		if bt != nil {
+			item["businessTime"] = bt.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (b *backend) readOperationsContentDetails(ctx context.Context, rng map[string]any, selection map[string]any, limit int) ([]any, error) {
