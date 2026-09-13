@@ -83,8 +83,20 @@ export async function getUserGenerationsCount(userId: string, status?: string) {
   return result.count;
 }
 
-export async function getGenerationStats() {
-  throw new Error(
-    "Generation statistics are not exposed by the Go first-party API yet"
-  );
+export async function getGenerationStats(input?: {
+  startDate?: string;
+  endDate?: string;
+  groupBy?: "day" | "week" | "month";
+}) {
+  const params = new URLSearchParams();
+  if (input?.startDate) params.set("startDate", input.startDate);
+  if (input?.endDate) params.set("endDate", input.endDate);
+  if (input?.groupBy) params.set("groupBy", input.groupBy);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestGoJson<{
+    totalGenerations: number;
+    totalCreditsUsed: number;
+    byModel?: Record<string, number>;
+    byDate?: Array<{ date: string; count: number; creditsUsed: number }>;
+  }>(`/api/admin/image-generation/stats${suffix}`);
 }

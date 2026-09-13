@@ -35,6 +35,7 @@ func (b *backend) registerImageHistoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/image-generation/video-inputs", b.endpoint(b.handleVideoInputs))
 	mux.HandleFunc("POST /api/admin/image-generation/history", b.endpoint(b.handleAdminHistory))
 	mux.HandleFunc("POST /api/admin/image-generation/request-snapshot", b.endpoint(b.handleAdminRequestSnapshot))
+	mux.HandleFunc("GET /api/admin/image-generation/stats", b.endpoint(b.handleGenerationStats))
 }
 
 type generationDTO struct {
@@ -715,6 +716,121 @@ func (b *backend) handleAdminHistory(w http.ResponseWriter, r *http.Request) err
 		"nextCursor": nil, "previousCursor": nil,
 	})
 	return rows.Err()
+}
+
+// handleGenerationStats is the Go owner of the administrator generation
+// statistics contract. It intentionally aggregates both image and video task
+// tables so the migrated query cannot silently undercount video generations.
+func (b *backend) handleGenerationStats(w http.ResponseWriter, r *http.Request) error {
+	if _, err := b.requireAdmin(r, false); err != nil {
+		return err
+	}
+	parseDate := func(value string, end bool) (time.Time, error) {
+		if value == "" {
+			return time.Time{}, nil
+		}
+		parsed, err := time.Parse("2006-01-02", value)
+		if err != nil {
+			return time.Time{}, invalid("日期格式必须为 YYYY-MM-DD")
+		}
+		if end {
+			return parsed.UTC().Add(24 * time.Hour), nil
+		}
+		return parsed.UTC(), nil
+	}
+	start, err := parseDate(r.URL.Query().Get("startDate"), false)
+	if err != nil {
+		return err
+	}
+	end, err := parseDate(r.URL.Query().Get("endDate"), true)
+	if err != nil {
+		return err
+	}
+	if !start.IsZero() && !end.IsZero() && !start.Before(end) {
+		return invalid("开始日期必须早于结束日期")
+	}
+	groupBy := r.URL.Query().Get("groupBy")
+	if groupBy == "" {
+		groupBy = "day"
+	}
+	if groupBy != "day" && groupBy != "week" && groupBy != "month" {
+		return invalid("groupBy 必须是 day、week 或 month")
+	}
+
+	where := ""
+	args := make([]any, 0, 2)
+	if !start.IsZero() {
+		args = append(args, start)
+		where += " WHERE created_at >= $" + strconv.Itoa(len(args))
+	}
+	if !end.IsZero() {
+		if where == "" {
+			where = " WHERE "
+		} else {
+			where += " AND "
+		}
+		args = append(args, end)
+		where += "created_at < $" + strconv.Itoa(len(args))
+	}
+	query := `SELECT model,created_at,credits_consumed FROM generation` + where + ` UNION ALL SELECT model,created_at,credits_consumed FROM video_generation` + where + ` ORDER BY created_at ASC`
+	rows, err := b.db.Query(r.Context(), query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byModel := map[string]float64{}
+	type bucket struct {
+		count   int
+		credits float64
+	}
+	byDate := map[string]*bucket{}
+	total, totalCredits := 0, 0.0
+	for rows.Next() {
+		var model string
+		var created time.Time
+		var credits float64
+		if err := rows.Scan(&model, &created, &credits); err != nil {
+			return err
+		}
+		model = strings.TrimSpace(model)
+		if model == "" {
+			model = "unknown"
+		}
+		byModel[model]++
+		total++
+		totalCredits += credits
+		key := created.UTC().Format("2006-01-02")
+		switch groupBy {
+		case "week":
+			day := int(created.UTC().Weekday())
+			if day == 0 {
+				day = 7
+			}
+			key = created.UTC().AddDate(0, 0, -(day - 1)).Format("2006-01-02")
+		case "month":
+			key = created.UTC().Format("2006-01")
+		}
+		if byDate[key] == nil {
+			byDate[key] = &bucket{}
+		}
+		byDate[key].count++
+		byDate[key].credits += credits
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(byDate))
+	for key := range byDate {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	series := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		value := byDate[key]
+		series = append(series, map[string]any{"date": key, "count": value.count, "creditsUsed": value.credits})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"totalGenerations": total, "totalCreditsUsed": totalCredits, "byModel": byModel, "byDate": series})
+	return nil
 }
 
 func historyStatusImage(status string) string {
