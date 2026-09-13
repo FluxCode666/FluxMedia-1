@@ -253,7 +253,9 @@ func (b *backend) handleAlipayWebhook(w http.ResponseWriter, r *http.Request) er
 	if paid < 0 || paid != expected {
 		return &apiError{400, "INVALID_REQUEST", "金额不匹配"}
 	}
-	if err := b.fulfillCredit(r.Context(), order, "alipay_f2f", p["trade_no"], "alipay:"+p["trade_no"], 0, map[string]any{"provider": "alipay_f2f", "tradeNo": p["trade_no"]}); err != nil {
+	// The local order ID is the stable source reference used by the original
+	// Alipay top-up service; gateway trade numbers are provider evidence only.
+	if err := b.fulfillCredit(r.Context(), order, "alipay_f2f", p["trade_no"], "alipay:"+order, 0, map[string]any{"provider": "alipay_f2f", "tradeNo": p["trade_no"]}); err != nil {
 		return err
 	}
 	_, _ = w.Write([]byte("success"))

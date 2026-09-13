@@ -125,6 +125,7 @@ func (b *backend) confirmPaymentWorkItem(ctx context.Context, orderID, provider,
 	debitAccount := "PAYMENT:" + tradeNo
 	description := fmt.Sprintf("%s credit pack purchase: %v credits", provider, credits)
 	if provider == "alipay_f2f" {
+		debitAccount = "ALIPAY:" + tradeNo
 		description = fmt.Sprintf("Alipay credit top-up: %v credits", credits)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE payment_order SET status='fulfilling',provider_trade_no=$2,updated_at=now() WHERE id=$1 AND (status IN ('creating','pending','fulfilling') OR status='failed') AND (provider_trade_no IS NULL OR provider_trade_no=$2)`, orderID, tradeNo); err != nil {
@@ -564,6 +565,53 @@ func (b *backend) handleInternalPaymentEpay(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"metadataType": paymentStringValueDefault(metadata["type"], "credit_purchase"), "status": status})
+	return nil
+}
+
+// handleInternalPaymentAlipay receives a provider payload that has already
+// passed signature validation at the web boundary.  The CRON_SECRET gate keeps
+// this normalization endpoint private while the durable work-item state
+// machine remains shared with native webhook and recovery paths.
+func (b *backend) handleInternalPaymentAlipay(w http.ResponseWriter, r *http.Request) error {
+	if !b.cronAuthorized(r) {
+		return unauthorized()
+	}
+	var input struct {
+		OutTradeNo  string `json:"outTradeNo"`
+		TradeNo     string `json:"tradeNo"`
+		TradeStatus string `json:"tradeStatus"`
+		TotalAmount string `json:"totalAmount"`
+		AppID       string `json:"appId"`
+		SellerID    string `json:"sellerId"`
+		GMT         string `json:"gmtPayment"`
+	}
+	if err := decodeBody(r, &input); err != nil {
+		return err
+	}
+	if input.TradeStatus != "TRADE_SUCCESS" && input.TradeStatus != "TRADE_FINISHED" {
+		return invalid("支付宝交易未完成")
+	}
+	if input.OutTradeNo == "" || input.TradeNo == "" || input.TotalAmount == "" {
+		return invalid("支付宝支付通知字段不完整")
+	}
+	var userID string
+	var expected int64
+	var provider string
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id,amount_minor,provider FROM payment_order WHERE id=$1`, input.OutTradeNo).Scan(&userID, &expected, &provider); err != nil || provider != "alipay_f2f" {
+		return &apiError{404, "NOT_FOUND", "支付订单不存在"}
+	}
+	if paid := parseMinor(input.TotalAmount); paid < 0 || paid != expected {
+		return &apiError{400, "PAYMENT_AMOUNT_MISMATCH", "支付金额不匹配"}
+	}
+	metadata := map[string]any{"provider": "alipay_f2f", "tradeNo": input.TradeNo, "appId": input.AppID, "sellerId": input.SellerID, "gmtPayment": input.GMT}
+	if _, err := b.confirmPaymentWorkItem(r.Context(), input.OutTradeNo, "alipay_f2f", userID, input.TradeNo, "alipay:"+input.TradeNo, "alipay:"+input.OutTradeNo, metadata); err != nil {
+		return err
+	}
+	status, err := b.processPaymentOrder(r.Context(), input.OutTradeNo)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "processed": true})
 	return nil
 }
 

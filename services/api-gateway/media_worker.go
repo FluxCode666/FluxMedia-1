@@ -92,30 +92,49 @@ func (w *mediaWorker) runOnce(ctx context.Context) {
 }
 func (w *mediaWorker) claimNext(ctx context.Context) (string, string, error) {
 	var id string
-	if err := w.backend.db.QueryRow(ctx, `SELECT id FROM image_async_task WHERE status='queued' OR (status='running' AND claim_expires_at<now()) ORDER BY created_at,id LIMIT 1`).Scan(&id); err == nil {
-		token := newWorkerToken()
-		tag, err := w.backend.db.Exec(ctx, `UPDATE image_async_task SET status='running',claim_token=$2,claim_expires_at=now()+$3::interval,attempt_count=attempt_count+1,started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND (status='queued' OR (status='running' AND claim_expires_at<now()))`, id, token, mediaWorkerClaimTTL.String())
-		if err != nil {
-			return "", "", err
-		}
-		if tag.RowsAffected() > 0 {
-			return id, "image", nil
-		}
+	// Claiming is deliberately an atomic UPDATE ... FOR UPDATE SKIP LOCKED. The
+	// previous select-then-update window allowed multiple Go workers to perform
+	// provider calls for the same task before one of them observed RowsAffected=0.
+	if err := w.backend.db.QueryRow(ctx, `WITH candidate AS (
+		SELECT id FROM image_async_task
+		WHERE status='queued' OR (status='running' AND claim_expires_at<now())
+		ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
+	)
+	UPDATE image_async_task AS task
+	SET status='running',claim_token=$1,claim_expires_at=now()+$2::interval,
+		attempt_count=task.attempt_count+1,started_at=COALESCE(task.started_at,now()),updated_at=now()
+	FROM candidate WHERE task.id=candidate.id
+	RETURNING task.id`, newWorkerToken(), mediaWorkerClaimTTL.String()).Scan(&id); err == nil {
+		return id, "image", nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", err
 	}
-	if err := w.backend.db.QueryRow(ctx, `SELECT id FROM video_generation WHERE status IN ('pending','processing') AND (claim_expires_at IS NULL OR claim_expires_at<now()) ORDER BY created_at,id LIMIT 1`).Scan(&id); err == nil {
-		token := newWorkerToken()
-		tag, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='processing',claim_token=$2,claim_expires_at=now()+$3::interval,updated_at=now() WHERE id=$1 AND status IN ('pending','processing') AND (claim_expires_at IS NULL OR claim_expires_at<now())`, id, token, mediaWorkerClaimTTL.String())
-		if err != nil {
-			return "", "", err
-		}
-		if tag.RowsAffected() > 0 {
-			return id, "video", nil
-		}
+	/*
+		Only charged or later stages are eligible for this worker. Stage=created
+		still belongs to the Next admission/quote path; claiming it here would
+		bypass the immutable billing snapshot and is therefore unsafe.
+	*/
+	if err := w.backend.db.QueryRow(ctx, `WITH candidate AS (
+		SELECT id FROM video_generation
+		WHERE stage IN ('charged','submitting','retrying','polling','downloading','refunding')
+		  AND (claim_expires_at IS NULL OR claim_expires_at<now())
+		  AND (next_poll_at IS NULL OR next_poll_at<=now() OR stage='refunding')
+		ORDER BY COALESCE(next_poll_at,created_at),created_at,id
+		LIMIT 1 FOR UPDATE SKIP LOCKED
+	)
+	UPDATE video_generation AS task
+	SET status='processing',claim_token=$1,claim_expires_at=now()+$2::interval,
+		updated_at=now(),state_version=task.state_version+1
+	FROM candidate WHERE task.id=candidate.id
+	RETURNING task.id`, newWorkerToken(), mediaWorkerClaimTTL.String()).Scan(&id); err == nil {
+		return id, "video", nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", err
 	}
+	/*
+		The old code below used a second non-atomic UPDATE for video rows. Keep no
+		fallback claim path: a failed atomic claim is equivalent to an empty queue.
+	*/
 	return "", "", nil
 }
 func newWorkerToken() string {
@@ -169,7 +188,7 @@ func (w *mediaWorker) processImage(ctx context.Context, id string) error {
 	if err != nil {
 		return w.failImage(ctx, id, err)
 	}
-	bucket, _, err := w.backend.storageBuckets(ctx)
+	_, bucket, err := w.backend.storageBuckets(ctx)
 	if err != nil {
 		return w.failImage(ctx, id, err)
 	}
@@ -191,26 +210,46 @@ func (w *mediaWorker) failImage(ctx context.Context, id string, cause error) err
 }
 
 func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
-	var uid, model, prompt, pollURL string
+	var uid, model, prompt, pollURL, upstreamJobID, persistedVideoURL, stage string
 	var duration int
 	var ratio, resolution string
 	var meta []byte
-	err := w.backend.db.QueryRow(ctx, `SELECT user_id,model,prompt,duration_seconds,aspect_ratio,resolution,COALESCE(poll_url,''),COALESCE(metadata,'{}'::json) FROM video_generation WHERE id=$1`, id).Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &pollURL, &meta)
+	err := w.backend.db.QueryRow(ctx, `SELECT user_id,model,prompt,duration_seconds,aspect_ratio,resolution,
+		COALESCE(poll_url,''),COALESCE(upstream_job_id,''),COALESCE(metadata,'{}'::json),COALESCE(stage,'created') FROM video_generation WHERE id=$1`, id).
+		Scan(&uid, &model, &prompt, &duration, &ratio, &resolution, &pollURL, &upstreamJobID, &meta, &stage)
 	if err != nil {
 		return err
+	}
+	if stage == "refunding" {
+		return w.refundVideoTask(ctx, id, "视频任务失败退款")
 	}
 	body := map[string]any{"model": model, "prompt": prompt, "duration": duration, "aspectRatio": ratio, "resolution": resolution}
 	var stored map[string]any
 	_ = json.Unmarshal(meta, &stored)
-	cfg, err := w.backend.pickProvider(ctx, model, "videos.generate")
-	if err != nil {
-		return w.failVideo(ctx, id, err)
-	}
 	var output map[string]any
-	if pollURL != "" {
-		output, err = w.backend.queryProvider(ctx, cfg, pollURL)
+	var cfg providerConfig
+	var cfgErr error
+	if stage == "downloading" {
+		if err := w.backend.db.QueryRow(ctx, `SELECT COALESCE(video_url,'') FROM video_generation WHERE id=$1`, id).Scan(&persistedVideoURL); err != nil {
+			return w.failVideo(ctx, id, err)
+		}
+		if persistedVideoURL == "" {
+			return w.failVideo(ctx, id, errors.New("video download stage omitted output URL"))
+		}
+		output = map[string]any{"video_url": persistedVideoURL}
 	} else {
-		output, err = w.backend.callProvider(ctx, cfg, "videos.generate", body, id, model)
+		cfg, cfgErr = w.backend.pickProvider(ctx, model, "videos.generate")
+		if cfgErr != nil {
+			return w.failVideo(ctx, id, cfgErr)
+		}
+		if pollURL == "" && upstreamJobID != "" {
+			pollURL = providerPollURL(cfg, upstreamJobID)
+		}
+		if pollURL != "" {
+			output, err = w.backend.queryProvider(ctx, cfg, pollURL, id, model)
+		} else {
+			output, err = w.backend.callProvider(ctx, cfg, "videos.generate", body, id, model)
+		}
 	}
 	if err != nil {
 		return w.failVideo(ctx, id, err)
@@ -219,13 +258,21 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	if videoURL == "" { // accepted async response; retain poll URL and retry on next scan
 		if pollURL != "" {
 			state := strings.ToLower(extractString(output, "status", "state"))
-			if state == "" || state == "pending" || state == "processing" || state == "queued" {
-				_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET claim_token=NULL,claim_expires_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1`, id)
+			if state == "" || state == "pending" || state == "processing" || state == "queued" || state == "running" {
+				_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET stage='polling',status='running',next_poll_at=now()+interval '5 seconds',claim_token=NULL,claim_expires_at=NULL,state_version=state_version+1,updated_at=now() WHERE id=$1 AND stage<>'completed' AND stage<>'failed'`, id)
 				return err
 			}
+			if state == "failed" || state == "error" || state == "rejected" {
+				return w.failVideo(ctx, id, errors.New("video provider reported a terminal failure"))
+			}
 		}
-		if poll := extractString(output, "poll_url", "pollUrl", "status_url", "statusUrl"); poll != "" {
-			_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET poll_url=$2,upstream_job_id=$3,claim_token=NULL,claim_expires_at=now()+interval '2 seconds',updated_at=now() WHERE id=$1`, id, poll, extractString(output, "id", "task_id", "taskId"))
+		poll := extractString(output, "poll_url", "pollUrl", "status_url", "statusUrl")
+		jobID := extractString(output, "id", "task_id", "taskId", "job_id", "jobId", "operation_name", "operationName")
+		if poll == "" && jobID != "" {
+			poll = providerPollURL(cfg, jobID)
+		}
+		if poll != "" {
+			_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET stage='polling',status='running',poll_url=$2,upstream_job_id=$3,next_poll_at=now()+interval '2 seconds',claim_token=NULL,claim_expires_at=NULL,state_version=state_version+1,updated_at=now() WHERE id=$1 AND stage NOT IN ('completed','failed')`, id, poll, jobID)
 			return err
 		}
 		return w.failVideo(ctx, id, errors.New("video provider response omitted output URL"))
@@ -238,18 +285,25 @@ func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
 	if err != nil {
 		return w.failVideo(ctx, id, err)
 	}
+	if _, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET stage='downloading',status='running',video_url=$2,next_poll_at=NULL,state_version=state_version+1,updated_at=now() WHERE id=$1 AND stage NOT IN ('completed','failed')`, id, videoURL); err != nil {
+		return err
+	}
 	key := fmt.Sprintf("%s/videos/%s.mp4", uid, id)
 	if err = w.backend.putStorageObject(ctx, bucket, key, data, ct); err != nil {
 		return w.failVideo(ctx, id, err)
 	}
-	_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET status='completed',storage_key=$2,storage_bucket=$3,video_url=$4,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, key, bucket, "/api/storage/"+url.PathEscape(bucket)+"/"+url.PathEscape(key))
+	_, err = w.backend.db.Exec(ctx, `UPDATE video_generation SET status='completed',stage='completed',storage_key=$2,storage_bucket=$3,video_url=$4,claim_token=NULL,claim_expires_at=NULL,next_poll_at=NULL,completed_at=now(),state_version=state_version+1,updated_at=now() WHERE id=$1 AND stage='downloading'`, id, key, bucket, "/api/storage/"+url.PathEscape(bucket)+"/"+url.PathEscape(key))
 	return err
 }
 
-func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL string) (map[string]any, error) {
+func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL, taskID, model string) (map[string]any, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 		return nil, errors.New("provider returned invalid polling URL")
+	}
+	base, baseErr := url.Parse(cfg.baseURL)
+	if baseErr != nil || base.Host == "" || !strings.EqualFold(u.Host, base.Host) || !strings.EqualFold(u.Scheme, base.Scheme) {
+		return nil, errors.New("provider polling URL origin does not match configured provider")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -275,18 +329,161 @@ func (b *backend) queryProvider(ctx context.Context, cfg providerConfig, rawURL 
 	if len(raw) > mediaWorkerMaxResponse {
 		return nil, errors.New("media provider response too large")
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("media provider poll HTTP %d", resp.StatusCode)
-	}
 	var output map[string]any
 	if err := json.Unmarshal(raw, &output); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("media provider poll HTTP %d", resp.StatusCode)
+		}
 		return nil, errors.New("media provider poll returned invalid JSON")
 	}
-	return output, nil
+	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, "videos.query", output, resp.StatusCode, taskID, model)
+	if scriptErr != nil {
+		return nil, scriptErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if _, scripted := cfg.operations["videos.query"].(map[string]any); scripted {
+			if op, ok := cfg.operations["videos.query"].(map[string]any); ok {
+				if script, _ := op["responseScript"].(string); strings.TrimSpace(script) != "" {
+					return normalized, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("media provider poll HTTP %d", resp.StatusCode)
+	}
+	return normalized, nil
+}
+
+// providerPollURL turns an adapter's videos.query path into a fixed-origin URL.
+// Task IDs are escaped as one path segment, matching the Next executor's
+// `{task_id}` contract and preventing path traversal through an upstream ID.
+func providerPollURL(cfg providerConfig, taskID string) string {
+	path := "/videos.query/{task_id}"
+	if op, ok := cfg.operations["videos.query"].(map[string]any); ok {
+		if configured, _ := op["path"].(string); strings.TrimSpace(configured) != "" {
+			path = configured
+		}
+	}
+	escaped := url.PathEscape(taskID)
+	path = strings.ReplaceAll(path, "{task_id}", escaped)
+	path = strings.ReplaceAll(path, "{taskId}", escaped)
+	if parsed, err := url.Parse(path); err == nil && parsed.IsAbs() {
+		return parsed.String()
+	}
+	return strings.TrimRight(cfg.baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 }
 func (w *mediaWorker) failVideo(ctx context.Context, id string, cause error) error {
-	_, err := w.backend.db.Exec(ctx, `UPDATE video_generation SET status='failed',error=$2,claim_token=NULL,claim_expires_at=NULL,completed_at=now(),updated_at=now() WHERE id=$1`, id, sanitizeWorkerError(cause))
-	return err
+	reason := sanitizeWorkerError(cause)
+	// Persist the refunding stage in its own transaction. If the actual wallet
+	// refund then fails, recovery can claim this row without reissuing a provider
+	// request or losing the financial obligation.
+	tx, err := w.backend.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE video_generation SET status='failed',stage='refunding',error=$2,next_poll_at=now(),claim_token=NULL,claim_expires_at=NULL,state_version=state_version+1,updated_at=now() WHERE id=$1 AND stage<>'completed'`, id, reason)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return w.refundVideoTask(ctx, id, reason)
+}
+
+// refundVideoTask settles a charged video exactly once and closes the task in
+// the same database transaction. The (user_id,type,source_ref) unique index is
+// the durable idempotency key used by the Next credit ledger; a worker crash
+// before or after commit therefore cannot double-credit the wallet. A failed
+// refund leaves stage=refunding and is picked up by claimNext on the next scan.
+func (w *mediaWorker) refundVideoTask(ctx context.Context, id, reason string) error {
+	tx, err := w.backend.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	var userID, stage, apiKeyID string
+	var amount, reserved float64
+	var createdAt time.Time
+	err = tx.QueryRow(ctx, `SELECT user_id,COALESCE(stage,'created'),COALESCE(credits_consumed,0),created_at,
+		COALESCE(api_key_id,''),COALESCE(api_key_credits_reserved,0)
+		FROM video_generation WHERE id=$1 FOR UPDATE`, id).
+		Scan(&userID, &stage, &amount, &createdAt, &apiKeyID, &reserved)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if stage == "completed" {
+		return nil
+	}
+
+	if amount > 0 {
+		// Lock the wallet before touching batches/transactions. This matches the
+		// credit service's balance lock order and serializes concurrent refunds.
+		if _, err = tx.Exec(ctx, `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), userID); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(ctx, `SELECT user_id FROM credits_balance WHERE user_id=$1 FOR UPDATE`, userID).Scan(new(string)); err != nil {
+			return err
+		}
+
+		sourceRef := id + ":refund"
+		var existingAmount float64
+		existingErr := tx.QueryRow(ctx, `SELECT amount FROM credits_transaction WHERE user_id=$1 AND type='refund' AND source_ref=$2 LIMIT 1`, userID, sourceRef).Scan(&existingAmount)
+		if existingErr != nil && !errors.Is(existingErr, pgx.ErrNoRows) {
+			return existingErr
+		}
+		if existingErr == nil {
+			if existingAmount != amount {
+				return fmt.Errorf("video refund amount conflict for %s", id)
+			}
+		} else {
+			batchID := newRequestID()
+			batchTag, batchErr := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref,updated_at)
+				VALUES($1,$2,$3,$3,'refund',$4,now()) ON CONFLICT(source_type,source_ref) DO NOTHING`, batchID, userID, amount, sourceRef)
+			if batchErr != nil {
+				return batchErr
+			}
+			if batchTag.RowsAffected() == 0 {
+				var batchUser string
+				var storedAmount float64
+				if err = tx.QueryRow(ctx, `SELECT user_id,amount FROM credits_batch WHERE source_type='refund' AND source_ref=$1`, sourceRef).Scan(&batchUser, &storedAmount); err != nil {
+					return err
+				}
+				if batchUser != userID || storedAmount != amount {
+					return fmt.Errorf("video refund batch conflict for %s", id)
+				}
+			}
+			metadata := mustJSON(map[string]any{"generationId": id, "worker": "go-media", "sourceRef": sourceRef})
+			if _, err = tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,operation_type,operation_id,operation_created_at,metadata)
+				VALUES($1,$2,'refund',$3,'SYSTEM:generation_refund',$4,$5,$6,'video_generation',$7,$8,$9)
+				ON CONFLICT(user_id,type,source_ref) DO NOTHING`, newRequestID(), userID, amount, "WALLET:"+userID, "视频生成失败退款", sourceRef, id, createdAt, metadata); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE credits_balance SET balance=balance+$2,total_earned=total_earned+$2,updated_at=now() WHERE user_id=$1`, userID, amount); err != nil {
+				return err
+			}
+		}
+	}
+
+	// External API keys reserve the same amount as the wallet charge. Clear the
+	// persisted reservation only after the key update, so replay can safely retry.
+	if reserved > 0 && apiKeyID != "" {
+		if _, err = tx.Exec(ctx, `UPDATE external_api_key SET credits_used=GREATEST(0,credits_used-$3),updated_at=now() WHERE id=$1 AND user_id=$2`, apiKeyID, userID, reserved); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE video_generation SET api_key_credits_reserved=0 WHERE id=$1 AND api_key_credits_reserved=$2`, id, reserved); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `UPDATE video_generation SET status='failed',stage='failed',credits_consumed=0,error=$2,claim_token=NULL,claim_expires_at=NULL,next_poll_at=NULL,completed_at=COALESCE(completed_at,now()),refund_attempt_count=LEAST(3,COALESCE(refund_attempt_count,0)+CASE WHEN $3>0 THEN 1 ELSE 0 END),updated_at=now(),state_version=state_version+1 WHERE id=$1 AND stage<>'completed'`, id, reason, amount)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // providerConfig is deliberately limited to the immutable adapter fields. It
@@ -332,17 +529,23 @@ func (b *backend) callProvider(ctx context.Context, cfg providerConfig, operatio
 	payload := any(body)
 	if op, ok := cfg.operations[operation].(map[string]any); ok {
 		if script, _ := op["requestScript"].(string); strings.TrimSpace(script) != "" {
-			if c := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken); c != nil {
-				raw, e := c.execute(ctx, scriptRuntimeRequest{Script: script, Operation: operation, Stage: "request", Input: body, Context: map[string]any{"operation": operation, "stage": "request", "contentType": "application/json", "platformModelId": model, "upstreamModelId": model, "taskId": taskID}})
-				if e != nil {
-					return nil, e
-				}
-				var env map[string]any
-				if json.Unmarshal(raw, &env) == nil {
-					if x, ok := env["body"].(map[string]any); ok {
-						payload = x
-					}
-				}
+			c := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken)
+			if c == nil {
+				return nil, errors.New("media provider request script runtime unavailable")
+			}
+			raw, e := c.execute(ctx, scriptRuntimeRequest{Script: script, Operation: operation, Stage: "request", Input: body, Context: map[string]any{"operation": operation, "stage": "request", "contentType": "application/json", "platformModelId": model, "upstreamModelId": model, "taskId": taskID}})
+			if e != nil {
+				return nil, e
+			}
+			var env map[string]any
+			if err := json.Unmarshal(raw, &env); err != nil || env == nil {
+				return nil, errors.New("media provider request script returned invalid JSON")
+			}
+			if x, ok := env["body"].(map[string]any); ok {
+				payload = x
+			} else {
+				// Request scripts may intentionally return the body directly.
+				payload = env
 			}
 		}
 	}
@@ -372,14 +575,66 @@ func (b *backend) callProvider(ctx context.Context, cfg providerConfig, operatio
 	if len(raw) > mediaWorkerMaxResponse {
 		return nil, errors.New("media provider response too large")
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("media provider HTTP %d", resp.StatusCode)
-	}
 	var out map[string]any
 	if err = json.Unmarshal(raw, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("media provider HTTP %d", resp.StatusCode)
+		}
 		return nil, errors.New("media provider returned invalid JSON")
 	}
-	return out, nil
+	normalized, scriptErr := b.applyProviderResponseScript(ctx, cfg, operation, out, resp.StatusCode, taskID, model)
+	if scriptErr != nil {
+		return nil, scriptErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if op, ok := cfg.operations[operation].(map[string]any); ok {
+			if script, _ := op["responseScript"].(string); strings.TrimSpace(script) != "" {
+				return normalized, nil
+			}
+		}
+		return nil, fmt.Errorf("media provider HTTP %d", resp.StatusCode)
+	}
+	return normalized, nil
+}
+
+// applyProviderResponseScript is the Go equivalent of the Next API-upstream
+// response stage. Adapters are allowed to return the stable media contract
+// (status/outputs/error) while keeping vendor response shapes out of the
+// worker. An empty script preserves the provider JSON unchanged.
+func (b *backend) applyProviderResponseScript(ctx context.Context, cfg providerConfig, operation string, body map[string]any, statusCode int, taskID, model string) (map[string]any, error) {
+	op, ok := cfg.operations[operation].(map[string]any)
+	if !ok {
+		return body, nil
+	}
+	script, _ := op["responseScript"].(string)
+	if strings.TrimSpace(script) == "" {
+		return body, nil
+	}
+	client := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken)
+	if client == nil {
+		return nil, errors.New("media provider response script runtime unavailable")
+	}
+	raw, err := client.execute(ctx, scriptRuntimeRequest{
+		Script: script, Operation: operation, Stage: "response",
+		Input: map[string]any{
+			"statusCode": statusCode,
+			"headers":    map[string]any{},
+			"body":       body,
+		},
+		Context: map[string]any{
+			"operation": operation, "stage": "response",
+			"contentType": "application/json", "platformModelId": model,
+			"upstreamModelId": model, "taskId": taskID,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("media provider response script: %w", err)
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(raw, &normalized); err != nil || normalized == nil {
+		return nil, errors.New("media provider response script returned invalid JSON")
+	}
+	return normalized, nil
 }
 func extractMediaURL(v map[string]any) string {
 	for _, k := range []string{"url", "image_url", "imageUrl", "video_url", "videoUrl"} {
@@ -387,7 +642,7 @@ func extractMediaURL(v map[string]any) string {
 			return x
 		}
 	}
-	for _, k := range []string{"data", "images", "output", "result"} {
+	for _, k := range []string{"data", "images", "outputs", "output", "result"} {
 		if x, ok := v[k].([]any); ok {
 			for _, item := range x {
 				if m, ok := item.(map[string]any); ok {
