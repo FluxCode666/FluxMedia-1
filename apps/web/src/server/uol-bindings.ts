@@ -64,11 +64,6 @@ import {
   isMcpApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
-import {
-  type CreateExternalApiKeyInput,
-  ExternalApiKeyManagementError,
-  externalApiKeyManagementService,
-} from "@/features/external-api/key-management-service";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
 import {
@@ -96,6 +91,7 @@ import {
 } from "@/features/usage-log/service";
 import { bindHomepageReliabilityOperation } from "@/server/homepage-reliability-binding";
 import { bindModelMarketplaceOperations } from "@/server/model-marketplace-binding";
+import { requestGoJson } from "@/server/go-backend-client";
 
 // ---------------------------------------------------------------------------
 // image-generation 域
@@ -466,75 +462,103 @@ function getApiKeyManagementUserId(principal: Principal): string {
   return principal.userId;
 }
 
-/** 将应用服务预期领域错误稳定映射为 UOL 错误。 */
-async function invokeApiKeyManagement<T>(
-  operation: () => Promise<T>
-): Promise<T> {
+type GoExternalApiKeySummary = {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  lastFour: string;
+  generationGroupId: string | null;
+  creditLimit: number | null;
+  creditsUsed: number;
+  lastUsedAt: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  currentGroup: { id: string; name: string; enabled: boolean; selectable: boolean } | null;
+};
+
+function parseGoExternalApiKeySummary(raw: GoExternalApiKeySummary) {
+  return {
+    ...raw,
+    lastUsedAt: raw.lastUsedAt ? new Date(raw.lastUsedAt) : null,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+async function requestExternalApiKeys<T>(path: string, init?: RequestInit): Promise<T> {
   try {
-    return await operation();
+    return await requestGoJson<T>(path, init);
   } catch (error) {
-    if (!(error instanceof ExternalApiKeyManagementError)) throw error;
-    switch (error.code) {
-      case "not_found":
+    // requestGoJson preserves the Go status in its error message; map the
+    // stable conflict/not-found messages to the UOL error vocabulary.
+    if (error instanceof Error) {
+      if (/不存在/.test(error.message) || /NOT_FOUND/.test(error.message)) {
         throw new OperationError("not_found", error.message);
-      case "validation_error":
-        throw new OperationError("validation_error", error.message);
-      case "state_conflict":
-        throw new OperationError(
-          "validation_error",
-          error.message,
-          { reason: "state_conflict" },
-          409
-        );
+      }
+      if (/冲突|已撤销|不能修改/.test(error.message) || /STATE_CONFLICT/.test(error.message)) {
+        throw new OperationError("validation_error", error.message, { reason: "state_conflict" }, 409);
+      }
     }
+    throw error;
   }
 }
 
 /** externalApi.listKeys - 返回本人全部可恢复 Key 与当前可编辑分组。 */
 bindExecute(
   "externalApi.listKeys",
-  async (_input: Record<string, never>, principal: Principal) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.listKeys(
-        getApiKeyManagementUserId(principal)
-      )
-    )
+  async (_input: Record<string, never>, principal: Principal) => {
+    getApiKeyManagementUserId(principal);
+    const raw = await requestExternalApiKeys<{
+      keys: Array<GoExternalApiKeySummary & { apiKey: string | null }>;
+      editableGroups: Array<{ id: string; name: string; enabled: boolean; selectable: boolean }>;
+    }>("/api/external-api/keys");
+    return {
+      keys: raw.keys.map((key) => ({ ...parseGoExternalApiKeySummary(key), apiKey: key.apiKey })),
+      editableGroups: raw.editableGroups,
+    };
+  }
 );
 
 /** externalApi.createKey - 明文只在本次 operation 输出返回。 */
 bindExecute(
   "externalApi.createKey",
-  async (input: CreateExternalApiKeyInput, principal: Principal) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.createKey(
-        getApiKeyManagementUserId(principal),
-        input
-      )
-    )
+  async (
+    input: { name?: string; generationGroupId?: string | null; creditLimit?: number | null },
+    principal: Principal
+  ) => {
+    getApiKeyManagementUserId(principal);
+    const raw = await requestExternalApiKeys<{ apiKey: string; key: GoExternalApiKeySummary }>(
+      "/api/external-api/keys",
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    return { apiKey: raw.apiKey, key: parseGoExternalApiKeySummary(raw.key) };
+  }
 );
 
 /** externalApi.revokeKey - 原子撤销本人启用 Key。 */
 bindExecute(
   "externalApi.revokeKey",
-  async (input: { keyId: string }, principal: Principal) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.revokeKey(
-        getApiKeyManagementUserId(principal),
-        input.keyId
-      )
-    )
+  async (input: { keyId: string }, principal: Principal) => {
+    getApiKeyManagementUserId(principal);
+    const raw = await requestExternalApiKeys<GoExternalApiKeySummary>(
+      `/api/external-api/keys/${encodeURIComponent(input.keyId)}`,
+      { method: "DELETE" }
+    );
+    return parseGoExternalApiKeySummary(raw);
+  }
 );
 
 /** externalApi.deleteKey - 仅删除本人已撤销 Key。 */
 bindExecute(
   "externalApi.deleteKey",
-  async (input: { keyId: string }, principal: Principal) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.deleteKey(
-        getApiKeyManagementUserId(principal),
-        input.keyId
-      )
-    )
+  async (input: { keyId: string }, principal: Principal) => {
+    getApiKeyManagementUserId(principal);
+    return requestExternalApiKeys<{ id: string }>(
+      `/api/external-api/keys/${encodeURIComponent(input.keyId)}?hard=1`,
+      { method: "DELETE" }
+    );
+  }
 );
 
 /** externalApi.updateKeyGroup - 仅更新本人启用 Key 的可选分组。 */
@@ -543,14 +567,13 @@ bindExecute(
   async (
     input: { keyId: string; generationGroupId: string | null },
     principal: Principal
-  ) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.updateKeyGroup(
-        getApiKeyManagementUserId(principal),
-        input.keyId,
-        input.generationGroupId
-      )
-    )
+  ) => {
+    getApiKeyManagementUserId(principal);
+    return requestExternalApiKeys<GoExternalApiKeySummary>(
+      `/api/external-api/keys/${encodeURIComponent(input.keyId)}`,
+      { method: "PATCH", body: JSON.stringify({ generationGroupId: input.generationGroupId }) }
+    ).then(parseGoExternalApiKeySummary);
+  }
 );
 
 /** externalApi.updateKeyQuota - 仅更新本人启用 Key 的积分额度。 */
@@ -559,14 +582,13 @@ bindExecute(
   async (
     input: { keyId: string; creditLimit: number | null },
     principal: Principal
-  ) =>
-    invokeApiKeyManagement(() =>
-      externalApiKeyManagementService.updateKeyQuota(
-        getApiKeyManagementUserId(principal),
-        input.keyId,
-        input.creditLimit
-      )
-    )
+  ) => {
+    getApiKeyManagementUserId(principal);
+    return requestExternalApiKeys<GoExternalApiKeySummary>(
+      `/api/external-api/keys/${encodeURIComponent(input.keyId)}`,
+      { method: "PATCH", body: JSON.stringify({ creditLimit: input.creditLimit }) }
+    ).then(parseGoExternalApiKeySummary);
+  }
 );
 
 // TODO: externalApi.handleImageGenerations - image-generations handler 逻辑

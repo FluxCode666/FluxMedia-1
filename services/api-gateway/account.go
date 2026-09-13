@@ -534,7 +534,8 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 		if keyID == "" {
 			return invalid("API 密钥 ID 无效")
 		}
-		if r.URL.Query().Get("hard") == "1" {
+		hardDelete := r.URL.Query().Get("hard") == "1"
+		if hardDelete {
 			result, e := b.db.Exec(r.Context(), `DELETE FROM external_api_key WHERE id=$1 AND user_id=$2 AND NOT is_active`, keyID, s.User.ID)
 			err = e
 			if e == nil && result.RowsAffected() == 0 {
@@ -563,7 +564,15 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, 200, map[string]any{"id": keyID})
+		if hardDelete {
+			writeJSON(w, 200, map[string]any{"id": keyID})
+			return nil
+		}
+		key, summaryErr := b.apiKeySummary(r, s.User.ID, keyID, false)
+		if summaryErr != nil {
+			return summaryErr
+		}
+		writeJSON(w, 200, key)
 		return nil
 	}
 	return invalid("不支持的请求方法")
