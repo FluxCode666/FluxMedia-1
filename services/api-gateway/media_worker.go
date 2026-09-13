@@ -152,8 +152,20 @@ func newWorkerToken() string {
 func (w *mediaWorker) processImage(ctx context.Context, id string) error {
 	var uid, genID, model, operation string
 	var input []byte
-	err := w.backend.db.QueryRow(ctx, `SELECT user_id,(generation_ids->>0),operation,generation_inputs FROM image_async_task WHERE id=$1`, id).Scan(&uid, &genID, &operation, &input)
+	err := w.backend.db.QueryRow(ctx, `SELECT user_id,COALESCE(generation_id,(generation_ids->>0)),operation,generation_inputs FROM image_async_task WHERE id=$1`, id).Scan(&uid, &genID, &operation, &input)
 	if err != nil {
+		return w.failImage(ctx, id, err)
+	}
+	// A generation row is the durable source of truth. Re-delivered messages must
+	// reconcile an existing terminal generation before making another provider
+	// request; this is the same idempotency boundary as the Next worker.
+	var generationStatus string
+	if err = w.backend.db.QueryRow(ctx, `SELECT status FROM generation WHERE id=$1`, genID).Scan(&generationStatus); err == nil {
+		if generationStatus == "completed" || generationStatus == "failed" {
+			_, err = w.backend.db.Exec(ctx, `UPDATE image_async_task SET status=$2,error=CASE WHEN $2='failed' THEN COALESCE(error,'image generation failed') ELSE NULL END,completed_at=COALESCE(completed_at,now()),claim_token=NULL,claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND status<>'completed'`, id, generationStatus)
+			return err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return w.failImage(ctx, id, err)
 	}
 	var persisted any
@@ -197,7 +209,7 @@ func (w *mediaWorker) processImage(ctx context.Context, id string) error {
 	if err = w.backend.putStorageObject(ctx, bucket, key, data, ct); err != nil {
 		return w.failImage(ctx, id, err)
 	}
-	_, err = w.backend.db.Exec(ctx, `UPDATE generation SET status='completed',storage_key=$2,storage_bucket=$3,completed_at=now(),metadata=COALESCE(metadata,'{}'::jsonb)||$4::jsonb WHERE id=$1`, genID, key, bucket, mustJSON(map[string]any{"imageUrl": "/api/storage/" + url.PathEscape(bucket) + "/" + url.PathEscape(key)}))
+	_, err = w.backend.db.Exec(ctx, `UPDATE generation SET status='completed',storage_key=$2,storage_bucket=$3,completed_at=now(),metadata=COALESCE(metadata,'{}'::jsonb)||$4::jsonb WHERE id=$1 AND status='pending'`, genID, key, bucket, mustJSON(map[string]any{"imageUrl": "/api/storage/" + url.PathEscape(bucket) + "/" + url.PathEscape(key)}))
 	if err != nil {
 		return err
 	}
@@ -206,8 +218,104 @@ func (w *mediaWorker) processImage(ctx context.Context, id string) error {
 }
 func (w *mediaWorker) failImage(ctx context.Context, id string, cause error) error {
 	msg := sanitizeWorkerError(cause)
-	_, err := w.backend.db.Exec(ctx, `UPDATE image_async_task SET status='failed',error=$2,completed_at=now(),claim_token=NULL,claim_expires_at=NULL,updated_at=now() WHERE id=$1`, id, msg)
+	// Persist generation failure and settle any initial image charge before
+	// closing the async task. The source_ref is stable across retries, while the
+	// transaction/projection rows are protected by their unique constraints.
+	if err := w.failImageGeneration(ctx, id, msg); err != nil {
+		return err
+	}
+	_, err := w.backend.db.Exec(ctx, `UPDATE image_async_task SET status='failed',error=$2,completed_at=now(),claim_token=NULL,claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND status<>'completed'`, id, msg)
 	return err
+}
+
+func (w *mediaWorker) failImageGeneration(ctx context.Context, taskID, reason string) error {
+	tx, err := w.backend.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var generationID, userID, status string
+	var amount float64
+	var createdAt time.Time
+	var metadataRaw []byte
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(generation_id,(generation_ids->>0)),user_id,status FROM image_async_task WHERE id=$1 FOR UPDATE`, taskID).
+		Scan(&generationID, &userID, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	// Reload the authoritative generation row and tolerate a missing legacy row.
+	if err = tx.QueryRow(ctx, `SELECT user_id,status,COALESCE(credits_consumed,0),created_at,COALESCE(metadata,'{}'::json) FROM generation WHERE id=$1 FOR UPDATE`, generationID).
+		Scan(&userID, &status, &amount, &createdAt, &metadataRaw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tx.Commit(ctx)
+		}
+		return err
+	}
+	if status == "completed" {
+		return tx.Commit(ctx)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE generation SET status='failed',error=$2,completed_at=COALESCE(completed_at,now()) WHERE id=$1 AND status='pending'`, generationID, reason); err != nil {
+		return err
+	}
+	if amount > 0 {
+		var external string
+		var meta map[string]any
+		_ = json.Unmarshal(metadataRaw, &meta)
+		external, _ = meta["externalApiKeyId"].(string)
+		sourceRef := generationID + ":worker-refund"
+		if _, err = tx.Exec(ctx, `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), userID); err != nil {
+			return err
+		}
+		batchID := newRequestID()
+		if tag, e := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref,updated_at) VALUES($1,$2,$3,$3,'refund',$4,now()) ON CONFLICT(source_type,source_ref) DO NOTHING`, batchID, userID, amount, sourceRef); e != nil {
+			return e
+		} else if tag.RowsAffected() == 0 {
+			var batchUser string
+			var batchAmount float64
+			if e = tx.QueryRow(ctx, `SELECT user_id,amount FROM credits_batch WHERE source_type='refund' AND source_ref=$1`, sourceRef).Scan(&batchUser, &batchAmount); e != nil || batchUser != userID || batchAmount != amount {
+				if e != nil {
+					return e
+				}
+				return fmt.Errorf("image refund batch conflict for %s", generationID)
+			}
+		}
+		transactionID := newRequestID()
+		if tag, e := tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,operation_type,operation_id,operation_created_at,metadata,created_at) VALUES($1,$2,'refund',$3,'SYSTEM:generation_refund',$4,$5,$6,'image_generation',$7,$8,$9,now()) ON CONFLICT(user_id,type,source_ref) DO NOTHING`, transactionID, userID, amount, "WALLET:"+userID, "图片生成失败退款", sourceRef, generationID, createdAt, mustJSON(map[string]any{"generationId": generationID, "worker": "go-media", "sourceRef": sourceRef})); e != nil {
+			return e
+		} else if tag.RowsAffected() > 0 {
+			// Projection may be absent for old rows; when present it must reconcile
+			// the operation atomically with the ledger transaction.
+			var gross, refunded float64
+			var opCreated time.Time
+			if e = tx.QueryRow(ctx, `SELECT gross_consumed,refunded,operation_created_at FROM credit_usage_operation WHERE user_id=$1 AND operation_type='image_generation' AND operation_id=$2 FOR UPDATE`, userID, generationID).Scan(&gross, &refunded, &opCreated); e == nil {
+				if !opCreated.Equal(createdAt) || refunded+amount > gross {
+					return fmt.Errorf("image refund operation conflict for %s", generationID)
+				}
+				if _, e = tx.Exec(ctx, `INSERT INTO credit_usage_projection_entry(transaction_id,user_id,contribution_kind,amount,operation_type,operation_id,operation_created_at,transaction_created_at) VALUES($1,$2,'refund',$3,'image_generation',$4,$5,now()) ON CONFLICT(transaction_id) DO NOTHING`, transactionID, userID, amount, generationID, createdAt); e != nil {
+					return e
+				}
+				if _, e = tx.Exec(ctx, `UPDATE credit_usage_operation SET refunded=refunded+$3,net_consumed=net_consumed-$3,updated_at=now() WHERE user_id=$1 AND operation_type='image_generation' AND operation_id=$2`, userID, generationID, amount); e != nil {
+					return e
+				}
+			} else if !errors.Is(e, pgx.ErrNoRows) {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `UPDATE credits_balance SET balance=balance+$2,total_earned=total_earned+$2,total_refunded=total_refunded+$2,updated_at=now() WHERE user_id=$1`, userID, amount); e != nil {
+				return e
+			}
+		}
+		if external == "" {
+			external, _ = meta["externalApiKeyId"].(string)
+		}
+		if external != "" {
+			if _, err = tx.Exec(ctx, `UPDATE external_api_key SET credits_used=GREATEST(0,credits_used-$3),updated_at=now() WHERE id=$1 AND user_id=$2`, external, userID, amount); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (w *mediaWorker) processVideo(ctx context.Context, id string) error {
