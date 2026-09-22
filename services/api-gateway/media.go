@@ -946,15 +946,12 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	if thumbWidth != 0 && (thumbWidth < 16 || thumbWidth > 1280) {
 		return &apiError{400, "INVALID_THUMBNAIL_WIDTH", "Invalid thumbnail width"}
 	}
-	if bucket == "" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") {
+	if !validStorageObjectPath(bucket, key) {
 		return &apiError{400, "INVALID_PATH", "Invalid storage path"}
 	}
 	uploadBucket, err := b.settingString(r.Context(), "STORAGE_BUCKET_NAME", "gpt2image-uploads")
 	if err != nil {
 		return err
-	}
-	if bucket != systemBucket && bucket != generationsBucket && bucket != uploadBucket && bucket != "documents" {
-		return forbidden()
 	}
 	domain := storageObjectDomain(bucket, key, systemBucket, generationsBucket)
 	// Uploads may share a physical bucket with generations or system assets.
@@ -962,6 +959,15 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	// and public avatars/covers/logos keep their own access rules.
 	if domain == "" && (bucket == uploadBucket || bucket == "documents") {
 		domain = "documents"
+	}
+	if domain == "" {
+		legacy, legacyErr := b.historicalGenerationStorageObject(r.Context(), bucket, key)
+		if legacyErr != nil {
+			return legacyErr
+		}
+		if legacy {
+			domain = "generations"
+		}
 	}
 	if domain == "" || (isAvatarAlias && domain != "avatars") {
 		return &apiError{400, "INVALID_PATH", "Invalid public asset key"}
@@ -1286,6 +1292,15 @@ func (b *backend) storageObjectOwned(r *http.Request, bucket, key string) bool {
 	var owned bool
 	err := b.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM generation WHERE user_id=$1 AND storage_bucket=$2 AND storage_key=$3 UNION ALL SELECT 1 FROM video_generation WHERE user_id=$1 AND storage_bucket=$2 AND storage_key=$3)`, userID, bucket, key).Scan(&owned)
 	return err == nil && owned
+}
+
+func (b *backend) historicalGenerationStorageObject(ctx context.Context, bucket, key string) (bool, error) {
+	var exists bool
+	err := b.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM generation WHERE storage_bucket=$1 AND storage_key=$2 UNION ALL SELECT 1 FROM video_generation WHERE storage_bucket=$1 AND storage_key=$2)`, bucket, key).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("classify historical storage object: %w", err)
+	}
+	return exists, nil
 }
 
 func documentContentType(filename string) string {

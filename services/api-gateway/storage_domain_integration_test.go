@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStorageGenerationThumbnailsWithSharedBuckets(t *testing.T) {
@@ -136,5 +137,53 @@ func TestStorageSharedSystemBucketPreservesPublicDomains(t *testing.T) {
 	w = storageTestRequest(b, "GET", strings.Replace(signed, "/test-system/", "/test-system/w128/", 1), nil, nil, nil)
 	if w.Code != 400 {
 		t.Fatalf("document thumbnail: %d", w.Code)
+	}
+}
+
+func TestStorageServesSignedHistoricalGenerationBucket(t *testing.T) {
+	b := integrationBackend(t)
+	b.config.storagePath = t.TempDir()
+	setStorageTestSetting(t, b, "STORAGE_ENDPOINT", "")
+	setStorageTestSetting(t, b, "SYSTEM_ASSETS_BUCKET_NAME", "test-system")
+	setStorageTestSetting(t, b, "GENERATIONS_BUCKET_NAME", "current-media")
+	setStorageTestSetting(t, b, "STORAGE_BUCKET_NAME", "current-media")
+
+	uid, _ := seedAuthUser(t, b)
+	const bucket = "legacy-generations"
+	key := uid + "/images/historical.png"
+	missingKey := uid + "/images/not-recorded.png"
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewNRGBA(image.Rect(0, 0, 256, 128))); err != nil {
+		t.Fatal(err)
+	}
+	for _, objectKey := range []string{key, missingKey} {
+		if err := b.putStorageObject(context.Background(), bucket, objectKey, data.Bytes(), "image/png"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := newRequestID()
+	historyFixtureImage(t, b, uid, id, "historical-model", "completed", time.Now().UTC(), nil)
+	if _, err := b.db.Exec(context.Background(), `UPDATE generation SET storage_bucket=$2,storage_key=$3 WHERE id=$1`, id, bucket, key); err != nil {
+		t.Fatal(err)
+	}
+
+	signed, err := b.storageSignedReadURL(context.Background(), bucket, key, 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := storageTestRequest(b, "GET", signed, nil, nil, nil); w.Code != 200 || w.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("historical generation: %d %s", w.Code, w.Body.String())
+	}
+
+	unsigned := strings.Split(signed, "?")[0]
+	if w := storageTestRequest(b, "GET", unsigned, nil, nil, nil); w.Code != 403 {
+		t.Fatalf("unsigned historical generation: %d", w.Code)
+	}
+	missingSigned, err := b.storageSignedReadURL(context.Background(), bucket, missingKey, 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := storageTestRequest(b, "GET", missingSigned, nil, nil, nil); w.Code != 400 {
+		t.Fatalf("unrecorded historical object: %d", w.Code)
 	}
 }
