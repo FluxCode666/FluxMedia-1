@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
-cd /app
+cd "${FLUXMEDIA_BACKEND_ROOT:-/app}"
 
-exec /backend "$@"
+if [ "$#" -gt 0 ]; then
+	exec "$@"
+fi
+
+exec "${GO_BACKEND_EXECUTABLE:-/backend}"

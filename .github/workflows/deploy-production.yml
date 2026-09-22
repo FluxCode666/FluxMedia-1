@@ -98,6 +98,9 @@ jobs:
       - name: Test deployment release recovery policy
         run: bash deploy/release-recovery-policy.test.sh
 
+      - name: Test backend entrypoint command forwarding
+        run: sh services/api-gateway/backend-entrypoint.test.sh
+
       - name: Verify Go backend
         working-directory: services/api-gateway
         run: |

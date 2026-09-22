@@ -35,16 +35,21 @@ FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
 ENV FLUXMEDIA_WEB_ROOT=/app/apps/web
+ENV HOME="/home/backend"
+ENV COREPACK_HOME="/home/backend/.cache/node/corepack"
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.27.0 --activate && \
-	groupadd --system --gid 1001 backend && \
-	useradd --system --uid 1001 --gid backend backend
+RUN groupadd --system --gid 1001 backend && \
+	useradd --system --create-home --home-dir /home/backend \
+		--uid 1001 --gid backend backend && \
+	corepack enable && corepack prepare pnpm@10.27.0 --activate && \
+	chown -R backend:backend /home/backend
 COPY --from=migration-runtime /app ./
 COPY --from=go-builder /out/backend /backend
 COPY services/api-gateway/backend-entrypoint.sh /usr/local/bin/backend-entrypoint
 RUN chmod 0755 /usr/local/bin/backend-entrypoint && \
 	chown -R backend:backend /app /backend /usr/local/bin/backend-entrypoint
 USER backend:backend
+RUN /usr/local/bin/backend-entrypoint pnpm --version
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/backend-entrypoint"]
