@@ -13,7 +13,7 @@ func TestReadExistingDrizzleMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 104 {
+	if len(migrations) != 105 {
 		t.Fatalf("migration count = %d; update test with journal changes", len(migrations))
 	}
 	first, err := os.ReadFile("../../packages/database/drizzle/0000_init.sql")
