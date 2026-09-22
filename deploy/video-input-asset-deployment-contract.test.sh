@@ -8,6 +8,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
 workflow_path="${repository_root}/.github/workflows/deploy-production.yml"
 readme_path="${repository_root}/deploy/README.md"
+compose_path="${repository_root}/deploy/docker-compose.yml"
 
 require_text() {
   file_path="$1"
@@ -37,6 +38,14 @@ require_text \
 require_text \
   "${workflow_path}" \
   'install -d -m 700 \'
+
+storage_mount_count="$(
+  grep -Fc -- '- /root/docker-data/fluxmedia:/app/storage' "${compose_path}"
+)"
+if [ "${storage_mount_count}" -ne 2 ]; then
+  printf 'web 与 backend 必须共享同一个生产图片存储目录。\n' >&2
+  exit 1
+fi
 
 prepare_line="$(
   grep -nF 'prepare_video_input_migration_state' "${workflow_path}" \

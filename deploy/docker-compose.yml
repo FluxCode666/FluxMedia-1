@@ -95,6 +95,8 @@ services:
       GO_MEDIA_PROCESSING_TOKEN: ${GO_MEDIA_PROCESSING_TOKEN:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${GO_BACKEND_PORT:-3001}:8080"
+    volumes:
+      - /root/docker-data/fluxmedia:/app/storage
     healthcheck:
       test: ["CMD", "/backend", "--healthcheck"]
       interval: 30s
