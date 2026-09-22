@@ -255,7 +255,11 @@ func (b *backend) createImageTask(r *http.Request, p *apiPrincipal, rawBody map[
 			}
 		}
 	}()
-	inputs, err := json.Marshal(body)
+	persistedInput, err := persistedImageTaskInput(body, operation)
+	if err != nil {
+		return nil, err
+	}
+	inputs, err := json.Marshal(persistedInput)
 	if err != nil {
 		return nil, err
 	}

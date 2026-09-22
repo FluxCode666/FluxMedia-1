@@ -116,9 +116,9 @@ func TestImageAsyncCreateScopesFullInputAndDeliveryAtomically(t *testing.T) {
 }
 
 func TestImageTaskInputNormalizesAliasesAndRejectsDeliveryConflicts(t *testing.T) {
-	first := imagePricingInput(map[string]any{"generationId": "g", "taskId": "task_g", "model": "m", "prompt": "p", "responseFormat": "b64_json", "callbackUrl": "https://callback.example.com"})
-	second := imagePricingInput(map[string]any{"generation_id": "g", "task_id": "task_g", "model": "m", "prompt": "p", "response_format": "b64_json", "callback_url": "https://callback.example.com"})
-	_, a, err := normalizeImageTaskInput(first, "generate")
+	first := imagePricingInput(map[string]any{"generationId": "g", "taskId": "task_g", "model": "m", "prompt": "p", "responseFormat": "b64_json", "callbackUrl": "https://callback.example.com", "outputFormat": "webp", "outputCompression": 82})
+	second := imagePricingInput(map[string]any{"generation_id": "g", "task_id": "task_g", "model": "m", "prompt": "p", "response_format": "b64_json", "callback_url": "https://callback.example.com", "output_format": "webp", "output_compression": "82"})
+	normalized, a, err := normalizeImageTaskInput(first, "generate")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,5 +130,24 @@ func TestImageTaskInputNormalizesAliasesAndRejectsDeliveryConflicts(t *testing.T
 		if _, _, err = normalizeImageTaskInput(imagePricingInput(fields), "generate"); err == nil {
 			t.Fatalf("invalid input accepted: %v", fields)
 		}
+	}
+	for key, value := range imagePricingInput(map[string]any{"async": true, "stream": false}) {
+		normalized[key] = value
+	}
+	persisted, err := persistedImageTaskInput(normalized, "generate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"taskId", "responseFormat", "callbackUrl", "async", "stream"} {
+		if _, exists := persisted[key]; exists {
+			t.Fatalf("transport field %s persisted in generation input", key)
+		}
+	}
+	if rawString(persisted, "outputFormat") != "webp" || rawInt(persisted, "outputCompression") != 82 {
+		t.Fatalf("image output aliases were not canonicalized: %v", persisted)
+	}
+	unknown := imagePricingInput(map[string]any{"operation": "generate", "prompt": "p", "model": "m", "generationId": "g", "unexpected": true})
+	if _, err = persistedImageTaskInput(unknown, "generate"); err == nil {
+		t.Fatal("unknown durable image input field accepted")
 	}
 }

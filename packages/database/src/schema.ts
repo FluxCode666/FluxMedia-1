@@ -2332,6 +2332,24 @@ export const imageAsyncTask = pgTable(
       )`
     ),
     check(
+      "image_async_task_generation_input_transport_retired_check",
+      sql`NOT (
+        COALESCE(${table.generationInput}::jsonb, '{}'::jsonb) ?| ARRAY[
+          'taskId', 'task_id',
+          'responseFormat', 'response_format',
+          'callbackUrl', 'callback_url',
+          'async', 'stream', 'output_format'
+        ]
+      ) AND NOT (
+        COALESCE((${table.generationInputs}->0)::jsonb, '{}'::jsonb) ?| ARRAY[
+          'taskId', 'task_id',
+          'responseFormat', 'response_format',
+          'callbackUrl', 'callback_url',
+          'async', 'stream', 'output_format'
+        ]
+      )`
+    ),
+    check(
       "image_async_task_policy_snapshot_check",
       sql`(
         ${table.effectiveUserConcurrency} IS NULL

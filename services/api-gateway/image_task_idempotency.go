@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,7 +42,17 @@ func normalizeImageTaskInput(original map[string]json.RawMessage, operation stri
 		}
 	}
 	body["operation"], _ = json.Marshal(operation)
-	for _, aliases := range [][]string{{"generationId", "generation_id"}, {"taskId", "task_id"}, {"responseFormat", "response_format"}, {"callbackUrl", "callback_url"}, {"repairPrompt", "repair_prompt"}} {
+	for _, aliases := range [][]string{
+		{"generationId", "generation_id"},
+		{"taskId", "task_id"},
+		{"responseFormat", "response_format"},
+		{"callbackUrl", "callback_url"},
+		{"repairPrompt", "repair_prompt"},
+		{"negativePrompt", "negative_prompt"},
+		{"apiPrompt", "api_prompt"},
+		{"backendGroupId", "backend_group_id"},
+		{"outputFormat", "output_format"},
+	} {
 		value := ""
 		for _, key := range aliases {
 			if raw, ok := body[key]; ok {
@@ -61,7 +72,13 @@ func normalizeImageTaskInput(original map[string]json.RawMessage, operation stri
 			body[aliases[0]], _ = json.Marshal(value)
 		}
 	}
-	for _, aliases := range [][]string{{"hdRepair", "hd_repair"}, {"blockRepair", "block_repair"}, {"transparentMatte", "transparent_matte"}} {
+	for _, aliases := range [][]string{
+		{"hdRepair", "hd_repair"},
+		{"blockRepair", "block_repair"},
+		{"transparentMatte", "transparent_matte"},
+		{"promptOptimization", "prompt_optimization"},
+		{"moderationPromptRepair", "moderation_prompt_repair"},
+	} {
 		var selected *bool
 		for _, key := range aliases {
 			if _, exists := body[key]; !exists {
@@ -80,6 +97,33 @@ func normalizeImageTaskInput(original map[string]json.RawMessage, operation stri
 		if selected != nil {
 			body[aliases[0]], _ = json.Marshal(*selected)
 		}
+	}
+	var outputCompression *int
+	for _, key := range []string{"outputCompression", "output_compression"} {
+		raw, exists := body[key]
+		if !exists {
+			continue
+		}
+		var value int
+		if json.Unmarshal(raw, &value) != nil {
+			var text string
+			if json.Unmarshal(raw, &text) != nil {
+				return nil, "", invalid(key + " must be an integer")
+			}
+			parsed, err := strconv.Atoi(strings.TrimSpace(text))
+			if err != nil {
+				return nil, "", invalid(key + " must be an integer")
+			}
+			value = parsed
+		}
+		if outputCompression != nil && *outputCompression != value {
+			return nil, "", invalid("Conflicting outputCompression aliases")
+		}
+		outputCompression = &value
+		delete(body, key)
+	}
+	if outputCompression != nil {
+		body["outputCompression"], _ = json.Marshal(*outputCompression)
 	}
 	generationID := rawString(body, "generationId")
 	if generationID == "" {
@@ -128,6 +172,42 @@ func normalizeImageTaskInput(original map[string]json.RawMessage, operation stri
 	}
 	digest := sha256.Sum256(raw)
 	return body, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+// persistedImageTaskInput removes HTTP delivery controls from the strict UOL
+// generation input stored in PostgreSQL. The request digest above still covers
+// the complete normalized request so replay semantics retain those controls.
+func persistedImageTaskInput(body map[string]json.RawMessage, operation string) (map[string]json.RawMessage, error) {
+	allowed := map[string]struct{}{
+		"operation": {}, "prompt": {}, "negativePrompt": {}, "apiPrompt": {},
+		"promptOptimization": {}, "model": {}, "size": {}, "aspectRatio": {},
+		"aspect_ratio": {}, "resolution": {}, "quality": {}, "style": {},
+		"thinking": {}, "moderation": {}, "outputFormat": {},
+		"outputCompression": {}, "background": {}, "transparentMatte": {},
+		"moderationPromptRepair": {}, "hdRepair": {}, "blockRepair": {},
+		"repairPrompt": {}, "generationId": {}, "backendGroupId": {},
+	}
+	if operation == "edit" || operation == "mask" {
+		allowed["images"] = struct{}{}
+	}
+	if operation == "mask" {
+		allowed["mask"] = struct{}{}
+	}
+	transport := map[string]struct{}{
+		"taskId": {}, "responseFormat": {}, "callbackUrl": {},
+		"async": {}, "stream": {},
+	}
+	persisted := make(map[string]json.RawMessage, len(body))
+	for key, value := range body {
+		if _, exists := transport[key]; exists {
+			continue
+		}
+		if _, exists := allowed[key]; !exists {
+			return nil, invalid("Unsupported image input field: " + key)
+		}
+		persisted[key] = value
+	}
+	return persisted, nil
 }
 
 type imageTaskQuerier interface {

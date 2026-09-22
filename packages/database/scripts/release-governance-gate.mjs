@@ -2492,6 +2492,40 @@ function isPersistedImageGenerationInputValid(
 }
 
 /**
+ * 0104 前的 Go writer 把 HTTP 投递字段写进了 strict generation input。
+ * 这里只模拟 0104 的无损归一化，让迁移前门禁验证迁移后的真实形状；未知字段仍拒绝。
+ */
+function normalizeLegacyImageTaskTransportInput(value) {
+  if (!isRecord(value)) return value;
+  const normalized = { ...value };
+  if (Object.hasOwn(normalized, "output_format")) {
+    const legacy = normalized.output_format;
+    if (
+      typeof legacy !== "string" ||
+      (Object.hasOwn(normalized, "outputFormat") &&
+        normalized.outputFormat !== legacy)
+    ) {
+      return null;
+    }
+    normalized.outputFormat = legacy;
+    delete normalized.output_format;
+  }
+  for (const field of [
+    "taskId",
+    "task_id",
+    "responseFormat",
+    "response_format",
+    "callbackUrl",
+    "callback_url",
+    "async",
+    "stream",
+  ]) {
+    delete normalized[field];
+  }
+  return normalized;
+}
+
+/**
  * 检查旧图片异步批次能否无损单项化，以及 additive 字段是否保持完整。
  *
  * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
@@ -2536,9 +2570,24 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
     );
     const batchRetirementApplied =
       batchRetirementResult.rows[0]?.applied === true;
+    const transportRetirementResult = await client.query(`
+      select exists (
+        select 1
+        from pg_constraint
+        where connamespace = 'public'::regnamespace
+          and conname = 'image_async_task_generation_input_transport_retired_check'
+          and convalidated
+      ) as applied
+    `);
+    const transportRetirementApplied =
+      transportRetirementResult.rows[0]?.applied === true;
     printEvidence(
       "image_async_task_schema_state",
       additiveApplied ? "additive" : "legacy"
+    );
+    printEvidence(
+      "image_async_task_transport_state",
+      transportRetirementApplied ? "retired" : "legacy"
     );
     const additiveProjection = additiveApplied
       ? `task.generation_input,
@@ -2590,11 +2639,14 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
       for (const row of result.rows) {
         const terminal = ["completed", "failed"].includes(row.status);
         const nonterminal = ["queued", "running"].includes(row.status);
-        const legacyInput =
+        const rawLegacyInput =
           Array.isArray(row.generation_inputs) &&
           row.generation_inputs.length === 1
             ? row.generation_inputs[0]
             : null;
+        const legacyInput = transportRetirementApplied
+          ? rawLegacyInput
+          : normalizeLegacyImageTaskTransportInput(rawLegacyInput);
         const legacyId =
           Array.isArray(row.generation_ids) && row.generation_ids.length === 1
             ? row.generation_ids[0]
@@ -2616,9 +2668,12 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
         }
 
         if (!additiveApplied) continue;
+        const generationInput = transportRetirementApplied
+          ? row.generation_input
+          : normalizeLegacyImageTaskTransportInput(row.generation_input);
         const coreValid =
           isPersistedImageGenerationInputValid(
-            row.generation_input,
+            generationInput,
             row.operation,
             row.generation_id,
             {
