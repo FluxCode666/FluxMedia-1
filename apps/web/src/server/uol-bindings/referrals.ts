@@ -1,6 +1,5 @@
 /** 用户推广看板 UOL 真实绑定；身份仅从 Principal 派生。 */
 import { bindOperationExecute, OperationError } from "@repo/shared/uol";
-import { fulfillReferralFirstPayment } from "@repo/shared/referrals";
 import {
   fulfillAlipayReferralFirstPayment,
   fulfillCreemReferralFirstPayment,
@@ -45,7 +44,7 @@ for (const [definition, provider] of [
   [fulfillCreemReferralFirstPayment, "creem"],
 ] as const) {
   bindOperationExecute(definition, async (input) =>
-    fulfillReferralFirstPayment({
+    (await import("@repo/shared/referrals")).fulfillReferralFirstPayment({
       ...input,
       paymentProvider: provider,
     })

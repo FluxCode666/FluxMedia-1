@@ -14,13 +14,13 @@ import (
 // identity forwarded by Next. The user/key pair never comes from JSON input.
 func (b *backend) imageUOLPrincipal(r *http.Request) (*apiPrincipal, error) {
 	if p, ok := b.signedInternalPrincipal(r); ok && p.Type == "apiKey" {
-		return &apiPrincipal{UserID: p.UserID, KeyID: p.APIKeyID}, nil
+		return b.authenticateAPI(r)
 	}
 	s, err := b.requireSession(r)
 	if err != nil {
 		return nil, err
 	}
-	return &apiPrincipal{UserID: s.User.ID, KeyID: "session"}, nil
+	return &apiPrincipal{UserID: s.User.ID, KeyID: ""}, nil
 }
 
 type imageAsyncUOLInput struct {
@@ -31,11 +31,15 @@ type imageAsyncUOLInput struct {
 }
 
 func (b *backend) imageAsyncUOLStatus(r *http.Request, taskID string, p *apiPrincipal) (map[string]any, error) {
+	keyID := p.KeyID
+	if keyID == "" {
+		keyID = "web:session"
+	}
 	var model, operation, status, generationID, responseFormat string
 	var createdAt time.Time
 	var startedAt, completedAt *time.Time
 	var taskError *string
-	err := b.db.QueryRow(r.Context(), `SELECT COALESCE(t.generation_input->>'model',g.model),t.operation,t.status,COALESCE(t.generation_id,t.generation_ids->>0),t.response_format,t.created_at,t.started_at,t.completed_at,t.error FROM image_async_task t LEFT JOIN generation g ON g.id=COALESCE(t.generation_id,t.generation_ids->>0) WHERE t.id=$1 AND t.user_id=$2 AND t.api_key_id=$3`, taskID, p.UserID, p.KeyID).Scan(&model, &operation, &status, &generationID, &responseFormat, &createdAt, &startedAt, &completedAt, &taskError)
+	err := b.db.QueryRow(r.Context(), `SELECT COALESCE(t.generation_input->>'model',g.model),t.operation,t.status,COALESCE(t.generation_id,t.generation_ids->>0),t.response_format,t.created_at,t.started_at,t.completed_at,t.error FROM image_async_task t LEFT JOIN generation g ON g.id=COALESCE(t.generation_id,t.generation_ids->>0) WHERE t.id=$1 AND t.user_id=$2 AND t.api_key_id=$3`, taskID, p.UserID, keyID).Scan(&model, &operation, &status, &generationID, &responseFormat, &createdAt, &startedAt, &completedAt, &taskError)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, &apiError{404, "NOT_FOUND", "Image async task not found"}
 	}
@@ -67,28 +71,16 @@ func (b *backend) handleImageAsyncCreate(w http.ResponseWriter, r *http.Request)
 	if rawString(input.GenerationInput, "generationId") == "" {
 		return invalid("generationId is required")
 	}
-	if existing, err := b.imageAsyncUOLStatus(r, input.TaskID, p); err == nil {
-		requestedGenerationID := rawString(input.GenerationInput, "generationId")
-		if existing["generationId"] != requestedGenerationID || existing["operation"] != operation || existing["responseFormat"] != input.ResponseFormat {
-			return &apiError{409, "IDEMPOTENCY_CONFLICT", "taskId was already used with different image async input"}
-		}
-		writeJSON(w, 200, existing)
-		return nil
-	} else {
-		var known *apiError
-		if !errors.As(err, &known) || known.status != 404 {
-			return err
-		}
-	}
 	input.GenerationInput["taskId"], _ = json.Marshal(input.TaskID)
+	input.GenerationInput["responseFormat"], _ = json.Marshal(input.ResponseFormat)
+	if input.CallbackURL != "" {
+		input.GenerationInput["callbackUrl"], _ = json.Marshal(input.CallbackURL)
+	}
 	response, err := b.createImageTask(r, p, input.GenerationInput, operation)
 	if err != nil {
 		return err
 	}
 	createdTaskID, _ := response["id"].(string)
-	if _, err := b.db.Exec(r.Context(), `UPDATE image_async_task SET response_format=$2,callback_url=NULLIF($3,'') WHERE id=$1 AND user_id=$4 AND api_key_id=$5`, createdTaskID, input.ResponseFormat, input.CallbackURL, p.UserID, p.KeyID); err != nil {
-		return err
-	}
 	output, err := b.imageAsyncUOLStatus(r, createdTaskID, p)
 	if err != nil {
 		return err
@@ -103,6 +95,38 @@ func (b *backend) handleImageAsyncStatus(w http.ResponseWriter, r *http.Request)
 		return err
 	}
 	output, err := b.imageAsyncUOLStatus(r, r.PathValue("taskId"), p)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, output)
+	return nil
+}
+
+// Explicit system dispatch shares the durable atomic claim with the worker.
+// Duplicate dispatches observe current state without submitting a second job.
+func (b *backend) handleImageAsyncProcess(w http.ResponseWriter, r *http.Request) error {
+	if !b.cronAuthorized(r) {
+		return &apiError{403, "FORBIDDEN", "System worker authentication required"}
+	}
+	id := r.PathValue("taskId")
+	var userID, keyID string
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id,api_key_id FROM image_async_task WHERE id=$1`, id).Scan(&userID, &keyID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &apiError{404, "NOT_FOUND", "Image async task not found"}
+		}
+		return err
+	}
+	worker := &mediaWorker{backend: b}
+	claimed, err := worker.claimImageTask(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	if claimed != "" {
+		if err = worker.processClaimedImage(r.Context(), claimed); err != nil {
+			return err
+		}
+	}
+	output, err := b.imageAsyncUOLStatus(r, id, &apiPrincipal{UserID: userID, KeyID: keyID})
 	if err != nil {
 		return err
 	}

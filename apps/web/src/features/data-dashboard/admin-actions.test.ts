@@ -2,13 +2,12 @@
  * 管理端数据看板 Server Action 薄适配测试。
  *
  * 使用方：Vitest；验证 Action 只使用 adminAction 提供的真实管理员 Principal，并把
- * UOL 稳定错误收敛为无内部详情的客户端状态。
+ * Go 稳定错误收敛为无内部详情的客户端状态。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  ensureUolInitialized: vi.fn(),
-  invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
   logError: vi.fn(),
 }));
 
@@ -33,23 +32,12 @@ vi.mock("@repo/shared/safe-action", () => ({
   },
 }));
 vi.mock("@repo/shared/logger", () => ({ logError: mocks.logError }));
-vi.mock("@repo/shared/uol", () => ({
-  invokeOperation: mocks.invokeOperation,
-  OperationError: class OperationError extends Error {
-    readonly code: string;
-
-    constructor(code: string, message: string) {
-      super(message);
-      this.name = "OperationError";
-      this.code = code;
-    }
-  },
-}));
-vi.mock("@/server/uol-init", () => ({
-  ensureUolInitialized: mocks.ensureUolInitialized,
+vi.mock("@/server/go-backend-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/go-backend-client")>()),
+  requestGoJson: mocks.requestGoJson,
 }));
 
-import { OperationError } from "@repo/shared/uol";
+import { GoBackendRequestError } from "@/server/go-backend-client";
 
 import {
   refreshAdminDataDashboardAction,
@@ -64,13 +52,12 @@ type MockAction = (input: {
 describe("refreshAdminDataDashboardAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.ensureUolInitialized.mockResolvedValue(undefined);
   });
 
-  it("使用管理员 Principal 调用全站 operation", async () => {
+  it("把解析后的筛选发送到 Go 管理员端点，由会话转发确定身份", async () => {
     const snapshot = { marker: "snapshot" };
     const input = { startDate: "2026-08-03", endDate: "2026-08-09" };
-    mocks.invokeOperation.mockResolvedValue(snapshot);
+    mocks.requestGoJson.mockResolvedValue({ status: "ready", snapshot });
 
     await expect(
       (refreshAdminDataDashboardAction as unknown as MockAction)({
@@ -78,26 +65,24 @@ describe("refreshAdminDataDashboardAction", () => {
         parsedInput: input,
       })
     ).resolves.toEqual({ status: "ready", snapshot });
-    expect(mocks.ensureUolInitialized).toHaveBeenCalledOnce();
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "analytics.getAdminDataDashboard",
-      input,
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/analytics/data-dashboard",
+      { method: "POST", body: JSON.stringify(input) }
     );
   });
 
   it.each([
-    ["validation_error", "validation_error"],
-    ["not_ready", "not_ready"],
-    ["rate_limited", "rate_limited"],
-    ["timeout", "timeout"],
-    ["forbidden", "unavailable"],
-    ["internal_error", "unavailable"],
-  ] as const)("将 %s 映射为 %s 状态", async (code, status) => {
-    mocks.invokeOperation.mockRejectedValue(
-      new OperationError(code, "safe operation failure")
+    [400, "INVALID_INPUT", "validation_error"],
+    [503, "NOT_READY", "not_ready"],
+    [429, "RATE_LIMITED", "rate_limited"],
+    [504, "TIMEOUT", "timeout"],
+    [408, "TIMEOUT", "timeout"],
+    [403, "FORBIDDEN", "unavailable"],
+    [500, "INTERNAL_ERROR", "unavailable"],
+  ] as const)("Go HTTP %s %s 映射为 %s 状态", async (httpStatus, code, status) => {
+    mocks.requestGoJson.mockRejectedValue(
+      new GoBackendRequestError("safe operation failure", httpStatus, code)
     );
-
     await expect(
       (refreshAdminDataDashboardAction as unknown as MockAction)({
         ctx: { userId: "admin-1", role: "super_admin" },
@@ -108,7 +93,7 @@ describe("refreshAdminDataDashboardAction", () => {
 
   it("未知异常记录日志并返回 unavailable", async () => {
     const error = new Error("private database failure");
-    mocks.invokeOperation.mockRejectedValue(error);
+    mocks.requestGoJson.mockRejectedValue(error);
 
     await expect(
       (refreshAdminDataDashboardAction as unknown as MockAction)({
@@ -123,22 +108,20 @@ describe("refreshAdminDataDashboardAction", () => {
 });
 
 describe("searchAdminDataDashboardUsersAction", () => {
-  it("使用管理员 Principal 调用用户搜索 operation", async () => {
+  it("将用户搜索和已选用户编码给 Go，正文不携带管理员身份", async () => {
     const output = {
       users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
     };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (searchAdminDataDashboardUsersAction as unknown as MockAction)({
         ctx: { userId: "admin-1", role: "admin" },
-        parsedInput: { query: "张", limit: 20 },
+        parsedInput: { query: "张", limit: 20, selectedUserId: "selected-user" },
       })
     ).resolves.toEqual(output);
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "analytics.searchAdminDataDashboardUsers",
-      { query: "张", limit: 20 },
-      { type: "user", userId: "admin-1", role: "admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/analytics/users?query=%E5%BC%A0&limit=20&selectedUserId=selected-user"
     );
   });
 });

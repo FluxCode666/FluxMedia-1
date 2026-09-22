@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 )
 
 func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
+	b.registerReferralServiceRoutes(mux)
 	mux.HandleFunc("GET /api/support/dashboard-configuration", b.endpoint(b.handleDashboardSupportConfiguration))
 	mux.HandleFunc("GET /api/support/tickets", b.endpoint(b.handleTicketList))
 	mux.HandleFunc("GET /api/support/tickets/unread-count", b.endpoint(b.handleTicketUnreadCount))
@@ -27,6 +29,7 @@ func (b *backend) registerSupportDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/announcements", b.endpoint(b.handleAnnouncementAdminList))
 	mux.HandleFunc("POST /api/admin/announcements", b.endpoint(b.handleAnnouncementCreate))
 	mux.HandleFunc("PUT /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementUpdate))
+	mux.HandleFunc("PATCH /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementPatch))
 	mux.HandleFunc("DELETE /api/admin/announcements/{id}", b.endpoint(b.handleAnnouncementDelete))
 	mux.HandleFunc("POST /api/admin/announcements/{id}/toggle", b.endpoint(b.handleAnnouncementToggle))
 	mux.HandleFunc("GET /api/referrals/dashboard", b.endpoint(b.handleReferralDashboard))
@@ -570,11 +573,12 @@ func (b *backend) handleAnnouncementCreate(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 	id := supportRandomID()
-	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement(id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'info'),$5,$6,$7,$8,$9,$10,$10)`, id, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID)
+	createdAt := time.Now().UTC()
+	_, e = b.db.Exec(r.Context(), `INSERT INTO announcement(id,title,content,severity,is_published,is_pinned,priority,published_at,expires_at,created_by_user_id,updated_by_user_id,created_at,updated_at) VALUES($1,$2,$3,COALESCE(NULLIF($4,''),'info'),$5,$6,$7,$8,$9,$10,$10,$11,$11)`, id, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, createdAt)
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 201, map[string]any{"id": id, "message": "公告已创建"})
+	writeJSON(w, 201, map[string]any{"id": id, "createdAt": createdAt, "message": "公告已创建"})
 	return nil
 }
 func (b *backend) handleAnnouncementUpdate(w http.ResponseWriter, r *http.Request) error {
@@ -595,16 +599,72 @@ func (b *backend) handleAnnouncementUpdate(w http.ResponseWriter, r *http.Reques
 	if err := validateAnnouncementInput(in.Title, in.Content, in.Severity, in.Priority, in.PublishedAt, in.ExpiresAt); err != nil {
 		return err
 	}
-	result, e := b.db.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=now() WHERE id=$10`, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, id)
+	updatedAt := time.Now().UTC()
+	result, e := b.db.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=$10 WHERE id=$11`, strings.TrimSpace(in.Title), strings.TrimSpace(in.Content), in.Severity, in.IsPublished, in.IsPinned, in.Priority, in.PublishedAt, in.ExpiresAt, s.User.ID, updatedAt, id)
 	if e != nil {
 		return e
 	}
 	if result.RowsAffected() != 1 {
 		return &apiError{404, "NOT_FOUND", "公告不存在"}
 	}
-	writeJSON(w, 200, map[string]string{"message": "公告已更新"})
+	writeJSON(w, 200, map[string]any{"id": id, "updatedAt": updatedAt, "message": "公告已更新"})
 	return nil
 }
+
+// handleAnnouncementPatch is the partial update contract used by UOL.
+// It locks the current row and reuses the same validation as full updates.
+func (b *backend) handleAnnouncementPatch(w http.ResponseWriter, r *http.Request) error {
+	s, err := b.requireAdmin(r, false)
+	if err != nil {
+		return err
+	}
+	id := r.PathValue("id")
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var current struct {
+		Title, Content, Severity string
+		IsPublished, IsPinned    bool
+		Priority                 int
+		PublishedAt, ExpiresAt   *time.Time
+	}
+	if err = tx.QueryRow(r.Context(), `SELECT title,content,severity,is_published,is_pinned,priority,published_at,expires_at FROM announcement WHERE id=$1 FOR UPDATE`, id).Scan(&current.Title, &current.Content, &current.Severity, &current.IsPublished, &current.IsPinned, &current.Priority, &current.PublishedAt, &current.ExpiresAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return &apiError{404, "NOT_FOUND", "公告不存在"}
+		}
+		return err
+	}
+	var patch map[string]json.RawMessage
+	if err = decodeBody(r, &patch); err != nil {
+		return err
+	}
+	fields := map[string]any{"title": &current.Title, "content": &current.Content, "severity": &current.Severity, "isPublished": &current.IsPublished, "isPinned": &current.IsPinned, "priority": &current.Priority, "publishedAt": &current.PublishedAt, "expiresAt": &current.ExpiresAt}
+	for key, raw := range patch {
+		target, ok := fields[key]
+		if !ok || (string(raw) == "null" && key != "publishedAt" && key != "expiresAt") {
+			return invalid("Invalid announcement field: " + key)
+		}
+		if err := json.Unmarshal(raw, target); err != nil {
+			return invalid("Invalid announcement field: " + key)
+		}
+	}
+	if err := validateAnnouncementInput(current.Title, current.Content, current.Severity, current.Priority, current.PublishedAt, current.ExpiresAt); err != nil {
+		return err
+	}
+	updated := time.Now().UTC()
+	_, err = tx.Exec(r.Context(), `UPDATE announcement SET title=$1,content=$2,severity=$3,is_published=$4,is_pinned=$5,priority=$6,published_at=$7,expires_at=$8,updated_by_user_id=$9,updated_at=$10 WHERE id=$11`, strings.TrimSpace(current.Title), strings.TrimSpace(current.Content), current.Severity, current.IsPublished, current.IsPinned, current.Priority, current.PublishedAt, current.ExpiresAt, s.User.ID, updated, id)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "updatedAt": updated, "message": "公告已更新"})
+	return nil
+}
+
 func (b *backend) handleAnnouncementDelete(w http.ResponseWriter, r *http.Request) error {
 	if _, e := b.requireAdmin(r, false); e != nil {
 		return e
@@ -632,7 +692,7 @@ func (b *backend) handleAnnouncementToggle(w http.ResponseWriter, r *http.Reques
 		}
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"isPublished": p})
+	writeJSON(w, 200, map[string]any{"id": r.PathValue("id"), "isPublished": p, "updatedAt": time.Now().UTC()})
 	return nil
 }
 
@@ -659,37 +719,15 @@ func validateAnnouncementInput(title, content, severity string, priority int, pu
 	return nil
 }
 func (b *backend) handleReferralDashboard(w http.ResponseWriter, r *http.Request) error {
-	s, e := b.requireSession(r)
-	if e != nil {
-		return e
-	}
-	var code string
-	e = b.db.QueryRow(r.Context(), `SELECT code FROM referral_profile WHERE user_id=$1`, s.User.ID).Scan(&code)
-	if e != nil && e != pgx.ErrNoRows {
-		return e
-	}
-	if code == "" {
-		code = supportRandomID()[:12]
-		_, e = b.db.Exec(r.Context(), `INSERT INTO referral_profile(user_id,code) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, s.User.ID, code)
-		if e != nil {
-			return e
-		}
-	}
-	var invited, rewarded int
-	var total float64
-	e = b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE status='rewarded'),COALESCE(sum(inviter_reward_credits),0) FROM referral_relationship WHERE inviter_user_id=$1`, s.User.ID).Scan(&invited, &rewarded, &total)
-	if e != nil {
-		return e
-	}
-	base := strings.TrimRight(b.config.authURL, "/")
-	if base == "" {
-		base = "http://localhost:3000"
-	}
-	rewardConfig, err := b.referralRewardConfig(r.Context())
+	session, err := b.requireSession(r)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"code": code, "inviteUrl": base + "/r/" + code, "invitedCount": invited, "rewardedCount": rewarded, "totalRewardCredits": total, "rewardConfig": rewardConfig})
+	result, err := b.referralDashboard(r.Context(), session.User.ID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, result)
 	return nil
 }
 
@@ -701,7 +739,10 @@ func (b *backend) handleReferralRelationships(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return err
 	}
-	rows, err := b.db.Query(r.Context(), `SELECT rr.id,u.name,u.email,rr.status,rr.inviter_reward_credits,rr.invitee_reward_credits,rr.created_at,rr.rewarded_at FROM referral_relationship rr JOIN "user" u ON u.id=rr.invitee_user_id WHERE rr.inviter_user_id=$1 ORDER BY rr.created_at DESC,rr.id DESC`, s.User.ID)
+	return b.writeReferralRelationships(w, r, s.User.ID)
+}
+func (b *backend) writeReferralRelationships(w http.ResponseWriter, r *http.Request, userID string) error {
+	rows, err := b.db.Query(r.Context(), `SELECT rr.id,u.name,u.email,rr.status,rr.inviter_reward_credits,rr.invitee_reward_credits,rr.created_at,rr.rewarded_at FROM referral_relationship rr JOIN "user" u ON u.id=rr.invitee_user_id WHERE rr.inviter_user_id=$1 ORDER BY rr.created_at DESC,rr.id DESC`, userID)
 	if err != nil {
 		return err
 	}
@@ -756,18 +797,7 @@ func (b *backend) referralRewardConfig(ctx context.Context) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	candidate, ok := value.(map[string]any)
-	if !ok {
-		return fallback, nil
-	}
-	result := map[string]any{"enabled": false}
-	if enabled, ok := candidate["enabled"].(bool); ok {
-		result["enabled"] = enabled
-	}
-	for _, side := range []string{"inviter", "invitee"} {
-		result[side] = normalizeReferralRewardSide(candidate[side], fallback[side].(map[string]any))
-	}
-	return result, nil
+	return normalizeReferralRewardConfig(value), nil
 }
 
 func normalizeReferralRewardSide(value any, fallback map[string]any) map[string]any {
@@ -779,18 +809,7 @@ func normalizeReferralRewardSide(value any, fallback map[string]any) map[string]
 	if mode != "fixed" && mode != "percentage" {
 		mode = fallback["mode"].(string)
 	}
-	amount := 0.0
-	switch n := candidate["value"].(type) {
-	case float64:
-		amount = n
-	case float32:
-		amount = float64(n)
-	case int:
-		amount = float64(n)
-	}
-	if amount < 0 || amount != amount {
-		amount = fallback["value"].(float64)
-	}
+	amount := validReferralRewardNumber(candidate["value"], fallback["value"].(float64))
 	max := 100.0
 	if mode == "fixed" {
 		max = 1_000_000

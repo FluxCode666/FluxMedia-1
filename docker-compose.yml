@@ -66,7 +66,7 @@ services:
       #   否则登录回调/Cookie 域不匹配,超管也进不去。
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填:会话签名密钥,未设置将无法登录}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL 必填:须为站点公网访问地址(如 https://your-domain),否则登录失败}
-      GO_BACKEND_URL: ${GO_BACKEND_URL:-http://backend:8080}
+      GO_BACKEND_URL: ${GO_BACKEND_CONTAINER_URL:-http://backend:8080}
       LOCAL_STORAGE_PATH: /app/storage
     expose:
       - "3000"
@@ -103,8 +103,10 @@ services:
       TZ: UTC
       GO_BACKEND_MAX_BODY_BYTES: ${GO_BACKEND_MAX_BODY_BYTES:-104857600}
       GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
-      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
+      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_CONTAINER_URL:-http://script-runtime:8090}
       GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+      GO_MEDIA_PROCESSING_URL: ${GO_MEDIA_PROCESSING_CONTAINER_URL:-http://media-processing:8091}
+      GO_MEDIA_PROCESSING_TOKEN: ${GO_MEDIA_PROCESSING_TOKEN:-}
     ports:
       - "${GO_BACKEND_PORT:-3000}:8080"
     depends_on:
@@ -113,6 +115,8 @@ services:
       redis:
         condition: service_healthy
       script-runtime:
+        condition: service_healthy
+      media-processing:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/backend", "--healthcheck"]
@@ -140,6 +144,27 @@ services:
       - "8090"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  # 仅处理图像字节；不持有数据库、供应商或用户凭据，所有业务由 Go 调度。
+  media-processing:
+    build:
+      context: .
+      dockerfile: Dockerfile.media-processing-runtime
+    restart: unless-stopped
+    environment:
+      MEDIA_PROCESSING_HOST: 0.0.0.0
+      MEDIA_PROCESSING_PORT: "8091"
+      MEDIA_PROCESSING_TOKEN: ${GO_MEDIA_PROCESSING_TOKEN:-}
+      MEDIA_PROCESSING_MODELS_PATH: /models
+    expose:
+      - "8091"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8091/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 10

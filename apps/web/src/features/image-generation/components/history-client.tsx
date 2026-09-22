@@ -7,16 +7,15 @@
  * 数据读取与用户归属校验由服务端 UOL 查询完成。
  */
 
-import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { calculateTotalPages } from "@repo/shared/pagination/state";
-import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
+import { StorageThumbnail } from "@repo/shared/storage/storage-thumbnail";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Clock, Film, ImageIcon, ImagePlus } from "lucide-react";
 import dynamic from "next/dynamic";
-import Image from "next/image";
 import { useLocale } from "next-intl";
 import { useEffect, useState } from "react";
 import { UrlCursorPaginationControls } from "@/features/pagination/cursor-pagination-controls";
@@ -397,16 +396,14 @@ export function HistoryClient({
                           {item.kind === "image" &&
                           item.imageUrl &&
                           item.status === "completed" ? (
-                            <Image
+                            <StorageThumbnail
+                              src={item.imageUrl}
+                              thumbnailWidth={128}
                               alt={item.prompt}
                               className="object-contain"
                               fetchPriority="low"
                               fill
                               sizes="64px"
-                              src={
-                                buildStorageThumbnailUrl(item.imageUrl, 128) ??
-                                item.imageUrl
-                              }
                               unoptimized
                             />
                           ) : (

@@ -31,7 +31,11 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { HistoryClient, type HistoryClientProps } from "./history-client";
+import {
+  HistoryClient,
+  type HistoryClientProps,
+  type HistoryImageRecord,
+} from "./history-client";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -130,6 +134,58 @@ afterEach(() => {
 });
 
 describe("HistoryClient supplier account identity", () => {
+  it("falls back to the original image when a thumbnail request fails", async () => {
+    const props = createProps(false);
+    const image: HistoryImageRecord = {
+      completedAt: "2026-07-22T12:01:00.000Z",
+      createdAt: "2026-07-22T12:00:00.000Z",
+      creditDetails: null,
+      creditsConsumed: 1,
+      error: null,
+      id: "image-1",
+      imageUrl:
+        "/api/storage/generations/user-1/output.png?sig=signed&exp=9999999999",
+      kind: "image",
+      model: "gpt-image-1",
+      processingDurationSeconds: 60,
+      prompt: "image prompt",
+      promptRepairNotice: null,
+      referenceImages: [],
+      revisedPrompt: null,
+      size: "1024x1024",
+      status: "completed",
+    };
+    props.records = [image];
+    renderHistory(false);
+    // Replace the fixture rendered by renderHistory with the image fixture.
+    act(() => {
+      root?.render(createElement(HistoryClient, props));
+    });
+
+    const thumbnail = document.querySelector("li img");
+    expect(thumbnail).not.toBeNull();
+    expect(thumbnail?.getAttribute("src")).toContain(
+      "/api/storage/generations/w128/user-1/output.png"
+    );
+
+    await act(async () => {
+      thumbnail?.dispatchEvent(new Event("error"));
+    });
+    const fallback = new URL(
+      thumbnail?.getAttribute("src") ?? "",
+      "http://localhost:3000"
+    );
+    const original = new URL(image.imageUrl ?? "", "http://localhost:3000");
+    expect(fallback.pathname).toBe(original.pathname);
+    expect(fallback.searchParams.get("sig")).toBe(
+      original.searchParams.get("sig")
+    );
+    expect(fallback.searchParams.get("exp")).toBe(
+      original.searchParams.get("exp")
+    );
+    expect(fallback.searchParams.get("fm_fallback")).toMatch(/^[a-z0-9]+$/u);
+  });
+
   it("shows supplier account name and ID in global usage records", () => {
     renderHistory(true);
 

@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { imageGenerateInputSchema, type ImageGenerateOperationInput } from "@repo/shared/uol/operations/image-generation";
+
 /**
  * 站内图片异步任务的身份契约。
  *
@@ -12,4 +15,14 @@ export const SITE_IMAGE_ASYNC_API_KEY_ID = "web:session";
 /** 判断异步任务是否由站内会话创建。 */
 export function isSiteImageAsyncTaskApiKeyId(value: string): boolean {
   return value === SITE_IMAGE_ASYNC_API_KEY_ID;
+}
+
+/** 为新单项 writer 生成带算法前缀的稳定输入摘要。 */
+export function createImageAsyncTaskInputDigest(
+  input: ImageGenerateOperationInput
+): string {
+  const parsed = imageGenerateInputSchema.parse(input);
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(parsed))
+    .digest("hex")}`;
 }

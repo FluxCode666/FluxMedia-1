@@ -366,13 +366,12 @@ export function ModelConfigurationDialog({
                 </p>
               ) : null}
             </div>
-            {entry.category === "image" &&
-            entry.pricingSource === "unconfigured" ? (
+            {entry.pricingSource === "unconfigured" ? (
               <p
                 role="status"
                 className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-foreground"
               >
-                该模型尚未配置价格，当前不会进入模型广场，也不能执行计费。请填写完整四档价格后保存。
+                该模型尚未配置价格，当前不会进入模型广场，也不能执行计费。请填写全部支持分辨率的完整价格后保存。
               </p>
             ) : null}
             {fields.showImagePricing && draft.category === "image" ? (

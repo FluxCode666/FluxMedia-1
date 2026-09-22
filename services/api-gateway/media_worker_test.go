@@ -111,6 +111,7 @@ func TestQueryProviderRequestScriptMergesQueryAndHeaders(t *testing.T) {
 	b := &backend{config: config{scriptRuntimeURL: runtime.URL}}
 	cfg := providerConfig{
 		baseURL: upstream.URL,
+		auth:    "none",
 		operations: map[string]any{
 			"videos.query": map[string]any{"requestScript": `return { query: { detail: "full" }, headers: { "X-Vendor-Mode": "fast" } };`},
 		},

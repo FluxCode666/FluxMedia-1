@@ -1,5 +1,13 @@
 import { headers } from "next/headers";
 
+/** HTTP metadata stays available to domain transports without changing Error compatibility. */
+export class GoBackendHttpError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+    this.name = "GoBackendHttpError";
+  }
+}
+
 /**
  * Server-only request helper for first-party Go endpoints.
  *
@@ -16,10 +24,13 @@ export async function requestGoBackendJson<T>(
     /\/$/u,
     ""
   );
-  const incoming = await headers();
   const requestHeaders = new Headers(init.headers);
-  const cookie = incoming.get("cookie");
-  if (cookie) requestHeaders.set("cookie", cookie);
+  try {
+    const cookie = (await headers()).get("cookie");
+    if (cookie) requestHeaders.set("cookie", cookie);
+  } catch {
+    // Internal startup and maintenance callers have no Next request scope.
+  }
   if (init.body && !requestHeaders.has("content-type")) {
     requestHeaders.set("content-type", "application/json");
   }
@@ -30,12 +41,23 @@ export async function requestGoBackendJson<T>(
     cache: "no-store",
   });
   const payload = (await response.json().catch(() => null)) as T & {
-    error?: { message?: string };
+    error?: { message?: string; code?: string };
   };
   if (!response.ok) {
-    throw new Error(
-      payload?.error?.message || `Go backend request failed (${response.status})`
+    throw new GoBackendHttpError(
+      payload?.error?.message || `Go backend request failed (${response.status})`,
+      response.status,
+      payload?.error?.code
     );
   }
   return payload as T;
+}
+
+/** Internal Go operations authenticate the trusted server with its cron key. */
+export async function requestGoBackendInternalJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) throw new Error("Go internal credential is not configured");
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${secret}`);
+  return requestGoBackendJson<T>(path, { ...init, headers });
 }

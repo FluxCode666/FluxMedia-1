@@ -1,3 +1,5 @@
+import { getUserSlotKey, type RedisImageGenerationAdmissionLease } from "./image-admission-lease";
+export { restoreImageGenerationAdmissionLease, type RedisImageGenerationAdmissionLease } from "./image-admission-lease";
 /**
  * Redis 生图并发槽租约。
  *
@@ -6,7 +8,7 @@
  * 禁止退回进程内计数。
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { logWarn } from "@repo/shared/logger";
 import { getRequiredRedisClient } from "@repo/shared/redis/required-client";
 import { z } from "zod";
@@ -14,7 +16,6 @@ import { z } from "zod";
 const SLOT_KEY_PREFIX =
   "fluxmedia:v1:image-generation:slots:{image-generation}";
 const GLOBAL_SLOT_KEY = `${SLOT_KEY_PREFIX}:global`;
-const USER_SLOT_KEY_PREFIX = `${SLOT_KEY_PREFIX}:user:`;
 const DEFAULT_SLOT_LEASE_TTL_MS = 22 * 60_000;
 
 const ACQUIRE_ADMISSION_SCRIPT = `
@@ -104,12 +105,6 @@ export type RedisImageGenerationSlotClient = {
   ): Promise<unknown>;
 };
 
-export type RedisImageGenerationAdmissionLease = {
-  token: string;
-  userKey: string;
-  expiresAt: number;
-};
-
 export type RedisImageGenerationExecutionLease = {
   token: string;
   expiresAt: number;
@@ -122,36 +117,6 @@ export type RedisImageGenerationAdmissionAcquisition =
 export type RedisImageGenerationExecutionAcquisition =
   | { status: "acquired"; lease: RedisImageGenerationExecutionLease }
   | { status: "blocked"; reason: "global" };
-
-/** 将外部用户 ID 散列为固定长度 Redis key，避免原始标识进入运维键空间。 */
-function getUserSlotKey(userId: string): string {
-  const digest = createHash("sha256").update(userId).digest("hex");
-  return `${USER_SLOT_KEY_PREFIX}${digest}`;
-}
-
-/** 从持久 token 和用户身份重建不暴露原始用户 ID 的准入租约。 */
-export function restoreImageGenerationAdmissionLease(input: {
-  userId: string;
-  token: string;
-  expiresAt: Date | number;
-}): RedisImageGenerationAdmissionLease {
-  const expiresAt =
-    input.expiresAt instanceof Date
-      ? input.expiresAt.getTime()
-      : input.expiresAt;
-  if (
-    !input.token.trim() ||
-    !Number.isSafeInteger(expiresAt) ||
-    expiresAt <= 0
-  ) {
-    throw new Error("Invalid persisted image admission lease");
-  }
-  return {
-    token: input.token,
-    userKey: getUserSlotKey(input.userId),
-    expiresAt,
-  };
-}
 
 /** 读取有界槽位租约 TTL；默认覆盖完整 20 分钟生图预算并留出释放余量。 */
 export function getImageGenerationSlotLeaseTtlMs(): number {

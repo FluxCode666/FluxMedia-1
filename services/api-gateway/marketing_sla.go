@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"time"
 )
 
 // registerMarketingSLARoutes exposes the public homepage SLA flag and the
@@ -14,17 +13,44 @@ func (b *backend) registerMarketingSLARoutes(mux *http.ServeMux) {
 }
 
 func (b *backend) handleMarketingSLAStatsGet(w http.ResponseWriter, r *http.Request) error {
-	start := time.Now().UTC().Add(-24 * time.Hour)
-	var sample, completed, failed, moderation, userRequest int
-	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE status IN ('completed','failed')), count(*) FILTER (WHERE status='completed'), count(*) FILTER (WHERE status='failed'), count(*) FILTER (WHERE status='failed' AND lower(coalesce(error,'')) LIKE '%moderation%'), count(*) FILTER (WHERE status='failed' AND lower(coalesce(error,'')) NOT LIKE '%moderation%') FROM generation WHERE created_at >= $1`, start).Scan(&sample, &completed, &failed, &moderation, &userRequest); err != nil {
+	// The public homepage uses the latest 1000 terminal tasks, including older
+	// tasks on quiet installations. Pending work never enters the sample.
+	rows, err := b.db.Query(r.Context(), `SELECT status,error FROM generation WHERE status IN ('completed','failed') ORDER BY created_at DESC,id DESC LIMIT 1000`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var sample, completed, failed, platform, moderation, userRequest int
+	for rows.Next() {
+		var status string
+		var message *string
+		if err := rows.Scan(&status, &message); err != nil {
+			return err
+		}
+		sample++
+		if status == "completed" {
+			completed++
+			continue
+		}
+		failed++
+		switch classifyGenerationError(message) {
+		case "moderation":
+			moderation++
+		case "user_request":
+			userRequest++
+		default:
+			platform++
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	rate := 1.0
-	if sample > 0 {
-		rate = float64(completed) / float64(sample)
+	if denominator := completed + platform; denominator > 0 {
+		rate = float64(completed) / float64(denominator)
 	}
 	noStore(w)
-	writeJSON(w, http.StatusOK, map[string]any{"sampleSize": sample, "completed": completed, "failed": failed, "successRate": rate, "platformErrors": 0, "moderationErrors": moderation, "userRequestErrors": userRequest})
+	writeJSON(w, http.StatusOK, map[string]any{"sampleSize": sample, "completed": completed, "failed": failed, "successRate": rate, "platformErrors": platform, "moderationErrors": moderation, "userRequestErrors": userRequest})
 	return nil
 }
 

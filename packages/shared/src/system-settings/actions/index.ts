@@ -98,10 +98,13 @@ export const getGlobalModerationPolicyAction = protectedAction
   .metadata({ action: "system-settings.moderation.getGlobalPolicy" })
   .action(async () => {
     try {
-      const { policy } = await requestGo<{
+      const raw = await requestGo<{
         policy: ResolvedModerationPolicyValues;
+        recentAudits: Array<{ id: string; adminUserId: string | null; reason: string | null;
+          before: Record<string, unknown> | null; after: Record<string, unknown> | null;
+          metadata: Record<string, unknown> | null; createdAt: string }>;
       }>("/api/system-settings/moderation-policy");
-      return { policy, recentAudits: [] };
+      return { policy: raw.policy, recentAudits: raw.recentAudits.map(audit => ({ ...audit, createdAt: new Date(audit.createdAt) })) };
     } catch (error) {
       throwModerationPolicyActionError(error);
     }
@@ -113,7 +116,7 @@ export const setGlobalModerationPolicyAction = protectedAction
   .schema(globalModerationPolicyInputSchema)
   .action(async ({ parsedInput }) => {
     try {
-      const result = await requestGo<SetGlobalRiskLevelResult>(
+      const result = await requestGo<Omit<SetGlobalRiskLevelResult, "updatedAt"> & { updatedAt: string }>(
         "/api/system-settings/moderation-policy",
         parsedInput,
         "PUT"
@@ -121,6 +124,7 @@ export const setGlobalModerationPolicyAction = protectedAction
       return {
         success: true,
         ...result,
+        updatedAt: new Date(result.updatedAt),
         message: result.changed
           ? "全站审核级别已更新"
           : "全站审核级别未发生变化",

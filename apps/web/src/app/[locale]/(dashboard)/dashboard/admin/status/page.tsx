@@ -139,6 +139,73 @@ type VideoGenerationStats = {
   byModel: VideoModelStats[];
 };
 
+type SchedulerStats = {
+  acquiredCount: number;
+  switchCount: number;
+  noCandidateCount: number;
+  capacityRejectedCount: number;
+  avgCandidateCount: number | null;
+  avgLatencyMs: number | null;
+  byOutcome: Array<{ key: string; count: number }>;
+  byStrategy: Array<{ key: string; count: number }>;
+  byRequestKind: Array<{ key: string; count: number }>;
+};
+
+type AdminStatusOverview = {
+  now: string;
+  stats24h: GenerationWindowStats;
+  stats7d: GenerationWindowStats;
+  scheduler24h: SchedulerStats;
+  scheduler7d: SchedulerStats;
+  generationTotals: {
+    total: number;
+    completed: number;
+    failed: number;
+    pending: number;
+    completedImages: number;
+    creditsConsumed: number;
+  };
+  credits: {
+    balance: {
+      totalBalance: number;
+      totalEarned: number;
+      totalSpent: number;
+      frozen: number;
+    };
+    ledger24h: CreditLedgerWindow;
+    ledger7d: CreditLedgerWindow;
+    batches: {
+      activeRemaining: number;
+      consumedAmount: number;
+      expiredAmount: number;
+    };
+  };
+  users: {
+    total: number;
+    new24h: number;
+    new7d: number;
+    banned: number;
+    observers: number;
+    admins: number;
+    superAdmins: number;
+  };
+  tickets: { unresolved: number };
+  backend: { api: BackendHealthStats };
+  video7d: VideoGenerationStats;
+  topErrors24h: Array<{
+    message: string;
+    count: number;
+    category: "platform" | "moderation" | "user_request";
+  }>;
+};
+
+type CreditLedgerWindow = {
+  consumption: number;
+  refund: number;
+  grants: number;
+  expiration: number;
+};
+
 type HistoricalErrorFilters = {
   range: ErrorRange;
   fromInput: string;
@@ -961,7 +1028,7 @@ function HistoricalErrorsCard({
 }
 
 async function loadStatusData() {
-  return requestGoJson<any>("/api/admin/status/overview");
+  return requestGoJson<AdminStatusOverview>("/api/admin/status/overview");
 }
 
 // 聚合由 Go 后端按请求会话执行，避免在 Next 缓存包装器内读取 cookies。
@@ -1392,7 +1459,7 @@ export default async function GlobalStatusPage({
             </div>
           ) : (
             <div className="divide-y overflow-hidden rounded-lg border">
-              {data.topErrors24h.map((item: any) => (
+              {data.topErrors24h.map((item) => (
                 <div
                   key={item.message}
                   className="grid gap-3 p-3 text-sm md:grid-cols-[120px_140px_1fr]"

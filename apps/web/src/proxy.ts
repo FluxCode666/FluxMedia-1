@@ -2,18 +2,11 @@
  * Next.js 请求代理。
  *
  * 使用方：Next.js 16 在 Node.js Runtime 中自动执行。负责版本化静态资源重写、
- * API 动态限流、国际化路由和登录态页面保护；限流配置经系统设置缓存运行时读取。
+ * 国际化路由和登录态页面保护；API 限流由 Go 后端统一执行。
  */
-import {
-  checkRateLimit,
-  createRateLimitResponse,
-  getClientIp,
-  getRateLimitHeaders,
-} from "@repo/shared/rate-limit";
 import { type NextRequest, NextResponse } from "next/server";
 import createIntlMiddleware from "next-intl/middleware";
 import { routing } from "@/i18n/routing";
-import { getApiRateLimitType } from "./rate-limit-routing";
 
 /** 创建国际化请求处理器，无外部副作用。 */
 const intlMiddleware = createIntlMiddleware(routing);
@@ -55,7 +48,7 @@ function setPrivateNoStore(response: NextResponse) {
  * 处理进入应用的请求。
  *
  * 功能：
- * 1. API 限流（全局 + 路由级别）
+ * 1. 将 API 请求交给 Go 限流和执行
  * 2. 国际化路由处理（next-intl）
  * 3. 认证保护（Better Auth）
  *    - /dashboard/* 需要登录才能访问
@@ -63,7 +56,7 @@ function setPrivateNoStore(response: NextResponse) {
  *
  * @param request - Next.js 传入的请求。
  * @returns 重写、重定向、限流拒绝或继续处理的响应。
- * @sideEffects 限流路径可能访问 Redis/PostgreSQL；依赖故障由限流模块降级。
+ * @sideEffects 页面会话读取通过 Go；不访问 Redis 或 PostgreSQL。
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -102,27 +95,6 @@ export async function proxy(request: NextRequest) {
       return setPrivateNoStore(NextResponse.next());
     }
 
-    // 白名单模式：只对匹配的敏感路由做限流
-    const rateLimitType = getApiRateLimitType(pathname);
-    if (rateLimitType) {
-      const ip = getClientIp(request);
-      const result = await checkRateLimit(ip, rateLimitType);
-
-      if (!result.success) {
-        return createRateLimitResponse(result);
-      }
-
-      const response = NextResponse.next();
-      const headers = getRateLimitHeaders(result);
-      for (const [key, value] of Object.entries(headers)) {
-        response.headers.set(key, value);
-      }
-      return pathname.startsWith("/api/auth/") ||
-        pathname === "/api/session/current"
-        ? setPrivateNoStore(response)
-        : response;
-    }
-
     // 未匹配的 API 路由直接放行，不触发 Redis
     return NextResponse.next();
   }
@@ -134,22 +106,6 @@ export async function proxy(request: NextRequest) {
   // Gemini Developer API 使用根级 /v1beta 命名空间；它与 /v1 一样属于外接 API，
   // 必须绕过 next-intl，否则会被重定向到 /en/v1beta/* 页面路径。
   if (pathname.startsWith("/v1/") || pathname.startsWith("/v1beta/")) {
-    const rateLimitType = getApiRateLimitType(pathname);
-    if (rateLimitType) {
-      const ip = getClientIp(request);
-      const result = await checkRateLimit(ip, rateLimitType);
-
-      if (!result.success) {
-        return createRateLimitResponse(result);
-      }
-
-      const response = NextResponse.next();
-      const headers = getRateLimitHeaders(result);
-      for (const [key, value] of Object.entries(headers)) {
-        response.headers.set(key, value);
-      }
-      return response;
-    }
 
     return NextResponse.next();
   }

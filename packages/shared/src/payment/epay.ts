@@ -7,9 +7,7 @@
  */
 
 import crypto from "node:crypto";
-import { db } from "@repo/database";
-import { epayOrder } from "@repo/database/schema";
-import { eq } from "drizzle-orm";
+import { requestGoBackendInternalJson } from "../http/go-backend";
 import { getBaseUrl } from "../config/payment";
 import {
   getRuntimeSettingSelect,
@@ -316,63 +314,20 @@ export async function createRuntimeEpayPurchase(
   };
 }
 
-export async function saveEpayOrder(
-  metadata: EpayCreditPurchaseMetadata,
-  amount: number | string
-): Promise<void> {
-  await db
-    .insert(epayOrder)
-    .values({
-      outTradeNo: metadata.outTradeNo,
-      userId: metadata.userId,
-      businessType: metadata.type,
-      amount: Number(formatMoney(amount)),
-      status: "pending",
-      metadata: metadata as unknown as Record<string, unknown>,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: epayOrder.outTradeNo,
-      set: {
-        userId: metadata.userId,
-        businessType: metadata.type,
-        amount: Number(formatMoney(amount)),
-        status: "pending",
-        metadata: metadata as unknown as Record<string, unknown>,
-        updatedAt: new Date(),
-      },
-    });
-}
-
-export async function getEpayOrderMetadata(
-  outTradeNo: string
-): Promise<EpayMetadata | null> {
+/** Historical Epay order reads use Go; new orders are created by Go checkout. */
+export async function getEpayOrderMetadata(outTradeNo: string): Promise<EpayMetadata | null> {
   if (!outTradeNo) return null;
-
-  const [order] = await db
-    .select({
-      metadata: epayOrder.metadata,
-    })
-    .from(epayOrder)
-    .where(eq(epayOrder.outTradeNo, outTradeNo))
-    .limit(1);
-
-  if (!order?.metadata) return null;
-  return normalizeEpayMetadata(order.metadata);
+  const order = await requestGoBackendInternalJson<{ metadata: EpayMetadataPayload; status: EpayOrderStatus } | null>(
+    `/api/internal/payments/epay/orders/${encodeURIComponent(outTradeNo)}`
+  );
+  return order?.metadata ? normalizeEpayMetadata(order.metadata) : null;
 }
-
-export async function getEpayOrderStatus(
-  outTradeNo: string
-): Promise<EpayOrderStatus | null> {
+export async function getEpayOrderStatus(outTradeNo: string): Promise<EpayOrderStatus | null> {
   if (!outTradeNo) return null;
-
-  const [order] = await db
-    .select({ status: epayOrder.status })
-    .from(epayOrder)
-    .where(eq(epayOrder.outTradeNo, outTradeNo))
-    .limit(1);
-
-  return (order?.status as EpayOrderStatus | undefined) ?? null;
+  const order = await requestGoBackendInternalJson<{ status: EpayOrderStatus } | null>(
+    `/api/internal/payments/epay/orders/${encodeURIComponent(outTradeNo)}`
+  );
+  return order?.status ?? null;
 }
 
 export function verifyEpayParams(

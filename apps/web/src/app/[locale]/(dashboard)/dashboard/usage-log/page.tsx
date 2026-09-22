@@ -5,10 +5,15 @@
  */
 
 import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
 
 /** 将旧地址兼容迁移到当前语言的使用记录页。 */
-export default async function LegacyUsageLogPage() {
-  const locale = await getLocale();
+export default async function LegacyUsageLogPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  // The locale is already a route parameter. Reading it directly avoids a
+  // next-intl request-context lookup during cached server rendering.
+  const { locale } = await params;
   redirect(`/${locale}/dashboard/history`);
 }

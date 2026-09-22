@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { getApiIntegrationDocs } from "./api-integration-docs-data";
 import { getSystemDocsVideoEndpoints } from "./system-docs";
 
 const OBSOLETE_VIDEO_RESPONSE_FIELDS = [
@@ -28,17 +29,14 @@ describe("system docs video contract", () => {
   it.each(["zh", "en"])("%s 精确描述持久视频创建任务", (locale) => {
     const endpoints = getSystemDocsVideoEndpoints(locale);
     const endpoint = endpoints.find(
-      (item) =>
-        item.method === "POST" && item.path === "/v1/videos/generations"
+      (item) => item.method === "POST" && item.path === "/v1/videos/generations"
     );
     if (!endpoint) throw new Error(`${locale} 缺少视频创建文档`);
 
-    expect(endpoint.description).toContain("HTTP 202");
+    expect(endpoint.notes.join("\n")).toContain("HTTP 202");
     expect(endpoint.description).toMatch(/OpenAI|风格|FluxMedia/u);
     expect(endpoint.responseExample).toContain('"object": "video.task"');
     expect(endpoint.responseExample).toContain('"kind": "snapshot"');
-    expect(JSON.stringify(endpoint)).toContain("quote_token / quoteToken");
-    expect(JSON.stringify(endpoint)).toContain("currentQuote");
     const idMatch = endpoint.responseExample.match(/"id": "([^"]+)"/);
     if (!idMatch?.[1]) throw new Error(`${locale} 创建响应缺少任务 ID`);
     expect(idMatch[1]).toMatch(/^video_[0-9a-f]{40}$/u);
@@ -50,25 +48,16 @@ describe("system docs video contract", () => {
       expect(endpoint.responseExample).not.toContain(field);
     }
 
-    const asyncField = endpoint.fields.find((field) => field.name === "async");
     const callbackField = endpoint.fields.find((field) =>
       field.name.includes("callback_url")
     );
-    expect(asyncField?.description).toMatch(/兼容字段|Compatibility field/);
-    expect(asyncField?.description).toMatch(/不支持|not a supported/);
-    expect(callbackField?.description).toMatch(/持久任务|persistent task/);
     expect(callbackField?.description).toContain("https");
-    expect(endpoint.responses.map((field) => field.name)).toEqual([
-      "object",
-      "id / task_id / generation_id",
-      "status",
-      "model",
-      locale === "zh"
-        ? "duration / duration_seconds、aspectRatio / aspect_ratio、resolution"
-        : "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
-      "billing",
-      "generateAudio / generate_audio",
-    ]);
+    const shared = getApiIntegrationDocs(locale).endpoints.find(
+      (item) => item.path === endpoint.path
+    );
+    expect(endpoint.fields).toEqual(shared?.parameters);
+    expect(endpoint.responses).toEqual(shared?.responses);
+    expect(endpoint.responseExample).toBe(shared?.responseExample);
     expect(JSON.stringify(endpoint)).toMatch(
       /seconds \/ duration(?: \/ duration_seconds)?/u
     );
@@ -79,9 +68,12 @@ describe("system docs video contract", () => {
     expect(notes).toContain("/v1/videos/generations");
     expect(notes).toContain("/api/v1/videos/generations");
     if (locale === "zh") {
-      expect(notes).toContain("POST /v1/videos 创建地址已下线");
+      expect(notes).toContain("POST /v1/videos");
+      expect(notes).toContain("已不再提供视频创建");
     } else {
-      expect(notes).toContain("POST /v1/videos is no longer a creation endpoint");
+      expect(notes).toContain(
+        "POST /v1/videos is no longer a video creation endpoint"
+      );
     }
   });
 
@@ -92,7 +84,9 @@ describe("system docs video contract", () => {
     );
     if (!endpoint) throw new Error(`${locale} 缺少视频任务查询文档`);
 
-    expect(endpoint.title).toBe("Get video task");
+    expect(endpoint.title).toBe(
+      locale === "zh" ? "查询视频任务" : "Get video task"
+    );
     expect(endpoint.responseExample).toContain('"object": "video.task"');
     expect(endpoint.responseExample).toContain('"kind": "snapshot"');
     expect(endpoint.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
@@ -105,18 +99,11 @@ describe("system docs video contract", () => {
     expect(endpoint.notes.join("\n")).not.toMatch(
       /Video task not found or expired|返回结构与 callback_url|identical to the task object/
     );
-    expect(endpoint.responses.map((field) => field.name)).toEqual([
-      "object",
-      "id / task_id / generation_id",
-      "status",
-      locale === "zh"
-        ? "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution"
-        : "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
-      "generateAudio / generate_audio",
-      "input.mode / input.count",
-      "billing",
-      "data[].url / video_url",
-      "created_at / completed_at",
-    ]);
+    const shared = getApiIntegrationDocs(locale).endpoints.find(
+      (item) => item.path === endpoint.path
+    );
+    expect(endpoint.fields).toEqual(shared?.parameters);
+    expect(endpoint.responses).toEqual(shared?.responses);
+    expect(endpoint.description).toBe(shared?.description);
   });
 });

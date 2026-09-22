@@ -94,7 +94,7 @@ type adminStatusGenerationRow struct {
 func (b *backend) adminGenerationWindowStats(ctx context.Context, start time.Time) (map[string]any, error) {
 	var total, completed, failed, pending, produced int64
 	var credits, avg, p95 *float64
-	err := b.db.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE status='completed'),count(*) FILTER (WHERE status='failed'),count(*) FILTER (WHERE status='pending'),COALESCE(sum(CASE WHEN status='completed' THEN CASE WHEN jsonb_typeof(metadata::jsonb #> '{outputImage,billableImageOutputCount}')='number' THEN (metadata::jsonb #>> '{outputImage,billableImageOutputCount}')::int WHEN storage_key IS NOT NULL THEN 1 ELSE 0 END ELSE 0 END),0),COALESCE(sum(credits_consumed),0),avg(round(greatest(0,extract(epoch FROM (completed_at-created_at)))) FILTER (WHERE status='completed' AND completed_at IS NOT NULL)),percentile_disc(0.95) WITHIN GROUP (ORDER BY round(greatest(0,extract(epoch FROM (completed_at-created_at)))) ) FILTER (WHERE status='completed' AND completed_at IS NOT NULL) FROM generation WHERE created_at >= $1`, start).Scan(&total, &completed, &failed, &pending, &produced, &credits, &avg, &p95)
+	err := b.db.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE status='completed'),count(*) FILTER (WHERE status='failed'),count(*) FILTER (WHERE status='pending'),COALESCE(sum(CASE WHEN status='completed' THEN CASE WHEN jsonb_typeof(metadata::jsonb #> '{outputImage,billableImageOutputCount}')='number' THEN (metadata::jsonb #>> '{outputImage,billableImageOutputCount}')::int WHEN storage_key IS NOT NULL THEN 1 ELSE 0 END ELSE 0 END),0),COALESCE(sum(credits_consumed),0),avg(round(greatest(0,extract(epoch FROM (completed_at-created_at))))) FILTER (WHERE status='completed' AND completed_at IS NOT NULL),percentile_disc(0.95) WITHIN GROUP (ORDER BY round(greatest(0,extract(epoch FROM (completed_at-created_at))))) FILTER (WHERE status='completed' AND completed_at IS NOT NULL) FROM generation WHERE created_at >= $1`, start).Scan(&total, &completed, &failed, &pending, &produced, &credits, &avg, &p95)
 	if err != nil {
 		return nil, err
 	}
@@ -245,27 +245,9 @@ func adminResolutionPresets(edge int) []string {
 }
 
 func adminStatusErrorCategory(message *string) string {
-	if message == nil {
-		return "platform"
-	}
-	v := strings.ToLower(strings.NewReplacer("’", "'", "‘", "'", string(rune(96)), "'").Replace(*message))
-	for _, pattern := range []string{"aliyun moderation timed out", "aliyun moderation failed", "content moderation failed", "moderation skipped unexpectedly", "moderation timed out", "moderation failed", "socket hang up", "socket closed", "connection reset", "econnreset", "operation was aborted", "temporarily unavailable", "service unavailable"} {
-		if strings.Contains(v, pattern) {
-			return "platform"
-		}
-	}
-	for _, pattern := range []string{"content failed moderation", "content blocked", "content policy", "content policy violation", "violates our content policy", "policy violation", "policy_violation", "safety policy", "safety system", "safety violation", "safety_violations", "request was rejected by the safety system", "rejected by the safety system", "blocked by the safety system", "flagged by the safety system", "image_unsafe", "not allowed to generate", "unsafe content", "未能通过安全", "安全系统", "安全限制", "安全过滤器", "系统拦截", "系统拒绝", "内容审查", "露骨", "性暗示", "裸露", "自伤", "未成年人", "受版权保护", "拒绝", "拦截"} {
-		if strings.Contains(v, pattern) {
-			return "moderation"
-		}
-	}
-	for _, pattern := range []string{"prompt_too_long", "提示词过长", "prompt too long", "too_many_images", "参考图最多", "too many reference images", "image_too_large", "image dimensions exceed", "decompression bomb", "invalid image data", "invalid image file", "invalid image format", "unsupported image format", "unable to decode", "invalid_mask_image_format", "积分不足", "insufficient credits", "insufficient_credits", "api key quota exceeded", "api key credit limit", "api_key_quota_exceeded", "invalid model", "unsupported model", "prompt exceeds", "invalid quality", "invalid moderation", "invalid thinking", "invalid display size", "invalid resolution", "transparent background is not supported", "must be between", "total pixels", "no more than", "at least one source image", "source images must be", "reference images must be", "mask must be", "total upload size", "upload is too large", "invalid or missing api key", "account frozen", "image_generation_user_error", "user_error"} {
-		if strings.Contains(v, pattern) {
-			return "user_request"
-		}
-	}
-	return "platform"
+	return classifyGenerationError(message)
 }
+
 func (b *backend) handleAdminStatusErrors(w http.ResponseWriter, r *http.Request) error {
 	if _, err := b.requireAdminViewer(r); err != nil {
 		return err
@@ -368,7 +350,7 @@ func (b *backend) adminTicketStats(ctx context.Context, last24h time.Time) (map[
 	return map[string]any{"open": open, "inProgress": progress, "unresolved": unresolved, "new24h": n24}, err
 }
 func (b *backend) adminBackendStats(ctx context.Context) (map[string]any, error) {
-	rows, e := b.db.Query(ctx, `SELECT status,health_status,is_enabled,cooldown_until,lease_acquired_count,0::bigint FROM image_backend_member WHERE type='api'`)
+	rows, e := b.db.Query(ctx, `SELECT status,health_status,is_enabled,cooldown_until,success_count,fail_count FROM image_backend_member WHERE type='api'`)
 	if e != nil {
 		return nil, e
 	}

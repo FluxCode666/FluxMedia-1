@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"math"
 	"net/http"
 	"os"
@@ -14,8 +15,12 @@ import (
 )
 
 type contentBlogPost struct {
-	Slug, Title, Description, Date, Author string
-	Tags                                   []string
+	Slug        string   `json:"slug" yaml:"-"`
+	Title       string   `json:"title" yaml:"title"`
+	Description string   `json:"description" yaml:"description"`
+	Date        string   `json:"date" yaml:"date"`
+	Author      string   `json:"author" yaml:"author"`
+	Tags        []string `json:"tags" yaml:"tags"`
 }
 type contentPSEORecord struct {
 	Slug, Category string
@@ -77,41 +82,24 @@ func parseFrontmatter(path string) (contentBlogPost, error) {
 	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
 		return contentBlogPost{}, errors.New("missing frontmatter")
 	}
-	var out contentBlogPost
-	inTags := false
+	frontmatter := []string{}
+	closed := false
 	for _, line := range lines[1:] {
-		line = strings.TrimSpace(line)
-		if line == "---" {
+		if strings.TrimSpace(line) == "---" {
+			closed = true
 			break
 		}
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "- ") && inTags {
-			out.Tags = append(out.Tags, strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "- ")), "\"'"))
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key, val := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-		inTags = key == "tags"
-		val = strings.Trim(val, "\"'")
-		switch key {
-		case "title":
-			out.Title = val
-		case "description":
-			out.Description = val
-		case "date":
-			out.Date = val
-		case "author":
-			out.Author = val
-		case "tags":
-			if strings.HasPrefix(val, "[") {
-				_ = json.Unmarshal([]byte(val), &out.Tags)
-			}
-		}
+		frontmatter = append(frontmatter, line)
+	}
+	if !closed {
+		return contentBlogPost{}, errors.New("unclosed frontmatter")
+	}
+	out := contentBlogPost{Tags: []string{}}
+	if err = yaml.Unmarshal([]byte(strings.Join(frontmatter, "\n")), &out); err != nil {
+		return contentBlogPost{}, err
+	}
+	if out.Tags == nil {
+		out.Tags = []string{}
 	}
 	name := filepath.Base(path)
 	out.Slug = strings.TrimSuffix(name, filepath.Ext(name))
@@ -136,8 +124,8 @@ func loadContentBlogs(locale string) ([]contentBlogPost, error) {
 	}
 	sort.Slice(posts, func(i, j int) bool {
 		a, b := posts[i], posts[j]
-		ta, _ := time.Parse("2006-01-02", a.Date)
-		tb, _ := time.Parse("2006-01-02", b.Date)
+		ta := contentDate(a.Date)
+		tb := contentDate(b.Date)
 		if !ta.Equal(tb) {
 			return tb.Before(ta)
 		}
@@ -174,7 +162,12 @@ func (b *backend) handleContentPSEO(w http.ResponseWriter, r *http.Request) erro
 	if err = json.Unmarshal(bts, &raw); err != nil {
 		return err
 	}
-	type summary struct{ Slug, Category, Title, Description string }
+	type summary struct {
+		Slug        string `json:"slug"`
+		Category    string `json:"category"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
 	records := make([]summary, 0, len(raw))
 	for _, p := range raw {
 		d, ok := p.Locales[locale]
@@ -192,3 +185,12 @@ func (b *backend) handleContentPSEO(w http.ResponseWriter, r *http.Request) erro
 }
 func pageFrom(r *http.Request) int { n, _ := strconv.Atoi(r.URL.Query().Get("page")); return n }
 func sizeFrom(r *http.Request) int { n, _ := strconv.Atoi(r.URL.Query().Get("pageSize")); return n }
+
+func contentDate(value string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if at, err := time.Parse(layout, value); err == nil {
+			return at
+		}
+	}
+	return time.Time{}
+}

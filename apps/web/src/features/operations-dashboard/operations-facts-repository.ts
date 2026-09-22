@@ -4,7 +4,6 @@
  * 使用方：epoch 初始化与网页访问服务。所有数据库返回都先经 Zod 校验；epoch 在同一
  * 事务内使用 advisory lock 串行化首次初始化，网页访问依靠复合主键幂等去重。
  */
-import { adminAuditLog } from "@repo/database/schema";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -141,23 +140,27 @@ export const databaseOperationsFactsRepository: OperationsFactsRepository = {
       if (!inserted) {
         throw new Error("Operations analytics epoch insert returned no row");
       }
-      await transaction.insert(adminAuditLog).values({
-        id: input.auditId,
-        adminUserId: null,
-        targetUserId: null,
-        action: "operations.ensureCurrentEpoch",
-        reason: "自动初始化运营总览生产统计起点",
-        before: null,
-        after: {
-          appDate: input.appDate,
-          startsAt: input.startsAt.toISOString(),
-        },
-        metadata: {
-          initializedBy: input.initializedBy,
-          requestId: input.initializationRequestId,
-        },
-        createdAt: input.createdAt,
-      });
+      // Keep this repository free of a static database schema import. The Go
+      // runtime never loads this legacy fallback, while the SQL shape remains
+      // identical for deployments that still use the Next database path.
+      await transaction.execute(sql`
+        insert into admin_audit_log (
+          id, admin_user_id, target_user_id, action, reason, before, after,
+          metadata, created_at
+        ) values (
+          ${input.auditId}, null, null, 'operations.ensureCurrentEpoch',
+          '自动初始化运营总览生产统计起点', null,
+          ${JSON.stringify({
+            appDate: input.appDate,
+            startsAt: input.startsAt.toISOString(),
+          })}::jsonb,
+          ${JSON.stringify({
+            initializedBy: input.initializedBy,
+            requestId: input.initializationRequestId,
+          })}::jsonb,
+          ${input.createdAt}
+        )
+      `);
       return { epoch: inserted, inserted: true };
     });
   },

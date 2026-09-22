@@ -8,24 +8,19 @@ import {
   destroyExpiredGenerationPhotos,
   destroyGenerationPhotosByMaxCount,
 } from "@repo/shared/generation-maintenance";
-import { logError } from "@repo/shared/logger";
 import { getRuntimeSettingSelect } from "@repo/shared/system-settings";
-import {
-  defaultImageAsyncTaskRepository,
-  type ImageAsyncTaskRepository,
+import type {
+  ImageAsyncTaskRepository,
 } from "@/features/image-generation/image-async-task-repository";
 import {
-  acquireImageGenerationAdmission,
+  type renewImageGenerationAdmission,
   type RedisImageGenerationAdmissionAcquisition,
   type RedisImageGenerationAdmissionLease,
-  releaseImageGenerationAdmission,
-  renewImageGenerationAdmission,
   restoreImageGenerationAdmissionLease,
 } from "@/features/image-generation/redis-image-generation-slots";
-import { enqueueImageTask, enqueueVideoTask } from "@/server/media-task-queues";
-import {
-  defaultMediaTaskRecoveryRepository,
-  type MediaTaskRecoveryRepository,
+import type { enqueueImageTask, enqueueVideoTask } from "@/server/media-task-queues";
+import type {
+  MediaTaskRecoveryRepository,
 } from "@/server/media-task-recovery-repository";
 
 /**
@@ -167,24 +162,6 @@ export interface MediaTaskRecoveryJobDependencies {
     taskId: string
   ): void;
 }
-
-const defaultMediaTaskRecoveryDependencies: MediaTaskRecoveryJobDependencies = {
-  repository: defaultMediaTaskRecoveryRepository,
-  imageTaskRepository: defaultImageAsyncTaskRepository,
-  enqueueImage: enqueueImageTask,
-  enqueueVideo: enqueueVideoTask,
-  acquireImageAdmission: acquireImageGenerationAdmission,
-  renewImageAdmission: renewImageGenerationAdmission,
-  releaseImageAdmission: releaseImageGenerationAdmission,
-  now: () => new Date(),
-  reportFailure(error, queue, taskId) {
-    logError(error, {
-      source: "media-task-mq-recovery",
-      queue,
-      taskId,
-    });
-  },
-};
 
 /**
  * 使用 Redis 服务端 expiry 的剩余半窗安排下一次 admission 续期。
@@ -384,7 +361,7 @@ export async function runCreditsExpireJob() {
  * 单条失败只保留对应 due 并记录，不能阻断另一物理队列或其他恢复类型。
  */
 export async function runMediaTaskQueueRecovery(
-  dependencies: MediaTaskRecoveryJobDependencies = defaultMediaTaskRecoveryDependencies
+  dependencies: MediaTaskRecoveryJobDependencies
 ) {
   const tasks = await dependencies.repository.scan({
     now: dependencies.now(),

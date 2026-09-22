@@ -4,7 +4,6 @@
  * 职责：构造独立投递记录插入值，并计算有限指数退避；供生产 worker 与 Vitest 共用。
  */
 
-import type { videoGenerationCallbackDelivery } from "@repo/database/schema";
 import { nanoid } from "nanoid";
 
 const CALLBACK_MAX_ATTEMPTS = 8;
@@ -16,7 +15,16 @@ export function createVideoCallbackDeliveryValues(input: {
   videoGenerationId: string;
   callbackUrl: string;
   now?: Date;
-}): typeof videoGenerationCallbackDelivery.$inferInsert {
+}): {
+  id: string;
+  videoGenerationId: string;
+  callbackUrl: string;
+  status: "pending";
+  attemptCount: number;
+  nextAttemptAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+} {
   const now = input.now ?? new Date();
   return {
     id: nanoid(),

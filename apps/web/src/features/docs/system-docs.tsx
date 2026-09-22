@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 
+import { getApiIntegrationDocs } from "./api-integration-docs-data";
 import { ApiUpstreamAdapterDocs } from "./api-upstream-adapter-docs";
 import {
   DOCUMENTATION_BASE_URL_PLACEHOLDER,
@@ -36,38 +37,98 @@ import {
 } from "./image-size-docs";
 import { ImageSizeTable } from "./image-size-table";
 
+/** Share current endpoint contracts with the public integration guide. */
+function getSystemExternalDocs(locale: "zh" | "en") {
+  const source = getApiIntegrationDocs(
+    locale,
+    DOCUMENTATION_BASE_URL_PLACEHOLDER
+  );
+  const zh = locale === "zh";
+  return {
+    title: zh ? "外部 API 参考" : "External API Reference",
+    subtitle: source.subtitle,
+    commonTitle: zh ? "通用规则" : "Common Rules",
+    baseUrlTitle: source.baseUrlLabel,
+    examplesTitle: source.requestExampleTitle,
+    responseExampleTitle: source.responseExampleTitle,
+    copyLabel: source.copyLabels.copy,
+    copiedLabel: source.copyLabels.copied,
+    copyFailedLabel: source.copyLabels.copyFailed,
+    common: zh
+      ? [
+          "使用 Authorization: Bearer <API_KEY> 鉴权；仅能访问当前密钥所属用户有权使用的模型与任务。",
+          "公开 API 与页面统一使用 Go 的权限、任务、积分和存储逻辑；/api/v1/* 是 /v1/* 的路径别名。",
+          "图片使用 aspectRatio / aspect_ratio 和 resolution。response_format 控制 URL 或 base64，output_format 控制文件格式。",
+          "视频创建返回 HTTP 202 与持久任务 ID；按返回 ID 查询结果。任务状态与产物保存在数据库中。",
+          "这里与公开 API 接入页共享端点契约；供应商可用模型和能力以实时查询结果为准。",
+        ]
+      : [
+          "Authenticate with Authorization: Bearer <API_KEY>. Model and task access is restricted to the key owner’s permissions.",
+          "Public APIs and pages share Go authorization, tasks, credits, and storage. /api/v1/* aliases /v1/*.",
+          "Images use aspectRatio / aspect_ratio and resolution. response_format selects URL or base64; output_format selects the file format.",
+          "Video creation returns HTTP 202 and a persistent task ID. Query results using that ID; task state and outputs are stored in the database.",
+          "This reference shares endpoint contracts with the public API guide. Query live model and capability endpoints for current availability.",
+        ],
+    officialRefsTitle: zh ? "官方协议参考" : "Official Protocol References",
+    officialRefs: [
+      {
+        label: "Images API",
+        href: "https://developers.openai.com/api/reference/resources/images",
+      },
+      {
+        label: "Models API",
+        href: "https://developers.openai.com/api/reference/resources/models/methods/list",
+      },
+    ],
+    fieldHeaders: zh
+      ? ["字段", "要求", "说明"]
+      : ["Field", "Requirement", "Description"],
+    responseHeaders: source.responseHeaders,
+    requestTitle: source.parametersTitle,
+    responseTitle: source.responsesTitle,
+    notesTitle: source.notesTitle,
+    customLabel: zh ? "本站扩展" : "FluxMedia Extension",
+    docs: source.endpoints.map(
+      (endpoint): ExternalApiDoc => ({
+        title: endpoint.title,
+        method: endpoint.method,
+        path: endpoint.path,
+        contentType: endpoint.contentType,
+        description: endpoint.description,
+        example: endpoint.requestExample,
+        responseExample: endpoint.responseExample,
+        fields: endpoint.parameters,
+        responses: endpoint.responses,
+        notes: endpoint.deprecationNotice
+          ? [endpoint.deprecationNotice, ...endpoint.notes]
+          : endpoint.notes,
+      })
+    ),
+  };
+}
+
 const sections = {
   zh: {
     title: "系统文档",
     subtitle:
-      "这里按当前代码真实链路说明：页面入口和外接入口都是协议适配层，不互相 HTTP 调用，最终统一进入同一套生成、扣费、调度和存储链路。默认部署启用自用模式：关闭公开注册，首次启动使用环境变量中的凭据创建超管。",
+      "Next.js 提供页面、Server Actions 和请求转发；Go 后端统一处理登录权限、模型配置、图片与视频任务、积分、支付和存储。页面与外部 API 使用相同的 Go 业务服务及持久数据。",
     flow: {
       title: "请求路由图",
-      note: "所有 image/chat/responses 请求统一由平台后端池调度并按平台积分结算。外接接口不会反向请求站内 /api/images/*。",
+      note: "图片与视频请求由 Go 按 API 账号分组调度。任务、积分和产物由 Go 持久化；私有计算服务只执行脚本转换或图片处理。",
       entryTitle: "入口",
-      resolverTitle: "统一处理",
-      groupTitle: "分组选择",
-      backendTitle: "后端落点",
+      resolverTitle: "Go 统一处理",
+      groupTitle: "API 分组选择",
+      backendTitle: "执行与持久化",
       entries: [
         {
-          label: "页面文生图",
-          path: "POST /api/images/generate",
-          kind: "image_generation",
+          label: "页面图片创作",
+          path: "Next.js → Proxy / Server Action → Go",
+          kind: "image_generation / image_edit",
         },
         {
-          label: "页面图生图",
-          path: "POST /api/images/edit",
-          kind: "image_edit",
-        },
-        {
-          label: "页面对话生图",
-          path: "POST /api/images/chat",
-          kind: "chat",
-        },
-        {
-          label: "页面 Agent 生图",
-          path: "POST /api/images/chat",
-          kind: "agent",
+          label: "页面视频创作",
+          path: "Next.js → Proxy / Server Action → Go",
+          kind: "video",
         },
         {
           label: "外部文生图 API",
@@ -85,2459 +146,235 @@ const sections = {
           kind: "video",
         },
         {
-          label: "外部异步图片任务",
+          label: "图片任务查询",
           path: "GET /v1/images/{task_id}",
           kind: "image_generation",
         },
         {
-          label: "外部视频任务",
+          label: "视频任务查询",
           path: "GET /v1/videos/{id}",
           kind: "video",
         },
-        {
-          label: "外部对话 API",
-          path: "POST /v1/chat/completions",
-          kind: "chat",
-        },
-        {
-          label: "外部 Responses API",
-          path: "POST /v1/responses",
-          kind: "responses",
-        },
-        {
-          label: "外部 Agent 生图 API",
-          path: "POST /v1/agents/images",
-          kind: "agent",
-        },
-        {
-          label: "外部可编辑 PPT 生成 API",
-          path: "POST /v1/ppts",
-          kind: "image_generation",
-        },
-        {
-          label: "外部可编辑 PSD 生成 API",
-          path: "POST /v1/psds",
-          kind: "image_generation",
-        },
-        {
-          label: "外部可编辑文件异步任务",
-          path: "GET /v1/editable-file-tasks/{task_id}",
-          kind: "image_generation",
-        },
       ],
       resolver: [
-        "校验登录态或 API 密钥",
-        "把页面表单或 OpenAI 兼容请求转换为统一运行参数",
-        "计算积分和审核成本",
-        "调用 runImageGenerationForUser 进入统一生成链路",
+        "校验登录态或 API 密钥以及用户权限",
+        "校验模型、参数和可用分组，计算费用",
+        "创建持久任务、预留积分并执行内容审核",
+        "Go Worker 调度供应商、保存结果并完成扣费或退款",
       ],
       groups: [
-        "API 密钥绑定分组优先",
-        "API 密钥未绑定分组时使用平台默认分组",
-        "网页端创作才使用用户在设置里选择的生图后端分组",
-        "分组只检查是否启用、内容安全开关和显式模型；队列优先级按分组配置。",
+        "API 请求使用密钥绑定分组；未绑定时解析平台默认分组",
+        "页面创作使用本次请求选择且用户有权使用的分组",
+        "只调度启用、支持目标操作并暴露该模型的 API 账号",
+        "按分组与账号配置处理优先级、并发、冷却和失败状态",
       ],
       backends: [
         {
-          title: "Web 账号池",
+          title: "API 账号与供应商",
           description:
-            "通过 ChatGPT Web 链路承接页面文生图、图生图和对话生图。",
+            "Go 使用已配置的 Base URL、密钥、模型映射和生成/查询操作访问图片或视频供应商。",
         },
         {
-          title: "Codex/Responses 账号池",
+          title: "Go 任务与账本",
           description:
-            "chat / agent / responses 走 Responses 语义（image_generation 工具循环、多轮）。普通图像生成与图生图改走该账号的 /images/generations、/images/edits 直连端点（同一 OAuth 凭据；图生图的输入图/mask 以 base64 data URL 放在 images[].image_url / mask.image_url）。图片请求使用 aspectRatio/aspect_ratio 和 resolution；只有供应商选择尺寸配置后，平台才会在内部映射为上游 size。即便上游返回尺寸偏小，最终图也会经自动超分校准补足到目标分辨率（见下「分辨率超分与高清修复」）。",
+            "PostgreSQL 保存任务、配置、使用记录、积分与订单；Redis 支持队列、并发控制和实时状态。",
         },
         {
-          title: "外接 API 后端",
+          title: "私有计算服务",
           description:
-            "管理员配置的 OpenAI 兼容 Base URL/API Key；按当前请求类型调用 images 或 responses 端点。",
+            "上游脚本运行时执行受限的请求/响应转换；媒体处理运行时执行图像变换和模型推理。权限、调度、费用及存储仍由 Go 决定。",
         },
       ],
     },
     routeTables: {
       title: "入口到后端的映射",
       pageTitle: "页面请求",
-      apiTitle: "外接 API 请求",
-      headers: ["入口", "站内接口", "调度类型", "后端池行为"],
-      apiHeaders: ["入口", "兼容接口", "调度类型", "后端池行为"],
+      apiTitle: "外部 API 请求",
+      headers: ["入口", "传输方式", "操作", "Go 后端行为"],
+      apiHeaders: ["入口", "接口", "操作", "Go 后端行为"],
       pageRows: [
         [
-          "创作页文生图",
-          "/api/images/generate",
-          "image_generation",
-          "按选中的平台后端分组调度 Web 账号、Codex/Responses 账号或外接 API 后端。",
+          "创作页文生图与图生图",
+          "请求代理 / Server Action → Go",
+          "image_generation / image_edit",
+          "验证用户、整理参考图、创建图片任务，并查询状态和结果。",
         ],
         [
-          "创作页图生图",
-          "/api/images/edit",
-          "image_edit",
-          "参考图先进入站内接口，再按选中的后端分组调度。",
+          "创作页视频",
+          "请求代理 / Server Action → Go",
+          "video",
+          "验证输入与报价，创建持久视频任务，查询进度与产物。",
         ],
         [
-          "创作页对话生图",
-          "/api/images/chat",
-          "chat",
-          "按 chat 类型选择后端；可命中 Web 账号、Codex/Responses 账号或支持 /responses 的外接 API 后端。",
-        ],
-        [
-          "创作页 Agent 生图",
-          "/api/images/chat",
-          "agent",
-          "同一站内接口，但强制走 Codex/Responses 能力；默认提供 image_generation、web_search、continue_generation 等工具，并展示工具任务卡。",
+          "模型、配置及全局使用记录",
+          "页面 / Server Action → Go",
+          "admin / query",
+          "按管理员权限读取现有配置、模型、账本和使用记录。",
         ],
       ],
       apiRows: [
         [
-          "OpenAI images generation",
+          "图片生成",
           "/v1/images/generations",
           "image_generation",
-          "验证 API 密钥、绑定分组和账户积分后进入同一生成链路；默认返回 b64_json，可显式请求 url。",
+          "验证密钥与模型，通过 API 账号执行生成并结算实际费用。",
         ],
         [
-          "OpenAI images edit",
+          "图片编辑",
           "/v1/images/edits",
           "image_edit",
-          "multipart 图片会被转成统一图片输入，再按分组调度。",
+          "支持 JSON 图片引用或 multipart 上传，按同一 Go 流程审核、生成与存储。",
         ],
         [
-          "FluxMedia video",
+          "视频生成",
           "/v1/videos/generations",
           "video",
-          "本站扩展。始终创建持久视频任务并返回 HTTP 202；使用响应中的视频任务 ID 轮询 GET /v1/videos/{id}，也可配置 callback_url 接收终态回调。POST /v1/videos 已下线。",
+          "创建持久任务并返回 HTTP 202；使用返回的 ID 查询终态。",
         ],
         [
-          "Async image task",
+          "图片任务",
           "/v1/images/{task_id}",
           "image_generation",
-          "查询 async=true 创建的内存异步任务，任务 30 分钟后自动过期。",
+          "从持久记录查询本人任务，跨进程重启与多实例可查。",
         ],
         [
-          "Video task",
+          "视频任务",
           "/v1/videos/{id}",
           "video",
-          "按创建接口返回的持久视频任务 ID 查询状态、输入摘要和成功后的产物 URL。",
+          "查询本人持久视频任务、输入摘要、费用与结果 URL。",
         ],
         [
-          "OpenAI chat completions",
-          "/v1/chat/completions",
-          "chat",
-          "验证 externalApi.chat.completions 后进入页面 Chat 的非 Agent 链路；可命中 Web、Codex/Responses 或支持 /responses 的外接 API 后端。",
+          "模型与视频能力",
+          "/v1/models、/v1/videos/capabilities",
+          "discovery",
+          "返回当前密钥可用模型和视频参数约束。",
         ],
         [
-          "OpenAI Responses",
-          "/v1/responses",
-          "responses",
-          "无 tools 时平台补 image_generation；显式传 tools 时必须包含 image_generation。按 responses 类型调度 Codex/Responses 分组或外接 /responses API。",
-        ],
-        [
-          "FluxMedia Agent image run",
-          "/v1/agents/images",
-          "agent",
-          "本站扩展接口。验证 externalApi.agent 能力后走 Codex/Responses 调度，不会选择 Web 后端；可流式返回 Agent 任务事件和多轮成图。",
-        ],
-        [
-          "OpenAI models",
-          "/v1/models",
-          "-",
-          "只返回当前 API 密钥绑定分组及启用成员显式暴露的模型，不触发后端池调度。",
-        ],
-        [
-          "FluxMedia credits",
+          "积分额度",
           "/v1/credits",
-          "-",
-          "返回当前 API 密钥的限额、已用、剩余以及所属账户余额，不触发后端池调度。",
+          "credits",
+          "返回账户余额与当前密钥的限额、已用及剩余额度。",
         ],
       ],
     },
     relationship: {
-      title: "外接与页面接口的关系",
+      title: "页面与外部 API 的关系",
       rows: [
         [
-          "页面三接口",
-          "/api/images/generate、/api/images/edit、/api/images/chat",
-          "浏览器登录态入口，只负责页面表单、参考图和站内流式事件适配。",
+          "Next.js 页面",
+          "页面组件、Server Actions、请求代理",
+          "负责界面展示、表单与响应适配；业务数据从 Go 获取。",
         ],
         [
-          "Agent 模式",
-          "/api/images/chat + agentMode=true",
-          "页面 Chat 接口内开启 Codex 风格工具循环和自动迭代。",
+          "外部 API",
+          "/v1/images/*、/v1/videos/*、/v1/models、/v1/credits",
+          "使用 Bearer API 密钥；/api/v1/* 保留为相同 Go 处理逻辑的路径别名。",
         ],
         [
-          "外接 API 入口",
-          "/v1/chat/completions、/v1/images/generations、/v1/images/edits、/v1/videos、/v1/ppts、/v1/psds、/v1/images/{task_id}、/v1/editable-file-tasks/{task_id}、/v1/responses、/v1/agents/images",
-          "/api/v1/* 是同一 handler 的别名；只负责 API 密钥、OpenAI 兼容请求和响应格式适配。/v1/ppts、/v1/psds 走独立的可编辑文件链路（Web 账号 + 代码解释器），不汇入 runImageGenerationForUser；支持 async:true + GET /v1/editable-file-tasks/{task_id} 轮询与 callback_url。",
+          "Go 业务服务",
+          "身份与权限、任务、积分、支付、存储",
+          "统一处理可用模型、任务归属、计费、结果落库、历史记录和错误。",
         ],
         [
-          "共同核心",
-          "runImageGenerationForUser",
-          "扣费、审核、排队、账号池选择、错误标记、冷却、失败退款和图片存储都在这一层。",
-        ],
-        [
-          "后端执行",
-          "generateImage / editImage / generateChatImage",
-          "按命中的成员转换成 ChatGPT Web、Codex/Responses 或外接 API 请求。",
+          "私有运行时",
+          "上游脚本转换、媒体后处理",
+          "由 Go 调用，不独立提供用户业务接口或直接结算积分。",
         ],
       ],
-      note: "所以关系不是“外接 API 调页面 API”，而是“各入口共享同一个 service 层”。",
+      note: "页面和外部 API 共享 Go 后端。不同入口的身份和响应格式由各自适配层处理。",
     },
-    moderationRepair: {
-      title: "审核失败自动修剪重试",
+    moderation: {
+      title: "内容审核与失败处理",
       description:
-        "开启后，系统检测到本地审核拦截、上游安全拒绝或安全拒绝导致的无图输出时，会先用 Responses 纯文本请求修剪提示词，再在同一个生成任务内重新审核并重新发起生图。",
+        "Go 在生成任务中按平台配置审核提示词与参考图，并记录实际审核结果。",
       valid: [
-        "该能力需要至少一个可用的 Codex/Responses 账号，或一个支持 /responses 的外接 API 后端；纯 Web 分组也会临时借用 Responses 后端完成提示词修剪。",
-        "最大重试轮数由 IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES 控制，0 表示关闭；IMAGE_MODERATION_PROMPT_REPAIR_ENABLED 可控制总开关。",
-        "修剪重试不会新建第二条生成记录，成功后仍按最终图片和原任务计费；状态监控会按第几次修剪统计尝试、成功和失败。",
-        "修剪成功时，页面和外接 API 会通过独立说明提示用户“原提示词因审核被拒，系统已进行更多修改后生成本次结果”；该说明不会写入 revised_prompt。",
-        "如果没有可用 Responses 后端，或修剪后仍被审核拦截，系统会保留原审核失败信息并按失败结算规则处理。",
+        "管理员统一配置审核服务与风险阈值；用户覆盖优先于全局默认值。",
+        "API 密钥或请求字段不能绕过平台审核策略。",
+        "审核拒绝、供应商失败和基础设施错误保留各自原因，按任务结果完成结算或退款。",
       ],
       invalid: [
-        "审核服务本身不可用、上游限流、余额不足、模型权限不足等平台或用户请求错误不会触发提示词修剪。",
-        "修剪只改写文本提示词，不会修改用户上传的参考图、蒙版或附件内容。",
+        "审核被拒绝不代表已生成图片；应根据错误信息调整输入后重新提交。",
+        "上游不可用或余额不足不会自动改写用户提示词。",
       ],
     },
-    agent: {
-      title: "页面 Agent 模式",
-      description:
-        "Agent 是 Codex 风格自动执行模式。页面端复用 /api/images/chat 并展示任务卡；外接版使用 /v1/agents/images，以 SSE/JSON 形式返回任务事件和图片结果。",
+    core: {
+      title: "Go 业务后端",
+      description: "用户身份和业务状态的统一入口。",
       valid: [
-        "仅在 Codex/Responses 能力可用时启用；Web 分支不会开启 Agent 工具循环。",
-        "默认工具包含 image_generation、web_search 和 continue_generation；后端不会强制 tool_choice，避免阻断联网和生图等多工具组合。",
-        "每轮会展示 Agent 任务卡：联网、工具兼容性调整、生图、流式预览、继续/停止决策等事件。",
-        "支持上传文本/代码类附件作为上下文读取；不会读取用户在提示词中写入的服务器本地路径。",
-        "可配置最大轮数；开启强制轮数时会跑满用户选择的轮数，否则模型可通过 continue_generation 决定是否继续。",
-        "多轮生成的草稿图会作为迭代版本保存，最后一张作为默认最终图。",
-        "按量计费：当前 Chat/Agent 轮次基础费用为 0；完成图片按实际输出和审核成本结算。",
+        "处理认证、管理员权限、模型配置、价格和分组可见性。",
+        "保存图片与视频任务、历史、全局使用记录及产物归属。",
+        "处理积分预留、结算、退款、充值订单与支付回调。",
       ],
-      invalid: [
-        "外部 /v1/responses 不等于 Agent；它只做 OpenAI Responses 兼容协议适配，不会自动开启 Agent 工具循环。",
-      ],
+      invalid: ["页面不应通过本地数据库读取绕过 Go 权限检查。"],
     },
-    externalDocs: {
-      title: "外接 API 详细文档",
-      subtitle:
-        "以下按 OpenAI 官方接口形态整理本站当前支持范围。粗体字段为本站扩展或兼容增强，不属于标准 OpenAI 字段。",
-      commonTitle: "通用规则",
-      baseUrlTitle: "Base URL",
-      examplesTitle: "请求示例",
-      responseExampleTitle: "响应示例",
-      copyLabel: "复制",
-      copiedLabel: "已复制",
-      copyFailedLabel: "复制失败",
-      common: [
-        "所有外接接口都需要 Authorization: Bearer <本站 API 密钥>。",
-        "Chat Completions、图片、视频、Responses 和 Agent 接口均校验 API Key、绑定分组和账户积分；是否可用由分组成员与系统开关决定，并统一按量结算。",
-        "/api/v1/* 与 /v1/* 使用同一套 handler，只是路径别名。",
-        "所有 API 密钥请求均走普通持久化路径，并按接口能力写入生成历史、对象存储、使用记录与续承状态；不提供不记录模式。",
-        "平台内容审核级别由管理员集中管理：用户覆盖优先，否则使用全站默认值，缺失或非法值回退到 high。调用方不能通过 API 密钥或请求字段修改；low、medium、high 只改变 Aliyun 审核阈值，OpenAI 审核提供方不随这三档变化。",
-        "response_format 控制返回 URL 或 base64；output_format 才控制图片文件格式，二者不是同一个字段。",
-        "错误响应采用 OpenAI 风格 error 对象；本站可能额外返回 generation_id、generationId、credits_consumed 方便排查和对账。",
-        "API 密钥绑定的后端分组优先；未绑定时使用平台默认分组，再回退默认启用分组。页面创作可在本次请求中选择已授权分组。",
-        "图片按实际输出像素归入 1024、1K、2K、4K 固定档位；价格依次读取所选分组的模型覆盖和全局模型价格，再加运行时审核费。视频按模型族、输出分辨率与时长计费，每秒价格依次读取分组分辨率覆盖、分组模型族覆盖、全局分辨率价格与全局模型族兜底；图片和视频均不使用分组倍率。",
-        "API 密钥可设置独立积分限额；GET /v1/credits 可查询密钥限额、已用额度和账户余额。",
-        "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
-        "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
-        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos/generations 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；POST /v1/videos 已下线。callback_url 会绑定到该持久任务并在终态投递。",
-      ],
-      officialRefsTitle: "官方参考",
-      officialRefs: [
-        {
-          label: "Chat Completions API",
-          href: "https://developers.openai.com/api/reference/chat/create",
-        },
-        {
-          label: "Images API",
-          href: "https://developers.openai.com/api/reference/resources/images",
-        },
-        {
-          label: "Responses API",
-          href: "https://developers.openai.com/api/reference/resources/responses/methods/create",
-        },
-        {
-          label: "Models API",
-          href: "https://developers.openai.com/api/reference/resources/models/methods/list",
-        },
-      ],
-      fieldHeaders: ["字段", "要求", "说明"],
-      responseHeaders: ["返回字段", "说明"],
-      requestTitle: "请求字段",
-      responseTitle: "返回与流式",
-      notesTitle: "实现说明",
-      customLabel: "本站扩展",
-      docs: [
-        {
-          title: "List models",
-          method: "GET",
-          path: "/v1/models",
-          contentType: "无请求体",
-          description:
-            "兼容 OpenAI List models，列出当前 API 密钥绑定分组中启用成员显式暴露的图片与真实视频模型 ID。图片生成和编辑必须原样使用这里返回的模型 ID。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "list",
-  "data": [
-    {
-      "id": "gpt-image-2",
-      "object": "model",
-      "created": 0,
-      "owned_by": "gpt2image"
-    }
-  ]
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description: "Bearer <本站 API 密钥>。",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "固定为 list。",
-            },
-            {
-              name: "data[].id",
-              description:
-                "模型 ID。包含默认图片模型、真实视频模型 ID、可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
-            },
-            {
-              name: "data[].object / created / owned_by",
-              description: "兼容 OpenAI model object 结构。",
-            },
-          ],
-          notes: [
-            "本站当前只实现模型列表，不实现 /v1/models/{model} 详情。",
-            "返回模型按 API Key 绑定分组、启用成员的显式模型列表和系统能力开关过滤；未配置可达成员时列表可能为空。",
-            "API 后端的「支持的模型 ID」非空时会同时约束该供应商的调度候选；留空的历史后端不受此约束，模型列表仅回退展示其默认模型。",
-          ],
-        },
-        {
-          title: "Get credits",
-          method: "GET",
-          path: "/v1/credits",
-          contentType: "无请求体",
-          description:
-            "查询当前 Bearer API 密钥的限额、已用额度、剩余额度，以及所属账户当前积分余额。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/credits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "credit_balance",
-  "account": {
-    "balance": 15702.45,
-    "total_earned": 20000,
-    "total_spent": 4297.55,
-    "status": "active"
-  },
-  "api_key": {
-    "credit_limit": 1000,
-    "credits_used": 12.7,
-    "credits_remaining": 987.3,
-    "unlimited": false
-  }
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description: "Bearer <本站 API 密钥>。",
-            },
-          ],
-          responses: [
-            {
-              name: "account.balance",
-              description: "所属用户账户当前可用积分余额。",
-            },
-            {
-              name: "account.total_earned / total_spent / status",
-              description:
-                "账户累计获得 / 消耗积分，及账户状态（active 正常 / frozen 冻结）。",
-            },
-            {
-              name: "api_key.credit_limit",
-              description: "当前 API 密钥总限额；null 表示不限额。",
-            },
-            {
-              name: "api_key.credits_used / credits_remaining",
-              description:
-                "当前 API 密钥已用和剩余额度；不限额时 credits_remaining 为 null。",
-            },
-          ],
-          notes: [
-            "API 密钥限额只限制该密钥自身；走本站平台计费路径时仍必须有足够账户积分。",
-            "api_key 对象还含 id / name / key_prefix / last_four / is_active / last_used_at / created_at 等字段（示例从略）。",
-            "生成失败退款、审核拦截结算和实际尺寸后修正会同步修正 Key 已用额度。",
-          ],
-        },
-        {
-          title: "Generate editable PPT / PSD",
-          method: "POST",
-          path: "/v1/ppts、/v1/psds",
-          contentType: "application/json",
-          description:
-            "对话式驱动 ChatGPT 代码解释器生成可编辑 .pptx / 分层 .psd（含素材 zip）。按任务固定价扣积分（后台可配 EDITABLE_FILE_PPT_CREDITS / EDITABLE_FILE_PSD_CREDITS，默认 25，仅成功扣）。分钟级长任务，用 keep-alive JSON 撑住连接直到出结果。PSD 必须传 base64_images。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/ppts \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"prompt":"2026 Q2 电商运营复盘 PPT，8 页以内"}'`,
-          responseExample: `{
-  "object": "editable_file_task",
-  "taskId": "…",
-  "status": "success",
-  "kind": "ppt",
-  "result": {
-    "conversation_id": "…",
-    "primary_url": "/api/storage/…/xxx.pptx?sig=…",
-    "zip_url": "/api/storage/…/xxx.zip?sig=…"
-  },
-  "credits_charged": 25
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description:
-                "Bearer <本站 API 密钥>；需能力位 export.ppt / export.psd（默认对 free 开放）。",
-            },
-            {
-              name: "prompt",
-              requirement: "必填",
-              description: "生成需求描述。",
-            },
-            {
-              name: "base64_images",
-              requirement: "PSD 必填、PPT 可选",
-              description: "参考图 data URL 数组（PSD 至少一张）。",
-            },
-            {
-              name: "client_task_id",
-              requirement: "可选",
-              description:
-                "幂等/审计标识；作扣费 sourceRef（editable-file:{client_task_id}），缺省服务端生成。",
-            },
-            {
-              name: "async",
-              requirement: "可选（body async:true 或 URL ?async=true）",
-              description:
-                "开启后立即返回 task_...，后台生成；用 GET /v1/editable-file-tasks/{task_id} 轮询或 callback_url 回调。分钟级长任务建议异步，避免同步连接被中途掐断。",
-            },
-            {
-              name: "callback_url",
-              requirement: "可选",
-              description:
-                "完成回调 webhook（强制 https + 公网）；任务结束时服务端把任务对象 POST 到该地址。",
-            },
-          ],
-          responses: [
-            {
-              name: "object / kind / status",
-              description:
-                "固定 editable_file_task；kind 为 ppt / psd；status 为 success。",
-            },
-            {
-              name: "result.primary_url",
-              description: "主产物（.pptx / .psd）签名下载 URL。",
-            },
-            {
-              name: "result.zip_url",
-              description: "素材 zip 签名下载 URL（可能为空）。",
-            },
-            {
-              name: "credits_charged",
-              description: "本次扣除积分。",
-            },
-          ],
-          notes: [
-            "需可用的 Web 账号（代码解释器）；账号池无可用账号时返回 503 no_available_image_backend。",
-            "同步（默认）用 keep-alive JSON 撑到出结果；异步（async:true）立即返回 task_...，任务为进程内内存态（30 分钟 TTL、多实例不共享、重启即清；可编辑文件无 DB generation 行，故不作持久回退）。client_task_id 为计费层幂等（防重复扣），任务级幂等为后续迭代。",
-            "/api/v1/ppts、/api/v1/psds 为同一 handler 别名；站内 chat(web) tab 走 session 版 /api/editable-file/generate（同一 service）。",
-          ],
-        },
-        {
-          title: "Get editable file task",
-          method: "GET",
-          path: "/v1/editable-file-tasks/{task_id}",
-          contentType: "无请求体",
-          description:
-            "查询 async:true 创建的可编辑文件（PPT/PSD）任务状态。processing / completed / failed；completed 时含 result.primary_url、result.zip_url 与 credits_charged。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/editable-file-tasks/task_xxx \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "id": "task_xxx",
-  "object": "editable_file_task",
-  "kind": "ppt",
-  "status": "completed",
-  "result": {
-    "primary_url": "/api/storage/…/xxx.pptx?sig=…",
-    "zip_url": "/api/storage/…/xxx.zip?sig=…"
-  },
-  "credits_charged": 25
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description: "Bearer <本站 API 密钥>；只返回归属本人的任务。",
-            },
-            {
-              name: "task_id",
-              requirement: "路径参数",
-              description: "async 生成返回的 task_...。",
-            },
-          ],
-          responses: [
-            {
-              name: "status",
-              description: "processing / completed / failed。",
-            },
-            {
-              name: "result.primary_url / zip_url",
-              description: "completed 时的主产物与素材 zip 签名下载 URL。",
-            },
-            {
-              name: "credits_charged",
-              description: "已扣积分（completed）。",
-            },
-          ],
-          notes: [
-            "内存任务 30 分钟 TTL、多实例不共享、重启即清；过期或跨实例即 404。",
-            "只返回 object=editable_file_task 的任务（与 /v1/images/{id}、/v1/videos/{id} 隔离）。",
-          ],
-        },
-        {
-          title: "Create chat completion",
-          method: "POST",
-          path: "/v1/chat/completions",
-          contentType: "application/json",
-          description:
-            "兼容 OpenAI Chat Completions 的生图对话入口。它复用页面 Chat 的非 Agent 模式，不启用 Agent 工具循环。",
-          example: `# 1. 普通对话生图；默认返回 URL，content 中会追加 Markdown 图片链接
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "messages": [
-      { "role": "system", "content": "你是专业视觉海报设计师。" },
-      { "role": "user", "content": "生成一张科技企业宣传海报，16:9，蓝白配色" }
-    ],
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "quality": "high",
-    "response_format": "url"
-  }'
-
-# 2. 多模态输入，image_url 会作为本轮真实参考图输入
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "image_model": "gpt-image-2",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "参考这张产品图，生成一张电商主图" },
-          { "type": "image_url", "image_url": { "url": "https://example.com/product.png" } }
-        ]
-      }
-    ],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url"
-  }'
-
-# 3. 流式返回；文本走 chat.completion.chunk，自定义 partial_image 事件返回流式预览
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "messages": [
-      { "role": "user", "content": "生成一张未来城市概念图" }
-    ],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "stream": true
-  }'`,
-          responseExample: `{
-  "id": "chatcmpl_...",
-  "object": "chat.completion",
-  "created": 1713833628,
-  "model": "gpt-5.4",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "已生成图片。\\n\\n![generated image 1](${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...)",
-        "images": [
-          {
-            "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-            "revised_prompt": "...",
-            "generation_id": "gen_..."
-          }
-        ]
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "images": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "generation_id": "gen_..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 2.31,
-  "usage": null
-}
-
-# stream=true 时的 SSE 片段
-data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"正在生成..."},"finish_reason":null}]}
-
-event: chat.completion.partial_image
-data: {"type":"chat.completion.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"generation_id":"gen_...","credits_consumed":2.31}
-`,
-          fields: [
-            {
-              name: "messages",
-              requirement: "必填",
-              description:
-                "OpenAI Chat Completions 消息数组。最后一条 user 文本会作为本轮 prompt，之前的 user/assistant 会作为页面 Chat 历史上下文；system/developer 消息会合并为系统指令（apiPrompt），不计入历史。",
-            },
-            {
-              name: "messages[].content[].image_url",
-              requirement: "可选",
-              description:
-                "支持公网 http(s) 图片 URL 或 data:image URL；最后一条 user 中的图片会作为本轮真实参考图输入。",
-            },
-            {
-              name: "model",
-              requirement: "可选",
-              description:
-                "GPT 对话模型。Web/Codex/Responses 后端会按各自能力处理；不可用模型会返回错误或由后端调度处理。",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "可选",
-              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
-            },
-            {
-              name: "resolution",
-              requirement: "可选",
-              description: "图片分辨率档位；不指定时由上游决定。",
-            },
-            {
-              name: "quality",
-              requirement: "可选",
-              description:
-                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。作为本轮 Chat 生图运行参数。",
-            },
-            {
-              name: "stream",
-              requirement: "可选",
-              description: "true 时返回 text/event-stream。",
-            },
-            {
-              name: "response_format",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：url 或 b64_json。默认 url，避免 Chat Completions 响应体过大。",
-            },
-            {
-              name: "image_model / imageModel",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：默认支持 gpt-image-*；若管理员在 API 后端配置了自定义上游模型，也可传 nano-banana-*、grok-* 或其他该上游支持的模型。自定义模型只调度到 API 后端，不会映射为 Web 独立图片模型。",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "可选",
-              custom: true,
-              description: "控制是否使用本站提示词优化。",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：审核改写重试开关。false 时审核失败直接返回真实错误，不自动改写提示词重试；与 /v1/images/generations 同义。",
-            },
-            {
-              name: "background",
-              requirement: "可选",
-              description:
-                "transparent、opaque、auto。与 /v1/images/generations 同义；chat 模式适用，不含 agent 分层。",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "可选",
-              custom: true,
-              description:
-                "默认 false。仅当 background=transparent 且显式设为 true 时生效：命中的后端不支持透明返回 400 时自动改不透明重绘，再在服务端用 ISNet 抠图得到透明 PNG；agent 分层模式下不生效。详见 /v1/images/generations 说明。",
-            },
-            {
-              name: "hd_repair / hdRepair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：高清修复。默认 false。设为 true 时最终图用 SCUNet 盲复原（去噪 / 去压缩块 / 增强质感，不改分辨率），与超分放大相互独立、可叠加；需管理端开启修复主开关，CPU 较重、服务端串行排队。与 /v1/images/generations 同义。",
-            },
-            {
-              name: "block_repair / blockRepair、repair_prompt",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：生成式修复。默认 false。整图缩到 web 甜点分辨率后一次性 gpt-image-2 img2img 重绘再超分，重点修文字、无接缝，单独计费；repair_prompt 指定提示词。需管理端开启「生成式修复」主开关。与 /v1/images/generations 同义。",
-            },
-            {
-              name: "thinking / reasoning.effort",
-              requirement: "可选",
-              custom: true,
-              description:
-                "minimal、none、low、medium、high、xhigh；主要针对 Codex/Responses 后端。",
-            },
-            {
-              name: "mixWebFirst / mix_web_first",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展（仅 mixed 分组生效）：Web-first 默认开启。开启时（不传或显式 true）按 Web-first 像素区间判定——尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。区间由 IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS 配置，默认 0.66MP-2MP。",
-            },
-            {
-              name: "requiresResponsesBackend / requires_responses_backend",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：强制本次 Chat 走 Codex/Responses 能力，不走 Web，并按平台后端池结算本站积分。",
-            },
-          ],
-          responses: [
-            {
-              name: "choices[].message.content",
-              description:
-                "兼容 Chat Completions 文本内容；当返回 URL 图片时会追加 Markdown 图片链接。",
-            },
-            {
-              name: "choices[].message.images / images",
-              description:
-                "本站扩展。结构化图片结果，包含 url 或 b64_json、generation_id、revised_prompt。",
-              custom: true,
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "本站扩展字段。非流式成功响应在顶层返回本次 Chat 轮次的生成记录 ID。",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "本站扩展字段。本次请求 FluxMedia 结算积分；当前 Chat 轮次基础费用为 0，有图时按实际输出和审核成本结算。",
-              custom: true,
-            },
-            {
-              name: "SSE chat.completion.chunk",
-              description: "OpenAI 风格 Chat Completions 流式文本块。",
-            },
-            {
-              name: "SSE chat.completion.partial_image",
-              description:
-                "本站扩展。仅流式模式返回；表示生图过程中的流式预览图片。",
-              custom: true,
-            },
-          ],
-          notes: [
-            "上游 API 配置有两个独立开关：Images 上游控制 /v1/images/generations 与 /v1/images/edits 命中后请求上游 /images/* 还是转换到 /responses + image_generation tool；Chat Completions 上游只控制 /v1/chat/completions 命中后请求上游 /chat/completions 还是 /responses。",
-            "选择 chat_completions 后，本站 /v1/chat/completions 会请求命中上游的 /chat/completions；这更适合纯聊天兼容，但是否能返回图片取决于上游实现。Agent 和 /v1/responses 不受该配置影响。",
-            "OpenAI 官方 Chat Completions 并不定义“生成图片”的标准返回字段；本站为了兼容对话生图，在 Chat Completions 外形上扩展 choices[].message.images、顶层 images，并在 content 中追加 Markdown 图片链接。严格按官方生图协议接入时，建议使用 /v1/images/generations、/v1/images/edits 或 /v1/responses。",
-            "该接口走页面 Chat 的非 Agent 模式，不会注入 web_search、continue_generation，也不会展示 Agent 多轮任务卡。",
-            "调度类型是 chat，可命中 Web 账号、Codex/Responses 账号或支持 /responses 的外接 API 后端。",
-            "计费等同页面 Chat：当前 Chat 轮次基础费用为 0；完成图片按实际尺寸和数量结算模型固定价与运行时审核费，图片费用不乘分组倍率。",
-          ],
-        },
-        {
-          title: "Create image",
-          method: "POST",
-          path: "/v1/images/generations",
-          contentType: "application/json",
-          description:
-            "兼容 OpenAI Images generation。请求会转换成 image_generation 调度类型，进入统一生成链路。",
-          example: `# 1. 官方 Images 风格，默认返回 b64_json
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "A cute baby sea otter",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "medium",
-    "background": "auto"
-  }'
-
-# 2. 返回 URL，并关闭本站提示词优化
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-1.5",
-    "prompt": "一张赛博朋克城市夜景，雨后霓虹反光",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "webp",
-    "output_compression": 85,
-    "background": "transparent",
-    "prompt_optimization": false
-  }'
-
-# 3. Codex/Responses 后端专用参数；普通 Images API 后端可能忽略
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "生成一张 16:9 产品海报",
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "jpeg",
-    "output_compression": 90,
-    "gptModel": "gpt-5.4",
-    "thinking": "high",
-    "promptOptimization": false
-  }'
-
-# 4. mixed 分组按可配置像素区间优先尝试 Web；失败或耗尽后降级 Codex/Responses
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "一张 1:1 头像海报",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "web_first": true
-  }'
-
-# 5. 流式返回；也可用 Accept: text/event-stream 触发
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "一张透明玻璃材质的未来感咖啡杯",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "stream": true
-  }'
-
-# 6. 异步模式；也可在 URL 后追加 ?async=true（与 body async:true 等价）；callback_url 为可选完成回调
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-1.5",
-    "prompt": "一张透明背景的产品图标",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "png",
-    "background": "transparent",
-    "async": true,
-    "callback_url": "https://your-server.example/callback"
-  }'
-
-# 7. 本站扩展：透明背景 + ISNet 兜底抠图，并关闭审核改写重试
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "一张透明背景的产品图标",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "png",
-    "background": "transparent",
-    "transparent_matte": true,
-    "prompt_repair": false
-  }'`,
-          responseExample: `{
-  "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# stream=true 时的 SSE 片段
-event: image_generation.partial_image
-data: {"type":"image_generation.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: image_generation.completed
-data: {"type":"image_generation.completed","index":0,"generation_id":"...","generationId":"...","model":"gpt-image-2","size":"1024x1024","credits_consumed":1.31,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","revised_prompt":"..."}]}
-
-# async=true 的立即响应
-{
-  "id": "task_...",
-  "object": "image.generation",
-  "model": "gpt-image-2",
-  "status": "processing",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "generation_id": "gen_..."
-}
-
-# 查询任务
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"
-
-# 完成后的任务响应或回调 payload
-{
-  "id": "task_...",
-  "object": "image",
-  "model": "gpt-image-2",
-  "status": "completed",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed": 1713833700,
-  "completed_at": "2026-05-28T00:01:12.000Z",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "必填",
-              description: "图片提示词，最多 32000 字符。",
-            },
-            {
-              name: "model",
-              requirement: "必填",
-              description:
-                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应。服务端只在该密钥绑定的可信分组中精确匹配成员显式暴露的 ID，不转换 default 或其他目录外别名。Responses 对话模型请使用 /v1/responses。",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "可选",
-              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
-            },
-            {
-              name: "resolution",
-              requirement: "可选",
-              description: "图片分辨率档位；不指定时由上游决定。",
-            },
-            {
-              name: "quality",
-              requirement: "可选",
-              description:
-                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
-            },
-            {
-              name: "response_format",
-              requirement: "可选",
-              description:
-                "url 或 b64_json。默认 b64_json；url 会返回本站存储 URL。",
-            },
-            {
-              name: "output_format",
-              requirement: "可选",
-              description:
-                "png、jpeg、webp。控制实际输出图片格式；不同上游支持情况可能不同。",
-            },
-            {
-              name: "output_compression",
-              requirement: "可选",
-              description:
-                "压缩级别 0-100，仅对 jpeg/webp 有意义；数值越高=压缩越强、文件越小、画质越低（OpenAI 原生 output_compression 语义，本站透传）。",
-            },
-            {
-              name: "background",
-              requirement: "可选",
-              description:
-                "transparent、opaque、auto。透明背景需要命中的上游模型支持，通常还需要 output_format 为 png 或 webp；不支持的模型会返回类似 “Transparent background is not supported for this model” 的 400 错误。若希望在不支持的后端也拿到透明结果，可同时传 transparent_matte=true（见下一项）。无法确认支持时建议使用 auto 或 opaque。",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "可选",
-              custom: true,
-              description:
-                "默认 false。仅当 background=transparent 且显式设为 true 时生效：若命中的后端不支持透明而返回 400，则自动改为不透明重新生成，再在服务端用 ISNet 抠图得到透明 PNG。关闭时透明请求直接透传，后端不支持即返回真实 400 错误。注意只对单张生成/编辑/对话生效，不含 agent 分层模式。",
-            },
-            {
-              name: "hd_repair / hdRepair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：高清修复。默认 false。设为 true 时，最终图会用 SCUNet 盲复原（去噪 / 去压缩块 / 增强质感，不改分辨率），与「超分放大」相互独立、可叠加。需管理端开启「高清修复」主开关方生效；CPU 推理较重（512 约 11 秒、1024 约 35 秒）、服务端串行排队，出图更慢。false 或未开启修复时无副作用。",
-            },
-            {
-              name: "block_repair / blockRepair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：生成式修复。默认 false。设为 true 时，最终图缩到 web 甜点分辨率（约 1280），一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变），再超分到目标尺寸。整图一次重绘无接缝；额外调用一次后端并单独计费，比超分/高清修复更慢更贵；需管理端开启「生成式修复」主开关方生效。启用成功时替代自动超分。",
-            },
-            {
-              name: "repair_prompt / repairPrompt",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：生成式修复整图 img2img 的提示词。仅在 block_repair=true 时生效；留空则用内置默认（强调只修清晰度与文字、保持构图/内容不变，无需在后台配置）。",
-            },
-            {
-              name: "stream",
-              requirement: "可选",
-              description: "true 时返回 text/event-stream。",
-            },
-            {
-              name: "async",
-              requirement: "可选",
-              custom: true,
-              description:
-                "异步开关。body 传 async:true 或 URL 追加 ?async=true，二选一即可（等价）。开启后立即返回 task_... 任务对象（status:processing），生成在后台执行，需用 GET /v1/images/{task_id} 轮询结果。不能与 stream 同时使用（同传会报错 async cannot be used with stream.）。",
-            },
-            {
-              name: "callback_url",
-              requirement: "可选",
-              custom: true,
-              description:
-                "完成回调 webhook（不是给你轮询的地址）。仅异步任务可用：任务完成或失败时，服务端会把最终任务对象 POST 到该 URL，请求头含 X-Tokens-Callback: true、Content-Type: application/json。该 URL 须公网可达且为 http/https。即使任务因 30 分钟过期或服务重启而无法再轮询，已发出的回调不受影响。",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "可选",
-              custom: true,
-              description:
-                "控制平台是否继续优化 prompt。若 prompt 已是优化后的最终提示词，建议传 false。",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "审核改写重试开关（issue #24）。默认按平台设置（通常启用）：本地审核拦截或上游安全拒绝导致无图输出时，系统会先用 Responses 改写提示词，再在同一生成任务内重新审核并重试；显式传 false 时关闭该自动改写重试，审核失败直接返回真实错误，不再改写提示词。详见下方“审核失败自动修剪重试”说明。",
-            },
-            {
-              name: "gptModel / gpt_model",
-              requirement: "可选",
-              custom: true,
-              description:
-                "当命中 Codex/Responses 账号池时，作为 Responses 顶层 GPT 模型；普通 Images API 后端可能忽略。",
-            },
-            {
-              name: "thinking",
-              requirement: "可选",
-              custom: true,
-              description:
-                "minimal、none、low、medium、high、xhigh。仅针对 Codex/Responses 后端；Web 或普通 Images API 后端可能忽略。",
-            },
-            {
-              name: "web_first / webFirst / force_web / forceWeb",
-              requirement: "可选",
-              custom: true,
-              description:
-                "仅 image 接口支持。推荐使用 web_first / webFirst；force_web / forceWeb 保留兼容，但实际语义同样是 Web-first 优先路由，不是硬性只走 Web。命中的后端分组为 mixed，且请求尺寸总像素在 IMAGE_FORCE_WEB_MIN_PIXELS 到 IMAGE_FORCE_WEB_MAX_PIXELS 之间时，优先调度 Web 账号。Web 不可用、失败或耗尽后会降级 Codex/Responses。默认区间为 0.66MP-2MP；非 mixed 或不在区间内会忽略该字段。",
-            },
-          ],
-          responses: [
-            {
-              name: "created",
-              description: "Unix 秒时间戳。",
-            },
-            {
-              name: "data[].b64_json / data[].url",
-              description: "按 response_format 返回 base64 或 URL。",
-            },
-            {
-              name: "data[].revised_prompt",
-              description: "上游返回的改写提示词，若有则返回。",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID。",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description: "本站扩展字段。本次请求 FluxMedia 结算积分。",
-              custom: true,
-            },
-            {
-              name: "SSE image_generation.partial_image",
-              description:
-                "仅 stream=true 或 Accept: text/event-stream 时返回；表示一张局部图片。",
-            },
-            {
-              name: "SSE image_generation.completed",
-              description:
-                "仅流式模式返回；表示单张图片已完成，事件 data 会带 generation_id、credits_consumed、model、size 和最终图片。",
-            },
-          ],
-          notes: [
-            "该接口不会调用页面 /api/images/generate，而是直接进入共享 service 层。",
-            "如果命中 Responses 账号池，内部会把图片请求转换成 Responses image_generation tool 请求。",
-            "每次请求固定创建一条生成记录；显式传入 n 会返回 400，不再支持批量生图。",
-            "并发与排队：任务同时受全站执行并发和用户生图并发限制；用户默认并发为 20，可在用户编辑页单独覆盖。异步任务按后端分组 priority 数值升序进入持久队列，数值越小优先级越高。",
-            "排队等待阶段不会创建 generation，也不会扣图像生成积分；底层队列排队超过 IMAGE_GENERATION_QUEUE_TIMEOUT_MS 会返回 429 类错误。单张任务开始执行后才进入 20 分钟运行超时，运行超时按失败结算规则处理积分。",
-            "Web 后端无法严格控制输出尺寸和输出格式；本站保存时会按实际图片头识别扩展名和 MIME。",
-            "background=transparent 并非所有模型都支持；OpenAI 官方文档当前列出 gpt-image-1.5、gpt-image-1、gpt-image-1-mini 支持透明背景，且通常还要求 png 或 webp 输出。不支持的上游可能直接返回 HTTP 400，而不是自动降级。",
-            "async 任务持久化到 PostgreSQL 并由 BullMQ 唤醒；服务重启、多实例切换或短暂投递失败后会由恢复任务继续收敛。",
-            "如果实际生成尺寸与请求的比例/分辨率目标不一致，本站会按检测到的实际尺寸修正记录和计费。",
-            "官方 Images API 可能返回 usage；本站当前 usage 通常为 null，但会通过顶层 credits_consumed、错误对象或流式完成事件返回本站结算积分。",
-          ],
-        },
-        {
-          title: "Create image edit",
-          method: "POST",
-          path: "/v1/images/edits",
-          contentType: "multipart/form-data 或 application/json",
-          description:
-            "兼容 OpenAI Images edit。multipart 可上传图片；JSON 可使用公网图片 URL。",
-          example: `# 1. multipart 上传参考图
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-2" \\
-  -F prompt="把参考图改成电影海报风格" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F quality="high" \\
-  -F response_format="url" \\
-  -F output_format="jpeg" \\
-  -F output_compression="90" \\
-  -F background="opaque" \\
-  -F 'image[]=@/path/to/reference.png'
-
-# 2. multipart 多参考图 + mask + Codex/Responses 参数
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-2" \\
-  -F prompt="只重绘 mask 区域，保持人物脸部不变" \\
-  -F aspectRatio="3:2" \\
-  -F resolution="1k" \\
-  -F quality="medium" \\
-  -F response_format="b64_json" \\
-  -F promptOptimization="false" \\
-  -F gpt_model="gpt-5.4" \\
-  -F thinking="medium" \\
-  -F 'image[]=@/path/to/person.png' \\
-  -F 'image_2=@/path/to/style.png' \\
-  -F mask="@/path/to/mask.png"
-
-# 3. JSON 图片 URL；推荐 images，image_url/image_urls 只是兼容快捷字段
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "把参考图改成干净的电商主图",
-    "images": [
-      "https://example.com/reference.png",
-      { "image_url": "https://example.com/detail.webp" }
-    ],
-    "image_url": "https://example.com/single-reference.png",
-    "image_urls": ["https://example.com/extra.jpg"],
-    "mask_url": "https://example.com/mask.png",
-    "mask_image_url": "https://example.com/mask-alt.png",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "auto",
-    "response_format": "url",
-    "output_format": "webp",
-    "output_compression": 80,
-    "background": "transparent",
-    "prompt_optimization": false,
-    "gptModel": "gpt-5.4-mini",
-    "thinking": "low"
-  }'
-
-# 4. mixed 分组按可配置像素区间优先尝试 Web；失败或耗尽后降级 Codex/Responses
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "保留人物，改成电影剧照质感",
-    "images": ["https://example.com/reference.png"],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "web_first": true
-  }'
-
-# 5. 流式图生图
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -F model="gpt-image-2" \\
-  -F prompt="保留构图，改成水彩插画风格" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F stream="true" \\
-  -F 'image=@/path/to/reference.png'
-
-# 6. 异步图生图；也可在 URL 后追加 ?async=true（与 body async:true 等价）；callback_url 为可选完成回调
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-1.5" \\
-  -F prompt="去除背景，输出透明 PNG" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F output_format="png" \\
-  -F background="transparent" \\
-  -F async="true" \\
-  -F callback_url="https://your-server.example/callback" \\
-  -F 'image=@/path/to/reference.png'`,
-          responseExample: `{
-  "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# stream=true 时的 SSE 片段
-event: image_edit.partial_image
-data: {"type":"image_edit.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: image_edit.completed
-data: {"type":"image_edit.completed","index":0,"generation_id":"...","generationId":"...","model":"gpt-image-2","size":"1024x1024","credits_consumed":1.31,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","revised_prompt":"..."}]}
-
-# async=true 的任务查询和回调响应格式同 /v1/images/generations
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "必填",
-              description: "编辑提示词，最多 32000 字符。",
-            },
-            {
-              name: "image / image[] / image_*",
-              requirement: "multipart 必填",
-              description: "参考图文件，最多 16 张。",
-            },
-            {
-              name: "images",
-              requirement: "JSON 可选",
-              description:
-                "图片引用数组。本站支持字符串 URL 或 { image_url/url }；file_id 当前不支持。",
-            },
-            {
-              name: "mask",
-              requirement: "可选",
-              description: "PNG mask 文件；JSON 中可传 URL 形式的 mask 引用。",
-            },
-            {
-              name: "model",
-              requirement: "必填",
-              description:
-                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应；目录外 ID 和其他别名不会被转换。取值范围与调度规则同 /v1/images/generations。",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "可选",
-              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
-            },
-            {
-              name: "resolution",
-              requirement: "可选",
-              description: "图片分辨率档位；不指定时由上游决定。",
-            },
-            {
-              name: "quality",
-              requirement: "可选",
-              description:
-                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
-            },
-            {
-              name: "response_format",
-              requirement: "可选",
-              description: "url 或 b64_json。默认 b64_json。",
-            },
-            {
-              name: "output_format",
-              requirement: "可选",
-              description:
-                "png、jpeg、webp。控制实际输出图片格式；不同上游支持情况可能不同。",
-            },
-            {
-              name: "output_compression",
-              requirement: "可选",
-              description:
-                "压缩级别 0-100，仅对 jpeg/webp 有意义；数值越高=压缩越强、文件越小、画质越低（OpenAI 原生 output_compression 语义，本站透传）。",
-            },
-            {
-              name: "background",
-              requirement: "可选",
-              description:
-                "transparent、opaque、auto。透明背景需要命中的上游模型支持，通常还需要 output_format 为 png 或 webp；不支持的模型会返回类似 “Transparent background is not supported for this model” 的 400 错误。若希望在不支持的后端也拿到透明结果，可同时传 transparent_matte=true（见下一项）。无法确认支持时建议使用 auto 或 opaque。",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "可选",
-              custom: true,
-              description:
-                "默认 false。仅当 background=transparent 且显式设为 true 时生效：若命中的后端不支持透明而返回 400，则自动改为不透明重新生成，再在服务端用 ISNet 抠图得到透明 PNG。关闭时透明请求直接透传，后端不支持即返回真实 400 错误。注意只对单张生成/编辑/对话生效，不含 agent 分层模式。",
-            },
-            {
-              name: "hd_repair / hdRepair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：高清修复。默认 false。设为 true 时，最终图会用 SCUNet 盲复原（去噪 / 去压缩块 / 增强质感，不改分辨率），与「超分放大」相互独立、可叠加。需管理端开启「高清修复」主开关方生效；CPU 推理较重（512 约 11 秒、1024 约 35 秒）、服务端串行排队，出图更慢。false 或未开启修复时无副作用。",
-            },
-            {
-              name: "block_repair / blockRepair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：生成式修复。默认 false。设为 true 时，最终图缩到 web 甜点分辨率（约 1280），一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变），再超分到目标尺寸。整图一次重绘无接缝；额外调用一次后端并单独计费，比超分/高清修复更慢更贵；需管理端开启「生成式修复」主开关方生效。启用成功时替代自动超分。",
-            },
-            {
-              name: "repair_prompt / repairPrompt",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：生成式修复整图 img2img 的提示词。仅在 block_repair=true 时生效；留空则用内置默认（强调只修清晰度与文字、保持构图/内容不变，无需在后台配置）。",
-            },
-            {
-              name: "stream",
-              requirement: "可选",
-              description: "true 时返回 text/event-stream。",
-            },
-            {
-              name: "async",
-              requirement: "可选",
-              custom: true,
-              description:
-                "异步开关。body 传 async:true 或 URL 追加 ?async=true，二选一即可（等价）。开启后立即返回 task_... 任务对象（status:processing），编辑在后台执行，需用 GET /v1/images/{task_id} 轮询结果。不能与 stream 同时使用（同传会报错 async cannot be used with stream.）。",
-            },
-            {
-              name: "callback_url",
-              requirement: "可选",
-              custom: true,
-              description:
-                "完成回调 webhook（不是给你轮询的地址）。仅异步任务可用：任务完成或失败时，服务端会把最终任务对象 POST 到该 URL，请求头含 X-Tokens-Callback: true、Content-Type: application/json。该 URL 须公网可达且为 http/https。即使任务因 30 分钟过期或服务重启而无法再轮询，已发出的回调不受影响。",
-            },
-            {
-              name: "image_url / image_urls",
-              requirement: "JSON 或表单可选",
-              custom: true,
-              description:
-                "兼容快捷字段。推荐使用 images；若同时传入，本站会合并到同一参考图列表并按 URL 去重。",
-            },
-            {
-              name: "mask_url / mask_image_url",
-              requirement: "JSON 或表单可选",
-              custom: true,
-              description: "本站便捷写法：直接传 mask 图片 URL。",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "可选",
-              custom: true,
-              description:
-                "控制平台是否继续优化 prompt。若 prompt 已是优化后的最终提示词，建议传 false。",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "审核改写重试开关（issue #24）。默认按平台设置（通常启用）：本地审核拦截或上游安全拒绝导致无图输出时，系统会先用 Responses 改写提示词，再在同一生成任务内重新审核并重试；显式传 false 时关闭该自动改写重试，审核失败直接返回真实错误，不再改写提示词。详见下方“审核失败自动修剪重试”说明。",
-            },
-            {
-              name: "gptModel / gpt_model",
-              requirement: "可选",
-              custom: true,
-              description: "同文生图接口。",
-            },
-            {
-              name: "thinking",
-              requirement: "可选",
-              custom: true,
-              description:
-                "minimal、none、low、medium、high、xhigh。仅针对 Codex/Responses 后端；Web 或普通 Images API 后端可能忽略。",
-            },
-            {
-              name: "web_first / webFirst / force_web / forceWeb",
-              requirement: "可选",
-              custom: true,
-              description:
-                "仅 image 接口支持。推荐使用 web_first / webFirst；force_web / forceWeb 保留兼容，但实际语义同样是 Web-first 优先路由，不是硬性只走 Web。命中的后端分组为 mixed，且请求尺寸总像素在 IMAGE_FORCE_WEB_MIN_PIXELS 到 IMAGE_FORCE_WEB_MAX_PIXELS 之间时，优先调度 Web 账号。Web 不可用、失败或耗尽后会降级 Codex/Responses。默认区间为 0.66MP-2MP；非 mixed 或不在区间内会忽略该字段。",
-            },
-          ],
-          responses: [
-            {
-              name: "created / data[]",
-              description: "与 /v1/images/generations 相同。",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID。",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description: "本站扩展字段。本次请求 FluxMedia 结算积分。",
-              custom: true,
-            },
-            {
-              name: "SSE image_edit.partial_image",
-              description:
-                "仅 stream=true 或 Accept: text/event-stream 时返回；表示一张局部编辑图片。",
-            },
-            {
-              name: "SSE image_edit.completed",
-              description:
-                "仅流式模式返回；表示单张编辑图片已完成，事件 data 会带 generation_id、credits_consumed、model、size 和最终图片。",
-            },
-          ],
-          notes: [
-            "URL 图片会先由本站服务端下载并校验公网可访问性、类型和大小。",
-            "不支持私网、localhost、metadata/internal 域名或带用户名密码的 URL。",
-            "官方 JSON file_id 图片引用当前未实现，请使用公网 image_url 或 multipart 上传。",
-            "background=transparent 并非所有模型都支持；OpenAI 官方文档当前列出 gpt-image-1.5、gpt-image-1、gpt-image-1-mini 支持透明背景，且通常还要求 png 或 webp 输出。不支持的上游可能直接返回 HTTP 400，而不是自动降级。",
-            "async 任务当前为进程内状态，30 分钟后过期；服务重启或多实例切换会导致未完成任务无法继续查询，callback 已发送的结果不受影响。",
-          ],
-        },
-        {
-          title: "Get async image task",
-          method: "GET",
-          path: "/v1/images/{task_id}",
-          contentType: "无请求体",
-          description:
-            "本站扩展：按 ID 查询一次图片生成。路径参数可传两类 ID：（1）async=true 创建的 task_...（进程内内存任务对象，30 分钟后过期、服务重启或多实例切换即查不到）；（2）任意同步/异步响应返回的 generation_id（gen_...，从数据库持久取回，跨重启/多实例都可查）。先查内存任务，未命中再按 generation_id 查库。仅返回归属本人的记录。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "id": "task_...",
-  "object": "image",
-  "model": "gpt-image-2",
-  "status": "completed",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed": 1713833700,
-  "completed_at": "2026-05-28T00:01:12.000Z",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# 仍在执行时（status:processing 暂无 data）
-{
-  "id": "task_...",
-  "object": "image.generation",
-  "model": "gpt-image-2",
-  "status": "processing",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "generation_id": "gen_..."
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description: "Bearer <本站 API 密钥>。",
-            },
-            {
-              name: "task_id",
-              requirement: "必填路径参数",
-              custom: true,
-              description:
-                "ID（路径参数）。可传 async=true 返回的 task_...（内存任务，30 分钟过期、重启/多实例后查不到），或任意响应返回的 generation_id（gen_...，从数据库持久取回，跨重启/多实例可查）。长度上限 128 字符，缺失/超长返回 400 Invalid task_id.，未找到/已过期返回 404。均按归属用户隔离，只返回本人的记录。",
-            },
-          ],
-          responses: [
-            {
-              name: "id",
-              description:
-                "任务 ID（task_...），与请求路径中的 {task_id} 一致。",
-            },
-            {
-              name: "object",
-              description: "执行中为 image.generation，完成后为 image。",
-            },
-            {
-              name: "status",
-              description:
-                "任务状态，取值 processing（执行中）、completed（成功）或 failed（失败，对象内含 error）。",
-            },
-            {
-              name: "data",
-              description:
-                "status=completed 时返回图片结果数组（与 /v1/images/generations 响应一致，元素含 url 或 b64_json）；执行中尚无该字段。",
-            },
-            {
-              name: "created / created_at / completed / completed_at",
-              description:
-                "任务创建与完成时间（秒级时间戳与 ISO 字符串）；completed* 仅在完成后出现。",
-            },
-            {
-              name: "generation_id / generationId",
-              description: "关联的单条生成记录 ID。",
-            },
-            {
-              name: "credits_consumed",
-              description: "完成后结算的本站积分。",
-            },
-          ],
-          notes: [
-            "任务持久化到 PostgreSQL 并由 BullMQ 唤醒；服务重启、多实例切换或短暂投递失败后会由恢复任务继续处理。",
-            "只能查询属于当前 API 密钥所属用户自己创建的任务。",
-            "返回结构与 callback_url 回调 POST 的任务对象完全一致。",
-          ],
-        },
-        {
-          title: "Create video",
-          method: "POST",
-          path: "/v1/videos/generations",
-          contentType: "application/json",
-          description:
-            "按 FluxMedia 视频协议创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。POST /v1/videos 已下线。",
-          example: `# 1. 文生视频；model 只传真实模型 ID，其他参数独立传递
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-001",
-    "model": "veo31",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "1080p",
-    "prompt": "一只柯基在海边奔跑，电影级运镜，黄昏光线",
-    "negative_prompt": "低分辨率, 模糊, 水印",
-    "quote_token": "<从 /v1/videos/capabilities 取得>"
-  }'
-
-# 2. 首尾帧生成；首尾帧与参考图对所有模型互斥
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-002",
-    "model": "seedance2-fast",
-    "duration_seconds": 10,
-    "aspect_ratio": "9:16",
-    "resolution": "720p",
-    "prompt": "让画面中的人物缓缓抬头微笑",
-    "first_frame": "data:image/png;base64,iVBORw0KGgo...",
-    "last_frame": "data:image/png;base64,iVBORw0KGgo...",
-    "generate_audio": false
-  }'
-
-# 3. 兼容 async 字段；无论 true 或 false，接口都返回同一种持久任务
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-003",
-    "model": "veo31",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "1080p",
-    "prompt": "城市夜景延时，霓虹倒影",
-    "async": true,
-    "callback_url": "https://your-server.example/callback"
-  }'
-# 返回 HTTP 202；随后使用同一持久任务 ID 轮询（或等待 callback_url 回调）：
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "queued",
-  "model": "veo31",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "billing": {
-    "kind": "snapshot",
-    "mode": "per_second",
-    "unit": "second",
-    "unitPrice": 3,
-    "creditsPerSecond": 3,
-    "durationSeconds": 8,
-    "quotedCredits": 24,
-    "actualCredits": 0
-  }
-}`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "必填",
-              description: "视频提示词，最多 32000 字符。",
-            },
-            {
-              name: "model",
-              requirement: "必填",
-              description:
-                "真实视频模型 ID，例如 seedance2、seedance2-fast、veo31。不得在模型 ID 中拼接时长、比例或分辨率；复合 ID 会被拒绝。可用模型见 /v1/models。",
-            },
-            {
-              name: "clientRequestId / client_request_id",
-              requirement: "必填",
-              description:
-                "调用方生成的幂等请求 ID，最长 128 字符；重试同一请求时必须复用。",
-            },
-            {
-              name: "seconds / duration / duration_seconds",
-              requirement: "必填",
-              description: "视频时长（秒），必须是所选真实模型支持的整数值。",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "必填",
-              description:
-                "视频宽高比，例如 16:9、9:16；必须属于所选模型能力。",
-            },
-            {
-              name: "resolution",
-              requirement: "必填",
-              description:
-                "小写分辨率，例如 480p、720p、1080p；必须属于所选模型能力。",
-            },
-            {
-              name: "quote_token / quoteToken",
-              requirement: "可选",
-              description:
-                "对应模型和分辨率当前报价的短期不透明令牌，来自 GET /v1/videos/capabilities 的 billing 行。令牌陈旧时返回 409 和 latest currentQuote；可省略以兼容旧调用方。",
-            },
-            {
-              name: "negative_prompt / negativePrompt",
-              requirement: "可选",
-              description: "负向提示词，最多 8000 字符。",
-            },
-            {
-              name: "firstFrame / first_frame、lastFrame / last_frame",
-              requirement: "可选",
-              description:
-                "首帧与可选尾帧，值为 base64 image data URL。尾帧必须与首帧同时提供；是否支持尾帧由模型能力决定。",
-            },
-            {
-              name: "referenceImages / reference_images",
-              requirement: "可选",
-              description:
-                "有序参考图 base64 data URL 数组；数量上限由模型能力决定，Seedance 默认 10 且管理员可配置。参考图与首尾帧对所有模型互斥。",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              requirement: "可选",
-              description: "是否生成声音；仅支持声音能力的模型可设为 true。",
-            },
-            {
-              name: "async",
-              requirement: "可选",
-              custom: true,
-              description:
-                "兼容字段。true、false 或省略都会创建同一种持久任务并返回 HTTP 202；不会切换同步模式。视频接口不支持用 URL ?async 改变行为。",
-            },
-            {
-              name: "callback_url / callbackUrl",
-              requirement: "可选",
-              custom: true,
-              description:
-                "持久任务终态回调 webhook。任务完成或失败时服务端向该公网 https 地址 POST 终态结果；与 async 字段无关，重试同一 clientRequestId 时必须保持回调地址一致。",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "固定为 video.task。",
-            },
-            {
-              name: "id / task_id / generation_id",
-              description: "同一个持久视频任务 ID，用于 GET /v1/videos/{id}。",
-            },
-            {
-              name: "status",
-              description:
-                "任务创建后的当前状态：queued、in_progress、completed 或 failed。",
-            },
-            {
-              name: "model",
-              description: "本次使用的真实视频模型 ID。",
-            },
-            {
-              name: "duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
-              description: "本次持久任务保存的独立生成参数。",
-            },
-            {
-              name: "billing",
-              description:
-                "创建时锁定的账单快照。per_second 为单价乘时长；per_item 每条只收一次单价且不返回 creditsPerSecond。",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              description: "创建请求显式提供声音开关时返回这两个等价值。",
-            },
-          ],
-          notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。POST /v1/videos 创建地址已下线，仅保留 GET /v1/videos/{id} 查询。",
-            "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
-            "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
-            "计费模式由全局模型配置决定：per_second 以分辨率单价乘 duration 结算，per_item 每条只收一次分辨率单价。创建后 billing 快照固定，后续配置变更不影响该任务。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
-            "需要 externalApi.images.generate 系统能力开关；同时校验 API Key、绑定分组和账户积分。",
-          ],
-        },
-        {
-          title: "Get video task",
-          method: "GET",
-          path: "/v1/videos/{id}",
-          contentType: "无请求体",
-          description:
-            "本站扩展：按创建接口返回的持久视频任务 ID 查询状态。接口只查询数据库中的视频任务并校验 API 密钥归属，不读取进程内异步任务。",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "completed",
-  "model": "veo31",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "generateAudio": false,
-  "generate_audio": false,
-  "input": {"mode": "none", "count": 0},
-  "billing": {
-    "kind": "snapshot",
-    "mode": "per_item",
-    "unit": "item",
-    "unitPrice": 3,
-    "durationSeconds": 8,
-    "quotedCredits": 3,
-    "actualCredits": 3
-  },
-  "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed_at": "2026-05-28T00:01:40.000Z"
-}
-
-# 仍在执行时不会返回 video_url 或 data
-{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "model": "veo31",
-  "status": "in_progress",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "generateAudio": false,
-  "generate_audio": false,
-  "input": {"mode": "none", "count": 0},
-  "created_at": "2026-05-28T00:00:00.000Z"
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "必填 header",
-              description: "Bearer <本站 API 密钥>。",
-            },
-            {
-              name: "id",
-              requirement: "必填路径参数",
-              custom: true,
-              description:
-                "创建接口响应中的 id、task_id 或 generation_id；三者是同一个持久视频任务 ID。长度上限 128 字符，缺失或超长返回 400 Invalid task_id.，并按 API 密钥所有者隔离。",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "固定为 video.task。",
-            },
-            {
-              name: "id / task_id / generation_id",
-              description: "同一个持久视频任务 ID，与请求路径中的 {id} 一致。",
-            },
-            {
-              name: "status",
-              description:
-                "queued、in_progress、completed 或 failed；存在失败原因时返回 error.message。",
-            },
-            {
-              name: "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
-              description: "持久任务保存的真实模型 ID 和独立生成参数。",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              description: "任务实际使用的声音开关。",
-            },
-            {
-              name: "input.mode / input.count",
-              description:
-                "输入摘要；mode 为 none、first-frame、first-last-frames、references、reference-videos、reference-audio 或 mixed，count 为输入数量，不返回实际输入图或媒体。",
-            },
-            {
-              name: "billing",
-              description:
-                "不可变报价与实际消费。legacy 表示旧任务，创建单价和原报价未知，不会按当前配置伪造。退款后保留 quotedCredits，actualCredits 为 0。",
-            },
-            {
-              name: "data[].url / video_url",
-              description:
-                "status=completed 时返回产物视频的本站存储签名 URL（data[].url 与顶层 video_url 等价）；执行中尚无该字段。",
-            },
-            {
-              name: "created_at / completed_at",
-              description:
-                "ISO 格式的任务创建时间；completed_at 仅在完成后出现。",
-            },
-          ],
-          notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/{id} 是同一 handler 的别名。",
-            "只能查询属于当前 API 密钥所属用户自己创建的任务；响应 Cache-Control: no-store。",
-            "任务状态和产物来自持久视频记录，不存在 30 分钟内存任务过期语义。",
-          ],
-        },
-        {
-          title: "Create Agent image run",
-          method: "POST",
-          path: "/v1/agents/images",
-          contentType: "application/json 或 multipart/form-data",
-          description:
-            "本站扩展接口：把页面 Agent 模式开放给外接 API。它固定按 Codex/Responses 能力调度，支持联网、工具循环、自动迭代、附件上下文和流式 Agent 事件。",
-          example: `# 1. JSON Agent 生图；默认返回 URL。需要启用 externalApi.agent 系统能力。
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "prompt": "联网查询浙江双元科技公开资料，迭代生成一张企业宣传海报",
-    "aspectRatio": "3:2",
-    "resolution": "1k",
-    "quality": "high",
-    "thinking": "medium",
-    "agent_max_rounds": 3,
-    "agent_force_max_rounds": false,
-    "response_format": "url"
-  }'
-
-# 2. 带参考图 URL。images / image_url / image_urls 会合并去重。
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "image_model": "gpt-image-2",
-    "prompt": "参考这张产品图，先分析卖点，再生成一张电商海报",
-    "images": ["https://example.com/product.png"],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "agent_max_rounds": 2
-  }'
-
-# 3. multipart 上传参考图和 PDF/文本附件。
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-5.4" \\
-  -F image_model="gpt-image-2" \\
-  -F prompt="阅读附件资料并生成一张展会宣传海报" \\
-  -F aspectRatio="3:2" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F agent_max_rounds="3" \\
-  -F 'image[]=@/path/to/reference.png' \\
-  -F 'file=@/path/to/company-profile.pdf'
-
-# 4. 流式 Agent。会持续返回 agent.event / agent.partial_image / agent.completed。
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "prompt": "先搜索资料，再迭代生成一张科技蓝企业海报",
-    "aspectRatio": "3:2",
-    "resolution": "1k",
-    "stream": true,
-    "agent_max_rounds": 2,
-    "agent_force_max_rounds": true
-  }'`,
-          responseExample: `{
-  "object": "agent.image_run",
-  "created": 1713833628,
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "model": "gpt-5.4",
-  "size": "1536x1024",
-  "response_text": "已完成资料检索并生成海报。",
-  "agent_round_count": 2,
-  "credits_consumed": 8.42,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "...",
-      "output_role": "agent_draft"
-    },
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "...",
-      "output_role": "final"
-    }
-  ],
-  "agent_events": [],
-  "usage": null
-}
-
-# stream=true 时的 SSE 片段
-event: agent.event
-data: {"type":"agent.event","event":{"kind":"web_search","status":"completed","title":"联网搜索完成","detail":"浙江双元科技 官网"}}
-
-event: agent.partial_image
-data: {"type":"agent.partial_image","partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: agent.completed
-data: {"type":"agent.completed","generation_id":"...","generationId":"...","agent_round_count":2,"credits_consumed":8.42,"data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","output_role":"final"}]}
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "必填",
-              description: "Agent 当前任务，最多 32000 字符。",
-            },
-            {
-              name: "model / gptModel / gpt_model",
-              requirement: "可选",
-              description:
-                "Agent 顶层 GPT/Responses 模型。若 model 是 gpt-image-*，本站会把它当作 image_model 兼容处理。",
-            },
-            {
-              name: "image_model / imageModel",
-              requirement: "可选",
-              description:
-                "image_generation 工具使用的图片模型，通常为 gpt-image-*。",
-            },
-            {
-              name: "images / image_url / image_urls",
-              requirement: "JSON 可选",
-              description:
-                "公网参考图 URL；也支持 data URL。本站会服务端下载并校验公网可达、类型和大小。",
-            },
-            {
-              name: "image / image[] / image_*",
-              requirement: "multipart 可选",
-              description: "参考图文件和附件总数受系统媒体参数限制。",
-            },
-            {
-              name: "file / file[] / attachment",
-              requirement: "multipart 可选",
-              description:
-                "文本、代码、CSV、JSON、Markdown、XML、YAML、日志或 PDF 附件。文本类会转成上下文，PDF 会作为 Responses 文件输入。",
-            },
-            {
-              name: "history",
-              requirement: "可选",
-              description:
-                "前序对话数组，形如 [{ role, text, imageUrls, variants }]；用于继续外接 Agent 会话。",
-            },
-            {
-              name: "agent_max_rounds",
-              requirement: "可选",
-              description: "1 到 8。限制本次 Agent 自动迭代轮数。",
-              custom: true,
-            },
-            {
-              name: "agent_force_max_rounds",
-              requirement: "可选",
-              description:
-                "true 时强制跑满 agent_max_rounds；false 时模型可通过 continue_generation 自行停止。",
-              custom: true,
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "可选",
-              description:
-                "图片宽高比，例如 1:1、16:9；两种命名任选其一。作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "resolution",
-              requirement: "可选",
-              description:
-                "图片分辨率档位；不指定时由上游决定。作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "quality",
-              requirement: "可选",
-              description:
-                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "output_format",
-              requirement: "可选",
-              description:
-                "png、jpeg、webp，控制输出图片格式；作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "output_compression",
-              requirement: "可选",
-              description:
-                "压缩级别 0-100，仅对 jpeg/webp 有意义，数值越高=压缩越强、文件越小、画质越低（OpenAI 原生语义，本站透传）；作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "background",
-              requirement: "可选",
-              description:
-                "transparent、opaque、auto。与 /v1/images/generations 同义。",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "可选",
-              custom: true,
-              description:
-                "默认 false。仅当 background=transparent 且设为 true 时：后端不支持透明返回 400 时自动改不透明重绘并用 ISNet 抠图得到透明 PNG；注意 agent 分层模式下不生效。详见 /v1/images/generations 说明。",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站扩展：审核改写重试开关。false 时审核失败直接返回真实错误，不自动改写提示词重试。",
-            },
-            {
-              name: "thinking",
-              requirement: "可选",
-              custom: true,
-              description: "minimal、none、low、medium、high、xhigh。",
-            },
-            {
-              name: "response_format",
-              requirement: "可选",
-              description:
-                "url 或 b64_json。Agent 接口默认 url，避免多轮结果响应过大。",
-            },
-            {
-              name: "stream",
-              requirement: "可选",
-              description:
-                "true 或 Accept: text/event-stream 返回 SSE；同时要求 externalApi.streaming 能力。",
-            },
-          ],
-          responses: [
-            {
-              name: "object / generation_id / model / size",
-              description: "Agent 运行对象、生成记录和模型尺寸信息。",
-            },
-            {
-              name: "data[]",
-              description:
-                "本次 Agent 产生的图片。output_role 可为 agent_draft 或 final；最后的 final 是默认成品。",
-            },
-            {
-              name: "agent_events[]",
-              description:
-                "任务事件数组，包含联网、生图、继续/停止决策等结构化事件。",
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "本站结算积分。Agent 接口固定走 Codex/Responses 能力；当前轮次基础费用为 0，完成图片按最终图片固定价和运行时审核费结算，图片费用不乘分组倍率。",
-              custom: true,
-            },
-            {
-              name: "agent_round_count",
-              description: "本次 Agent 任务的执行轮数。",
-              custom: true,
-            },
-            {
-              name: "SSE agent.event / agent.text_delta / agent.thinking_delta / agent.delta / agent.partial_image / agent.completed / agent.failed",
-              description: "流式 Agent 任务事件、流式预览图和最终完成事件。",
-            },
-          ],
-          notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/agents/images 是同一 handler 的别名。",
-            "需要启用 externalApi.agent 系统能力；管理员可在系统设置中调整。",
-            "该接口强制 requiresResponsesBackend，不会命中 Web 账号；支持 Codex/Responses 账号或支持 /responses 的外接 API 后端。",
-            "不会调用页面 /api/images/chat；它和页面 Agent 共享 runImageGenerationForUser service 层。",
-          ],
-        },
-        {
-          title: "Create response",
-          method: "POST",
-          path: "/v1/responses",
-          contentType: "application/json",
-          description:
-            "基于 OpenAI Responses API 的生图适配入口。它会按 responses 调度类型选择 Codex/Responses 账号池或外接 /responses API 后端。",
-          example: `# 1. 最小 Responses 生图请求；需要 API Key、可用分组和足够积分
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "input": "生成一张 1:1 的未来感产品渲染图",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "high"
-  }'
-
-# 2. 显式 image_generation tool，并指定图片模型
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "input": "生成一张横版科技产品 KV",
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "quality": "medium",
-    "reasoning": { "effort": "low" },
-    "store": true
-  }'
-
-# 3. 带参考图的 Responses 输入
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "input": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "input_text", "text": "参考这张图，换成冬季海报风格" },
-          { "type": "input_image", "image_url": "https://example.com/reference.png" }
-        ]
-      }
-    ],
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "output_format": "webp",
-    "output_compression": 85
-  }'
-
-# 4. 续接上一轮，并使用流式返回
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "previous_response_id": "resp_previous_id",
-    "input": "在上一张图基础上加一个月亮",
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "reasoning": { "effort": "minimal" },
-    "stream": true
-  }'`,
-          responseExample: `{
-  "id": "resp_...",
-  "object": "response",
-  "created_at": 1713833628,
-  "status": "completed",
-  "model": "gpt-5.4",
-  "output": [
-    {
-      "id": "ig_...",
-      "type": "image_generation_call",
-      "status": "completed",
-      "result": "..."
-    }
-  ],
-  "usage": null,
-  "metadata": {
-    "generation_id": "...",
-    "credits_consumed": 1.31,
-    "size": "1024x1024"
-  }
-}
-
-# stream=true 时的 SSE 片段
-event: response.output_item.done
-data: {"type":"response.output_item.done","item":{"id":"ig_...","type":"image_generation_call","status":"completed","result":"..."}}
-
-event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_...","object":"response","created_at":1713833628,"status":"completed","model":"gpt-5.4","output":[{"id":"ig_...","type":"image_generation_call","status":"completed","result":"..."}],"usage":null,"metadata":{"generation_id":"...","credits_consumed":1.31,"size":"1024x1024"}}}
-`,
-          fields: [
-            {
-              name: "model",
-              requirement: "可选",
-              description:
-                "Responses 顶层模型。可用模型以 /v1/models 返回和 API Key 绑定分组为准。",
-            },
-            {
-              name: "input",
-              requirement: "必填",
-              description:
-                "字符串，或消息数组。消息 content 支持字符串、input_text/output_text，以及 input_image.image_url。",
-            },
-            {
-              name: "previous_response_id",
-              requirement: "可选",
-              description:
-                "续接上一轮 response。本站会读取内部保存的 webConversation/fallbackHistory 延续上下文。",
-            },
-            {
-              name: "tools",
-              requirement: "可选",
-              description:
-                '若显式传入，必须包含 { type: "image_generation" }；未传时本站会自动补 image_generation。图片模型请放在 image_generation tool 的 model 字段。',
-            },
-            {
-              name: "tool_choice",
-              requirement: "可选",
-              description:
-                "兼容接收字段。对话/多工具场景不建议强制指定，否则模型可能无法同时使用联网、代码解释器或图片生成工具。",
-            },
-            {
-              name: "stream",
-              requirement: "可选",
-              description: "true 时返回 Responses 风格 SSE 事件。",
-            },
-            {
-              name: "store",
-              requirement: "可选",
-              description:
-                "兼容接收字段；本站内部会自行保存必要续聊状态，不保证按官方 store 语义透传。",
-            },
-            {
-              name: "reasoning.effort",
-              requirement: "可选",
-              description:
-                "支持 minimal、none、low、medium、high、xhigh；最终是否生效取决于命中的后端。",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：未在 image_generation tool 内指定比例时，作为本次生图比例使用。",
-            },
-            {
-              name: "resolution",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：未在 image_generation tool 内指定分辨率时，作为本次生图分辨率使用。",
-            },
-            {
-              name: "quality",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：作为本次生图 quality 运行参数使用。quality 仅 gpt-image-2 可用，其他图片模型不要传此参数。",
-            },
-            {
-              name: "output_format",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：未在 image_generation tool 内指定输出格式时，作为本次 output_format 使用。也可直接写在 image_generation tool 里。",
-            },
-            {
-              name: "output_compression",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：未在 image_generation tool 内指定压缩率时，作为本次 output_compression 使用。",
-            },
-            {
-              name: "background",
-              requirement: "可选",
-              description:
-                "transparent、opaque、auto，作为本次生图 background。详见 /v1/images/generations 说明。",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "可选",
-              custom: true,
-              description:
-                "默认 false。仅当 background=transparent 且设为 true 时：命中的后端不支持透明返回 400 后自动改不透明重绘，再用 ISNet 抠图得到透明 PNG；agent 分层模式下不生效。详见 /v1/images/generations 说明。",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "可选",
-              custom: true,
-              description:
-                "本站便捷字段：审核改写重试开关。false 时审核失败直接返回真实错误，不自动改写提示词重试。",
-            },
-          ],
-          responses: [
-            {
-              name: "id / object / created_at / status / model / output",
-              description: "兼容 Responses response 对象的基本结构。",
-            },
-            {
-              name: "output[].type = image_generation_call",
-              description: "图片结果放在 result 字段，值为 b64_json。",
-            },
-            {
-              name: "output[].type = message",
-              description: "若上游返回文本，会以 output_text 返回。",
-            },
-            {
-              name: "metadata.generation_id / credits_consumed / size",
-              description: "本站生成记录、结算积分和尺寸信息。",
-              custom: true,
-            },
-            {
-              name: "SSE response.output_item.done / response.completed",
-              description: "流式输出项完成和整体完成事件。",
-            },
-            {
-              name: "SSE response.output_text.delta / response.reasoning_summary_text.delta",
-              description: "文本和思考摘要增量事件。",
-            },
-          ],
-          notes: [
-            "该接口需要有效 API Key、可用分组和足够账户积分。",
-            "该接口不是 Chat Completions；普通对话生图请使用 /v1/chat/completions，Responses 工具语义请使用本接口。",
-            "input_image 只支持 image_url/data URL；file_id/file 输入当前不会作为参考图使用。",
-            "显式传 tools 但不包含 image_generation 会返回错误，避免模型只产出文本而不生图。",
-            "页面 Chat 模式只提供普通多模态对话/生图语义；Agent 模式默认提供 image_generation、web_search 和线性续跑工具 continue_generation，不强制 tool_choice，模型按任务自行选择工具。",
-            "页面 Chat/Agent 支持上传文本/代码类本地文件作为上下文读取；不会读取用户在提示词中写入的服务器本地路径。",
-            "页面 Chat/Agent 当前轮次基础费用为 0；完成图片按实际尺寸与数量及审核成本扣除积分。",
-            "Agent 会把上一轮文字、工具结果和已生成图片喂回下一轮，让模型自行判断是否继续改版；最大轮数由系统设置 IMAGE_AGENT_MAX_ROUNDS 控制，默认 3。",
-            "Agent 多轮产生的 image_generation_call 会作为自动迭代版本展示，最后一张作为默认选中版本。",
-          ],
-        },
-      ],
-    },
-    web: {
-      title: "Web 账号",
-      description:
-        "走 ChatGPT 网页生图能力，适合复用 Web 账号额度，但不是严格参数化的 Images/Responses API。",
+    runtime: {
+      title: "私有计算服务",
+      description: "为 Go 提供有界计算能力。",
       valid: [
-        "**分辨率与比例不可严格控制；它们只作为生成目标，不能保证上游按目标像素输出。**",
-        "**不能保证 4K 输出；是否出高分辨率取决于 ChatGPT Web 当前能力和账号状态。**",
-        "可控制主 GPT 对话模型和 Web 思考强度；图片模型字段不会映射成独立 Web 生图模型。",
-        "关闭提示词优化时会发送原始 prompt，并把 Web 思考强度压到 instant，尽量减少平台侧改写。",
+        "上游脚本运行时执行受限 JavaScript，转换请求和响应。",
+        "媒体处理运行时执行图片变换、超分与高清修复。",
+        "生成式修复需要再次调用供应商时，由 Go 调度并记录独立费用。",
       ],
-      invalid: [
-        "外部 /v1/responses 会适配进统一 chat 生成链路，但调度类型仍是 responses；当前只会选择 Codex/Responses 分组或外接 Responses API 后端，不会转到 Web 账号池。",
-        "外部 /v1/responses 的 model 为空时使用后端默认；显式传入时需在 /v1/models 返回列表内，超出列表会被本站拦截。",
-        "不保证完全不改写提示词；ChatGPT Web 上游仍可能理解、补全或改写。",
-      ],
-    },
-    codex: {
-      title: "Codex / Responses 账号",
-      description: "走 Responses 语义，是本站可参数化程度最高的系统账号后端。",
-      valid: [
-        "GPT 模型传给 Responses 顶层 model。",
-        "图片模型传给 image_generation 工具 model。",
-        "aspectRatio/aspect_ratio、resolution、quality、参考图和 mask 会组装进 Responses 工具请求。",
-        "quality 仅在图片模型为 gpt-image-2 时使用；其他图片模型不会传入 quality。",
-        "页面 Chat 模式只提供普通多模态对话/生图语义；页面 Agent 模式默认提供 image_generation、web_search、continue_generation，不强制 tool_choice，并会线性多轮续跑，让模型像 Codex 一样按需联网、读取已上传文本文件上下文、生成草图和迭代改版。",
-        "Chat/Agent 上传的本地文本/代码文件会作为请求上下文读取；不会开放服务器文件系统路径读取。",
-        "支持外部 /v1/responses；也可承接 /v1/images/generations 和 /v1/images/edits 的内部转换。",
-        "关闭提示词优化时，会通过指令引导模型不要修改提示词；这是尽力约束，不能保证上游一定完全照做。",
-        "页面 Chat/Agent 当前轮次基础费用为 0；完成图片按实际尺寸与数量及审核成本扣除积分。",
-      ],
-      invalid: [
-        "不是 ChatGPT Web，不支持 Web 专属能力或 Web 额度语义。",
-        "账号限流、额度不足、凭据失效时，调度器会冷却/标错并尝试轮换。",
-      ],
+      invalid: ["运行时不保存用户会话，不独立决定积分、模型权限或任务归属。"],
     },
     api: {
-      title: "外接 API 后端",
-      description:
-        "走管理员配置的 OpenAI 兼容 Base URL/API Key，最终能力由对方服务决定。",
+      title: "API 账号",
+      description: "管理员配置供应商访问方式，Go 统一执行。",
       valid: [
-        "接口模式只声明上游支持哪些端点：仅 Images 只参与文生图/图生图；仅 Responses 只参与 Chat/Agent/Responses，除非 Images 上游开关设为 Responses；混合 API 两边都可参与。",
-        "Images 上游开关独立控制文生图/图生图：原生 Images 会请求对方 /images/generations 和 /images/edits；转换为 Responses 会请求对方 /responses + image_generation tool。",
-        "Chat Completions 上游开关独立控制 /v1/chat/completions：Responses 生图模式请求对方 /responses；原生模式请求对方 /chat/completions。",
-        "模型、尺寸、质量、流式事件、usage 字段是否支持，以对方接口为准。",
+        "按操作配置生成与查询路径、模型映射及参数转换。",
+        "视频协议模式由管理员显式选择，按供应商实际能力校验输入。",
+        "持久任务保存供应商任务 ID 和适配版本，恢复查询时继续使用原任务。",
       ],
-      invalid: [
-        "不使用本站 Web 或 Codex 账号池额度。",
-        "对方如果自行改写提示词或限制分辨率，本站无法覆盖。",
-      ],
+      invalid: ["输出格式、质量和可用尺寸取决于供应商与已配置模型能力。"],
     },
     prompt: {
-      title: "提示词优化与思考强度",
+      title: "提示词与供应商参数",
       rows: [
         [
-          "开启提示词优化",
-          "平台可使用优化后的提示词，Web 思考强度按选择值传入。",
+          "提示词",
+          "提交用户输入，按平台审核策略检查；供应商返回的 revised_prompt 会作为结果信息保留。",
         ],
         [
-          "关闭提示词优化",
-          "平台发送原始提示词，Web 强制使用 instant，尽量减少改写。",
+          "图片尺寸",
+          "使用 aspectRatio / aspect_ratio 和 resolution；具体映射由供应商尺寸配置决定。",
         ],
         [
-          "Codex/Responses",
-          "关闭提示词优化时通过指令要求模型不要修改提示词，但具体是否改写仍由上游模型和工具决定。",
+          "模型与质量",
+          "先查询 /v1/models，按模型支持范围选择 quality、背景与输出格式。",
         ],
-        ["外接 API", "平台尽量透传，最终行为取决于外接服务。"],
+        [
+          "参考图与蒙版",
+          "图生图可使用上传文件或图片引用；任务访问和存储操作按用户归属校验。",
+        ],
       ],
     },
     postProcess: {
-      title: "分辨率超分与高清修复",
+      title: "图片后处理与修复",
       rows: [
         [
-          "超分（自动）",
-          "Web / Codex 等后端常返回小于请求分辨率的图。平台会在最终图较长边不足目标分辨率 2/3 时，用 Real-ESRGAN 自动放大（不裁剪、保宽高比），因此 Web / Codex 也能稳定输出接近 4K 的目标分辨率。由管理端「出图分辨率超分校准」开关控制，单张约 1-2 秒。",
+          "超分与高清修复",
+          "管理员启用后，Go 将需要处理的最终图交给私有媒体运行时。超分补足目标像素，高清修复进行去噪与细节恢复；不承诺固定处理时长。",
         ],
         [
-          "高清修复（手动）",
-          "与超分相互独立。用户在创作页勾选「高清修复」或 API 传 hd_repair=true 时，对最终图用 SCUNet 做盲复原（去噪 / 去压缩块 / 增强质感，不改分辨率）。CPU 推理较重（512 约 11 秒、1024 约 35 秒）、服务端全局串行排队，出图更慢；由管理端「出图高清修复(SCUNet)」开关控制，需用户手动勾选，默认关。",
+          "生成式修复",
+          "用户选择并且平台启用时，Go 通过可用图片供应商执行修复，额外生成调用独立计费。修复方式由平台的整图或蒙版修复配置决定。",
         ],
         [
-          "生成式修复（手动，gpt-image-2）",
-          "与高清修复不同：它用真实生成后端重绘。用户勾选「生成式修复」或 API 传 block_repair=true 时，把最终图缩到 web 甜点分辨率（约 1280），一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变，提示词取 repair_prompt 或内置默认），再超分补足到目标尺寸。整图一次重绘无接缝（不再切块，避免重叠重影）；额外调用一次后端并单独计费，比超分/高清修复更慢也更贵；由管理端「出图生成式修复」开关控制，需手动勾选，默认关。启用成功时替代自动超分。",
-        ],
-        [
-          "组合与顺序",
-          "超分与高清修复可叠加：先修复（原分辨率，省算力）再超分（放大到目标）。生成式修复启用时自带超分到目标、替代自动超分。都不裁剪、不改宽高比；任一步失败自动回退原图，不阻断出图。",
+          "费用与失败",
+          "Go 记录后处理结果与生成费用。可选增强失败时尽可能保留原始结果；必需透明处理失败或任务取消仍会返回错误。",
         ],
       ],
     },
+    operations: {
+      title: "部署与运行检查",
+      items: [
+        "Next.js 与 Go 使用同一套部署配置；确认 Go 连接现有 PostgreSQL 和 Redis，避免误连空数据库。",
+        "模型、支付、存储和上游配置由 Go 读取；生产环境应同时启动队列 Worker、上游脚本运行时与媒体处理运行时。",
+        "容器间使用服务名访问私有运行时；浏览器仅使用公开站点地址和受权限保护的接口。",
+        "遇到任务错误时，使用任务 ID 对照 Go 日志、使用记录与供应商状态；不要以重复支付或重复生成为排错手段。",
+      ],
+    },
+    externalDocs: getSystemExternalDocs("zh"),
     imageSizeTable: {
       title: "图片尺寸表",
       description:
@@ -2546,2351 +383,281 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       rows: IMAGE_SIZE_DOC_TABLE_ROWS,
       note: IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
     },
-    roadmap: {
-      title: "后续规划",
-      items: [
-        "Sub2API 非数据库接口：当前同步依赖 SUB2API_POSTGRES_URL 直连 Sub2API PostgreSQL。后续调研并适配 Sub2API 管理员 Key / HTTP API 路线，优先用正式接口完成账号查询、分组筛选、状态读取、错误清理和同步任务；只有接口缺字段或能力不足时再保留数据库直连兜底。",
-        "PSD 生成接口：准备适配 PSD/分层文件生成能力，需先明确上游接口协议、输出 MIME/扩展名、存储与预览策略、积分计费、外接 API 响应字段、后台能力矩阵开关和页面下载入口。",
-        "图片引用交互：继续完善 @图1、@第N轮图M 的原子化输入、图片重排后的引用重映射和缺失引用提示。",
-        "Agent 分支对话/轮次树：编辑或重生成历史某一轮时，从该轮派生新分支，避免覆盖后续记录。",
-      ],
-    },
   },
   en: {
     title: "System Docs",
     subtitle:
-      "Page endpoints and external endpoints are protocol adapters. They do not call each other over HTTP; they enter the same generation, billing, scheduling, and storage path. Default deployments enable self-use mode: public registration is closed and the first startup creates a super admin from environment credentials.",
+      "Next.js provides pages, Server Actions, and request forwarding. Go handles authentication, model configuration, image and video tasks, credits, payments, and storage. Pages and external APIs share the same Go services and persistent data.",
     flow: {
-      title: "Request Routing Diagram",
-      note: "All image/chat/responses requests use the platform backend pool and settle through platform credits. External endpoints do not call internal /api/images/* routes.",
-      entryTitle: "Entry",
-      resolverTitle: "Unified Handler",
-      groupTitle: "Group Selection",
-      backendTitle: "Backend Target",
+      title: "Request Routing",
+      note: "Go routes image and video requests through API account groups and persists tasks, credits, and outputs. Private runtimes perform script transformations or image processing.",
+      entryTitle: "Entry Points",
+      resolverTitle: "Go Services",
+      groupTitle: "API Group Selection",
+      backendTitle: "Execution and Persistence",
       entries: [
         {
-          label: "Page text-to-image",
-          path: "POST /api/images/generate",
-          kind: "image_generation",
+          label: "Image workspace",
+          path: "Next.js → Proxy / Server Action → Go",
+          kind: "image_generation / image_edit",
         },
         {
-          label: "Page image edit",
-          path: "POST /api/images/edit",
-          kind: "image_edit",
+          label: "Video workspace",
+          path: "Next.js → Proxy / Server Action → Go",
+          kind: "video",
         },
         {
-          label: "Page image chat",
-          path: "POST /api/images/chat",
-          kind: "chat",
-        },
-        {
-          label: "Page Agent image run",
-          path: "POST /api/images/chat",
-          kind: "agent",
-        },
-        {
-          label: "External image API",
+          label: "External image generation",
           path: "POST /v1/images/generations",
           kind: "image_generation",
         },
         {
-          label: "External edit API",
+          label: "External image editing",
           path: "POST /v1/images/edits",
           kind: "image_edit",
         },
         {
-          label: "External video API",
+          label: "External video generation",
           path: "POST /v1/videos/generations",
           kind: "video",
         },
         {
-          label: "External async image task",
+          label: "Image task lookup",
           path: "GET /v1/images/{task_id}",
           kind: "image_generation",
         },
         {
-          label: "External video task",
+          label: "Video task lookup",
           path: "GET /v1/videos/{id}",
           kind: "video",
         },
-        {
-          label: "External Chat Completions API",
-          path: "POST /v1/chat/completions",
-          kind: "chat",
-        },
-        {
-          label: "External Responses API",
-          path: "POST /v1/responses",
-          kind: "responses",
-        },
-        {
-          label: "External Agent image API",
-          path: "POST /v1/agents/images",
-          kind: "agent",
-        },
       ],
       resolver: [
-        "Validate session or API key",
-        "Convert page forms or OpenAI-compatible requests into unified run parameters",
-        "Calculate credits and moderation cost",
-        "Call runImageGenerationForUser for the shared generation path",
+        "Validate the session or API key and user permissions",
+        "Validate models, parameters, and available groups; calculate charges",
+        "Persist the task, reserve credits, and apply content moderation",
+        "Go workers call providers, save outputs, and settle charges or refunds",
       ],
       groups: [
-        "API key bound group first",
-        "Unbound API keys use the platform default group",
-        "Page creation can use an authorized backend group selected for the current request",
-        "Group checks enabled state, content-safety setting, explicit models, and queue priority",
+        "API requests use the key’s assigned group, falling back to the platform default when unassigned",
+        "Workspace requests use a selected group the user is authorized to access",
+        "Only enabled API accounts exposing the model and supporting the operation can be selected",
+        "Group and account settings govern priority, concurrency, cooldowns, and failure handling",
       ],
       backends: [
         {
-          title: "Web Account Pool",
+          title: "API Accounts and Providers",
           description:
-            "Uses the ChatGPT Web path for page generation, edit, and image chat.",
+            "Go calls image and video providers using configured base URLs, credentials, model mappings, and generation/query operations.",
         },
         {
-          title: "Codex/Responses Pool",
+          title: "Go Tasks and Ledger",
           description:
-            "chat / agent / responses use Responses semantics (image_generation tool loop, multi-round). Plain image generation and edits use the account's direct /images/generations and /images/edits endpoints; edit inputs and masks are sent as base64 data URLs in images[].image_url / mask.image_url. Image requests use aspectRatio/aspect_ratio and resolution. Only providers with a selected size configuration map those values internally to an upstream size.",
+            "PostgreSQL stores tasks, configuration, usage, credits, and orders. Redis supports queues, concurrency control, and live status.",
         },
         {
-          title: "External API Backend",
+          title: "Private Compute Runtimes",
           description:
-            "Admin-configured OpenAI-compatible Base URL/API Key; calls images or responses endpoints by request type.",
+            "The upstream script runtime transforms bounded requests and responses; the media runtime performs image operations and inference. Go owns permissions, scheduling, billing, and storage.",
         },
       ],
     },
     routeTables: {
-      title: "Entry To Backend Mapping",
-      pageTitle: "Page Requests",
+      title: "Entry Point Mapping",
+      pageTitle: "Workspace Requests",
       apiTitle: "External API Requests",
-      headers: [
-        "Entry",
-        "Internal Endpoint",
-        "Request Kind",
-        "Backend Behavior",
-      ],
-      apiHeaders: [
-        "Entry",
-        "Compatible Endpoint",
-        "Request Kind",
-        "Backend Behavior",
-      ],
+      headers: ["Entry", "Transport", "Operation", "Go behavior"],
+      apiHeaders: ["Entry", "Endpoint", "Operation", "Go behavior"],
       pageRows: [
         [
-          "Create page generation",
-          "/api/images/generate",
-          "image_generation",
-          "Routes through the selected platform backend group to a Web account, Codex/Responses account, or external API backend.",
+          "Image generation and editing",
+          "Proxy / Server Action → Go",
+          "image_generation / image_edit",
+          "Validate the user and references, create image tasks, and read status and results.",
         ],
         [
-          "Create page edit",
-          "/api/images/edit",
-          "image_edit",
-          "Reference images enter the internal endpoint first, then route through the selected backend group.",
+          "Video creation",
+          "Proxy / Server Action → Go",
+          "video",
+          "Validate inputs and quotes, create persistent video tasks, and retrieve progress and outputs.",
         ],
         [
-          "Create page image chat",
-          "/api/images/chat",
-          "chat",
-          "Uses chat routing; can select Web accounts, Codex/Responses accounts, or external API backends that support /responses.",
-        ],
-        [
-          "Create page Agent run",
-          "/api/images/chat",
-          "agent",
-          "Same internal endpoint, but uses Codex/Responses capability; it provides image_generation, web_search, continue_generation, and visible task cards.",
+          "Models, settings, and global usage",
+          "Page / Server Action → Go",
+          "admin / query",
+          "Read existing configuration, models, ledgers, and usage under administrator permissions.",
         ],
       ],
       apiRows: [
         [
-          "OpenAI images generation",
+          "Image generation",
           "/v1/images/generations",
           "image_generation",
-          "Validates the API key, bound group, and account credits, then enters the same generation path; b64_json is the default response format, url can be requested explicitly.",
+          "Validate the key and model, execute through API accounts, and settle actual charges.",
         ],
         [
-          "OpenAI images edit",
+          "Image editing",
           "/v1/images/edits",
           "image_edit",
-          "Multipart images are converted into unified image inputs before backend routing.",
+          "Accept JSON image references or multipart uploads; apply Go moderation, generation, and storage.",
         ],
         [
-          "FluxMedia video",
+          "Video creation",
           "/v1/videos/generations",
           "video",
-          "FluxMedia extension. Always creates a persistent video task and returns HTTP 202. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. POST /v1/videos is no longer a creation endpoint.",
+          "Persist a task and return HTTP 202; use its ID to retrieve the terminal result.",
         ],
         [
-          "Async image task",
+          "Image task",
           "/v1/images/{task_id}",
           "image_generation",
-          "Returns the in-memory task created with async=true. Tasks expire after 30 minutes.",
+          "Retrieve an owned persistent task across restarts and instances.",
         ],
         [
           "Video task",
           "/v1/videos/{id}",
           "video",
-          "Looks up status, input summary, and the completed output URL by the persistent video task ID returned by the create endpoint.",
+          "Read an owned persistent task, input summary, billing, and output URLs.",
         ],
         [
-          "OpenAI chat completions",
-          "/v1/chat/completions",
-          "chat",
-          "Checks externalApi.chat.completions and then enters the page Chat non-Agent path; can route to Web, Codex/Responses, or external API backends that support /responses.",
+          "Models and video capabilities",
+          "/v1/models, /v1/videos/capabilities",
+          "discovery",
+          "Return models available to the current key and supported video parameters.",
         ],
         [
-          "OpenAI Responses",
-          "/v1/responses",
-          "responses",
-          "Adds the image_generation tool when tools are omitted; explicit tools must include image_generation. Responses routing selects Codex/Responses groups or external /responses API backends.",
-        ],
-        [
-          "FluxMedia Agent image run",
-          "/v1/agents/images",
-          "agent",
-          "FluxMedia extension. Requires externalApi.agent, routes to Codex/Responses only, and can stream Agent task events plus multi-round image outputs.",
-        ],
-        [
-          "OpenAI models",
-          "/v1/models",
-          "-",
-          "Only lists models exposed by the API key's bound group and enabled members; it does not trigger backend pool routing.",
-        ],
-        [
-          "FluxMedia credits",
+          "Credits",
           "/v1/credits",
-          "-",
-          "Returns the current API key quota, usage, remaining quota, and the owning account credit balance without backend routing.",
+          "credits",
+          "Return the account balance and the current key’s limit, usage, and remaining allowance.",
         ],
       ],
     },
     relationship: {
-      title: "How The Page And External Endpoints Relate",
+      title: "Pages and External APIs",
       rows: [
         [
-          "Three page endpoints",
-          "/api/images/generate, /api/images/edit, /api/images/chat",
-          "Browser-session entrypoints that adapt page forms, reference images, and internal stream events.",
-        ],
-        [
-          "Agent mode",
-          "/api/images/chat + agentMode=true",
-          "Enables a Codex-style tool loop and automatic image iteration inside the page Chat endpoint.",
-        ],
-        [
-          "External API entries",
-          "/v1/chat/completions, /v1/images/generations, /v1/images/edits, /v1/videos, /v1/images/{task_id}, /v1/responses, /v1/agents/images",
-          "/api/v1/* is an alias to the same handlers; these adapt API keys and OpenAI-compatible request/response formats.",
-        ],
-        [
-          "Shared core",
-          "runImageGenerationForUser",
-          "Credits, moderation, queueing, backend pool selection, error marking, cooldowns, refunds, and storage live here.",
-        ],
-        [
-          "Backend execution",
-          "generateImage / editImage / generateChatImage",
-          "The selected member is converted to a ChatGPT Web, Codex/Responses, or external API request.",
-        ],
-      ],
-      note: "The relationship is not external API -> page API. It is multiple adapters -> one shared service layer.",
-    },
-    moderationRepair: {
-      title: "Safety Prompt Repair Retry",
-      description:
-        "When local moderation, upstream safety refusal, or safety-refusal text without an image is detected, the system can rewrite the prompt through a text-only Responses request and retry generation inside the same task.",
-      valid: [
-        "Requires at least one usable Codex/Responses account or an external API backend that supports /responses. Even a Web-only generation group can borrow a Responses backend for the rewrite step.",
-        "IMAGE_MODERATION_PROMPT_REPAIR_ENABLED controls the feature; IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES controls the maximum rewrite rounds. Set retries to 0 to disable.",
-        "Retries do not create a second generation record. Billing remains attached to the original task and final output; the status page reports attempts, successes, and failures by retry number.",
-        "When a rewrite succeeds, the UI and external API return a separate notice that the original prompt was rejected by safety checks and generated after additional adjustments. This notice is not written into revised_prompt.",
-        "If no Responses backend is available, or the rewritten prompt is still blocked, the original moderation failure is kept and normal failed-settlement rules apply.",
-      ],
-      invalid: [
-        "Moderation-service outages, upstream rate limits, insufficient credits, and model permission errors are not prompt-repair cases.",
-        "Only the text prompt is rewritten; uploaded reference images, masks, and attachments are not modified.",
-      ],
-    },
-    agent: {
-      title: "Page Agent Mode",
-      description:
-        "Agent is a Codex-style automatic run mode. The page version reuses /api/images/chat and shows task cards; /v1/agents/images exposes the same run style as JSON/SSE for external clients.",
-      valid: [
-        "Enabled only when Codex/Responses capability is available; the Web branch does not run Agent tools.",
-        "Default tools include image_generation, web_search, and continue_generation. The backend does not force tool_choice so the model can combine search, image generation, and continuation.",
-        "Each round shows Agent task cards such as web search, tool compatibility adjustment, image generation, streaming preview, and continue/stop decisions.",
-        "Uploaded text/code files can be read as request context; prompted server filesystem paths are not read.",
-        "Max rounds are configurable. With force rounds enabled, Agent runs the selected number of rounds; otherwise the model decides whether to continue through continue_generation.",
-        "Draft images from multiple rounds are stored as iteration variants, with the last image selected as the default final output.",
-        "The current Chat/Agent base round charge is 0; completed images are billed by actual output and moderation cost.",
-      ],
-      invalid: [
-        "External /v1/responses is not Agent. It adapts the OpenAI Responses protocol and does not automatically enable the Agent tool loop.",
-      ],
-    },
-    externalDocs: {
-      title: "External API Reference",
-      subtitle:
-        "This documents the currently supported OpenAI-compatible surface. Bold fields are FluxMedia extensions or compatibility additions, not standard OpenAI fields.",
-      commonTitle: "Common Rules",
-      baseUrlTitle: "Base URL",
-      examplesTitle: "Request Example",
-      responseExampleTitle: "Response Example",
-      copyLabel: "Copy",
-      copiedLabel: "Copied",
-      copyFailedLabel: "Copy failed",
-      common: [
-        "All external endpoints require Authorization: Bearer <FluxMedia API key>.",
-        "Chat Completions, image, video, Responses, and Agent requests validate the API key, bound group, and account credits; availability is controlled by group members and system switches, with usage billed consistently.",
-        "/api/v1/* and /v1/* use the same handlers; they are path aliases.",
-        "All API key requests use the normal persistence path and write generation history, object storage, usage records, and continuation state as supported by each endpoint. There is no no-record mode.",
-        "Platform content-moderation levels are centrally managed by administrators: a user override wins, otherwise the global default applies, and missing or invalid values fall back to high. Callers cannot change this policy through an API key or request field. low, medium, and high only change Aliyun thresholds; the OpenAI moderation provider is unchanged by these levels.",
-        "response_format controls URL vs base64; output_format controls the image file format. They are different fields.",
-        "Error responses use an OpenAI-style error object. FluxMedia may also return generation_id, generationId, and credits_consumed for debugging and reconciliation.",
-        "A backend group bound to the API key wins first. Otherwise the platform default group is used, then the enabled fallback group. Page creation can select an authorized group for the current request.",
-        "Images use fixed 1024, 1K, 2K, and 4K tiers selected from actual output pixels. Pricing resolves the selected group's model override, then the required global model price, and finally adds runtime review fees. Videos resolve each model family's per-second price from the group override and then the required global price. Neither path uses group multipliers.",
-        "API keys can have independent credit limits. GET /v1/credits returns key quota, used credits, and account balance.",
-        "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
-        "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",
-        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos/generations always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. POST /v1/videos is no longer a creation endpoint. callback_url is attached to the persistent video task and delivered at terminal state.",
-      ],
-      officialRefsTitle: "Official References",
-      officialRefs: [
-        {
-          label: "Chat Completions API",
-          href: "https://developers.openai.com/api/reference/chat/create",
-        },
-        {
-          label: "Images API",
-          href: "https://developers.openai.com/api/reference/resources/images",
-        },
-        {
-          label: "Responses API",
-          href: "https://developers.openai.com/api/reference/resources/responses/methods/create",
-        },
-        {
-          label: "Models API",
-          href: "https://developers.openai.com/api/reference/resources/models/methods/list",
-        },
-      ],
-      fieldHeaders: ["Field", "Requirement", "Notes"],
-      responseHeaders: ["Response field", "Notes"],
-      requestTitle: "Request Fields",
-      responseTitle: "Response And Streaming",
-      notesTitle: "Implementation Notes",
-      customLabel: "Extension",
-      docs: [
-        {
-          title: "List models",
-          method: "GET",
-          path: "/v1/models",
-          contentType: "No request body",
-          description:
-            "Compatible with OpenAI List models. Lists image, Responses, and real video model IDs exposed by the current API key's bound group and enabled members, plus model IDs configured on enabled API providers.",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "list",
-  "data": [
-    {
-      "id": "gpt-image-2",
-      "object": "model",
-      "created": 0,
-      "owned_by": "gpt2image"
-    }
-  ]
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "Required header",
-              description: "Bearer <FluxMedia API key>.",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "Always list.",
-            },
-            {
-              name: "data[].id",
-              description:
-                "Model ID. Includes the default image model, real video model IDs, available Chat/Responses models, and model IDs configured on enabled API providers.",
-            },
-            {
-              name: "data[].object / created / owned_by",
-              description: "Compatible with the OpenAI model object shape.",
-            },
-          ],
-          notes: [
-            "Only model listing is implemented; /v1/models/{model} is not implemented.",
-            "Returned models are filtered by the API key's bound group, enabled members' explicit model lists, and system capability switches; the list can be empty when no reachable member is configured.",
-            "A non-empty API provider supported-model list also restricts that provider's scheduler eligibility. Legacy providers with an empty list stay unrestricted and only contribute their default model to the list.",
-          ],
-        },
-        {
-          title: "Get credits",
-          method: "GET",
-          path: "/v1/credits",
-          contentType: "No request body",
-          description:
-            "Returns the current Bearer API key's credit limit, used credits, remaining credits, and owning account balance.",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/credits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "credit_balance",
-  "account": {
-    "balance": 15702.45,
-    "total_earned": 20000,
-    "total_spent": 4297.55,
-    "status": "active"
-  },
-  "api_key": {
-    "credit_limit": 1000,
-    "credits_used": 12.7,
-    "credits_remaining": 987.3,
-    "unlimited": false
-  }
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "Required header",
-              description: "Bearer <FluxMedia API key>.",
-            },
-          ],
-          responses: [
-            {
-              name: "account.balance",
-              description: "Current available credits on the owning account.",
-            },
-            {
-              name: "account.total_earned / total_spent / status",
-              description:
-                "Cumulative credits earned / spent, and account status (active / frozen).",
-            },
-            {
-              name: "api_key.credit_limit",
-              description:
-                "Total limit for this API key; null means unlimited.",
-            },
-            {
-              name: "api_key.credits_used / credits_remaining",
-              description:
-                "Used and remaining quota for this key. credits_remaining is null when unlimited.",
-            },
-          ],
-          notes: [
-            "The API key quota only limits this key. Calls through the FluxMedia-billed platform path still require enough account credits.",
-            "Failed-generation refunds, moderation settlement, and actual-size corrections also update key usage.",
-            "The api_key object also includes id / name / key_prefix / last_four / is_active / last_used_at / created_at (omitted from the example).",
-          ],
-        },
-        {
-          title: "Create chat completion",
-          method: "POST",
-          path: "/v1/chat/completions",
-          contentType: "application/json",
-          description:
-            "OpenAI-compatible Chat Completions adapter for FluxMedia page Chat non-Agent mode. It does not enable the Agent tool loop.",
-          example: `# 1. Chat-to-image. URL is the default to keep response bodies small.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "messages": [
-      { "role": "system", "content": "You are a professional poster designer." },
-      { "role": "user", "content": "Create a 16:9 blue and white technology company poster" }
-    ],
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "quality": "high",
-    "response_format": "url"
-  }'
-
-# 2. Multimodal input. image_url becomes a real reference image input for this turn.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "image_model": "gpt-image-2",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "text", "text": "Use this product photo to create an ecommerce hero image" },
-          { "type": "image_url", "image_url": { "url": "https://example.com/product.png" } }
-        ]
-      }
-    ],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url"
-  }'
-
-# 3. Streaming. Text uses chat.completion.chunk; partial images use a FluxMedia extension event.
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "messages": [
-      { "role": "user", "content": "Create a futuristic city concept image" }
-    ],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "stream": true
-  }'`,
-          responseExample: `{
-  "id": "chatcmpl_...",
-  "object": "chat.completion",
-  "created": 1713833628,
-  "model": "gpt-5.4",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Image generated.\\n\\n![generated image 1](${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...)",
-        "images": [
-          {
-            "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-            "revised_prompt": "...",
-            "generation_id": "gen_..."
-          }
-        ]
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "images": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "generation_id": "gen_..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 2.31,
-  "usage": null
-}
-
-# stream=true SSE sample
-data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Generating..."},"finish_reason":null}]}
-
-event: chat.completion.partial_image
-data: {"type":"chat.completion.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"generation_id":"gen_...","credits_consumed":2.31}
-`,
-          fields: [
-            {
-              name: "messages",
-              requirement: "Required",
-              description:
-                "OpenAI Chat Completions messages. The final user text becomes this turn's prompt; previous user/assistant messages become page Chat history; system/developer messages are merged into the system instruction (apiPrompt) and not counted as history.",
-            },
-            {
-              name: "messages[].content[].image_url",
-              requirement: "Optional",
-              description:
-                "Supports public http(s) image URLs or data:image URLs. Images in the final user message become real reference image inputs.",
-            },
-            {
-              name: "model",
-              requirement: "Optional",
-              description:
-                "GPT chat model. Web/Codex/Responses backends handle support according to their capabilities.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Optional",
-              description:
-                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
-            },
-            {
-              name: "resolution",
-              requirement: "Optional",
-              description:
-                "Image resolution tier; unset values are chosen by the upstream.",
-            },
-            {
-              name: "quality",
-              requirement: "Optional",
-              description:
-                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models. Used as a runtime Chat image parameter.",
-            },
-            {
-              name: "stream",
-              requirement: "Optional",
-              description: "Returns text/event-stream when true.",
-            },
-            {
-              name: "response_format",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension: url or b64_json. Defaults to url to avoid oversized Chat Completions payloads.",
-            },
-            {
-              name: "image_model / imageModel",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension. Image model, must be gpt-image-*; Web backends do not map it to a separate Web image model.",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "Optional",
-              custom: true,
-              description: "Controls FluxMedia prompt optimization.",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension: safety prompt-repair retry toggle. When false, a moderation failure returns the real error directly instead of rewriting the prompt and retrying. Same meaning as /v1/images/generations.",
-            },
-            {
-              name: "background",
-              requirement: "Optional",
-              description:
-                "transparent, opaque, or auto. Same meaning as /v1/images/generations; applies to chat mode, without agent layering.",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Defaults to false. Only takes effect when background=transparent and explicitly set to true: if the selected backend rejects transparent with a 400, the request is regenerated opaque and matted server-side (ISNet) into a transparent PNG; not effective in the agent layered mode. See /v1/images/generations.",
-            },
-            {
-              name: "thinking / reasoning.effort",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "minimal, none, low, medium, high, xhigh. Mainly applies to Codex/Responses backends.",
-            },
-            {
-              name: "mixWebFirst / mix_web_first",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension. In mixed groups, sizes inside the Web-first pixel range try Web first and fall back to Codex/Responses. The range is configured by IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS and defaults to 0.66MP-2MP.",
-            },
-            {
-              name: "requiresResponsesBackend / requires_responses_backend",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension. Forces this Chat request to Codex/Responses capability instead of Web; when enabled it also bypasses the user's own connected API (like agent behavior) and settles FluxMedia credits via the platform / external backend pool.",
-            },
-          ],
-          responses: [
-            {
-              name: "choices[].message.content",
-              description:
-                "OpenAI-style assistant text. URL image results are appended as Markdown image links.",
-            },
-            {
-              name: "choices[].message.images / images",
-              description:
-                "FluxMedia extension. Structured image results with url or b64_json, generation_id, and revised_prompt.",
-              custom: true,
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "FluxMedia extension. Non-stream success responses return this Chat round's generation record ID at the top level.",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "FluxMedia extension. FluxMedia-billed credits for this request. The current Chat base round charge is 0; completed images are billed by actual output and moderation cost.",
-              custom: true,
-            },
-            {
-              name: "SSE chat.completion.chunk",
-              description: "OpenAI-style Chat Completions streaming chunk.",
-            },
-            {
-              name: "SSE chat.completion.partial_image",
-              description:
-                "FluxMedia extension. Streaming image preview emitted during generation.",
-              custom: true,
-            },
-          ],
-          notes: [
-            "Upstream API configs have two independent switches: Images upstream controls whether /v1/images/generations and /v1/images/edits call upstream /images/* or are converted to /responses + the image_generation tool; Chat Completions upstream only controls whether /v1/chat/completions calls upstream /chat/completions or /responses.",
-            "Selecting chat_completions makes FluxMedia /v1/chat/completions call the selected upstream's /chat/completions. This is better for pure chat compatibility, but image output depends on the upstream implementation. Agent and /v1/responses are not affected.",
-            "OpenAI official Chat Completions does not define a standard generated-image response field. FluxMedia extends the Chat Completions shape with choices[].message.images, top-level images, and Markdown image links in content. For strict official image-generation semantics, use /v1/images/generations, /v1/images/edits, or /v1/responses.",
-            "This endpoint uses page Chat non-Agent mode. It does not inject web_search or continue_generation and does not return Agent task cards.",
-            "The request kind is chat, so routing can select Web accounts, Codex/Responses accounts, or external API backends that support /responses. User custom upstream APIs still keep highest priority when available.",
-            "Billing matches page Chat: the current Chat base round charge is 0; completed images use the model fixed price and runtime review fees. Image charges do not use group multipliers.",
-          ],
-        },
-        {
-          title: "Create image",
-          method: "POST",
-          path: "/v1/images/generations",
-          contentType: "application/json",
-          description:
-            "Compatible with OpenAI Images generation. Requests become image_generation jobs in the shared generation path.",
-          example: `# 1. Official Images-style request. b64_json is the default.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "A cute baby sea otter",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "medium",
-    "background": "auto"
-  }'
-
-# 2. Return a URL and disable FluxMedia prompt optimization.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-1.5",
-    "prompt": "A cyberpunk city at night after rain, neon reflections",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "webp",
-    "output_compression": 85,
-    "background": "transparent",
-    "prompt_optimization": false
-  }'
-
-# 3. Codex/Responses backend-only parameters. Plain Images API backends may ignore them.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "Create a 16:9 product campaign poster",
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "jpeg",
-    "output_compression": 90,
-    "gptModel": "gpt-5.4",
-    "thinking": "high",
-    "promptOptimization": false
-  }'
-
-# 4. Prefer Web account scheduling for mixed groups within the configured pixel range. Failed or exhausted Web routing falls back to Codex/Responses.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "A 1:1 avatar poster",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "web_first": true
-  }'
-
-# 5. Streaming response. Accept: text/event-stream also enables streaming.
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "A transparent glass futuristic coffee cup",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "stream": true
-  }'
-
-# 6. Async mode. You may also append ?async=true. callback_url is optional.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-1.5",
-    "prompt": "A transparent-background product icon",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "png",
-    "background": "transparent",
-    "async": true,
-    "callback_url": "https://your-server.example/callback"
-  }'
-
-# 7. FluxMedia extensions: transparent background + ISNet matte fallback, with safety prompt-repair retry disabled.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "A transparent-background product icon",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "output_format": "png",
-    "background": "transparent",
-    "transparent_matte": true,
-    "prompt_repair": false
-  }'`,
-          responseExample: `{
-  "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# SSE when stream=true
-event: image_generation.partial_image
-data: {"type":"image_generation.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: image_generation.completed
-data: {"type":"image_generation.completed","index":0,"generation_id":"...","generationId":"...","model":"gpt-image-2","size":"1024x1024","credits_consumed":1.31,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","revised_prompt":"..."}]}
-
-# Immediate async=true response
-{
-  "id": "task_...",
-  "object": "image.generation",
-  "model": "gpt-image-2",
-  "status": "processing",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "generation_id": "gen_..."
-}
-
-# Poll task
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"
-
-# Completed task response or callback payload
-{
-  "id": "task_...",
-  "object": "image",
-  "model": "gpt-image-2",
-  "status": "completed",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed": 1713833700,
-  "completed_at": "2026-05-28T00:01:12.000Z",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "Required",
-              description: "Image prompt, up to 32000 characters.",
-            },
-            {
-              name: "model",
-              requirement: "Required",
-              description:
-                "Exact image model ID returned by GET /v1/models for the current API key. The server matches only IDs explicitly exposed by members in the key's trusted group; it does not rewrite default or other out-of-catalog aliases. Use /v1/responses for Responses chat models.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Optional",
-              description:
-                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
-            },
-            {
-              name: "resolution",
-              requirement: "Optional",
-              description:
-                "Image resolution tier; unset values are chosen by the upstream.",
-            },
-            {
-              name: "quality",
-              requirement: "Optional",
-              description:
-                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
-            },
-            {
-              name: "response_format",
-              requirement: "Optional",
-              description:
-                "url or b64_json. Defaults to b64_json. url returns a FluxMedia storage URL.",
-            },
-            {
-              name: "output_format",
-              requirement: "Optional",
-              description:
-                "png, jpeg, or webp. Controls the actual output image format; upstream support may vary.",
-            },
-            {
-              name: "output_compression",
-              requirement: "Optional",
-              description:
-                "compression level 0-100, only meaningful for jpeg/webp; higher = more compression, smaller file, lower quality (OpenAI-native output_compression semantics, passed through).",
-            },
-            {
-              name: "background",
-              requirement: "Optional",
-              description:
-                "transparent, opaque, or auto. Transparent backgrounds require support from the selected upstream model and usually require png or webp output. Unsupported models may return a 400 error such as “Transparent background is not supported for this model”. To still get a transparent result on an unsupported backend, also pass transparent_matte=true (see next field). Use auto or opaque when support is unknown.",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Defaults to false. Only takes effect when background=transparent and explicitly set to true: if the selected backend rejects transparent with a 400, the request is regenerated opaque and matted server-side (ISNet) into a transparent PNG. When off, transparent is passed through and an unsupported backend returns the real 400 error. Applies to single image generation/edit/chat only, not the agent layered mode.",
-            },
-            {
-              name: "stream",
-              requirement: "Optional",
-              description: "true returns text/event-stream.",
-            },
-            {
-              name: "async",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Async switch. Set body async:true OR append ?async=true to the URL (the two are equivalent). When on, the endpoint returns a task_... object immediately (status:processing) and runs generation in the background; poll GET /v1/images/{task_id} for the result. Cannot be combined with stream (sending both returns async cannot be used with stream.).",
-            },
-            {
-              name: "callback_url",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Completion-callback webhook (not a URL you poll). Async only: when the task completes or fails, the server POSTs the final task object to this URL with headers X-Tokens-Callback: true and Content-Type: application/json. The URL must be publicly reachable over http/https. An already-sent callback is unaffected even if the task later expires (30 min) or is lost on restart.",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Controls whether FluxMedia may further optimize prompt. If prompt is already the final optimized prompt, pass false.",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "Optional",
-              custom: true,
-              description:
-                'Safety prompt-repair retry toggle (issue #24). Defaults to the platform setting (usually enabled): when local moderation or an upstream safety refusal yields no image, the system rewrites the prompt through Responses and re-moderates and retries inside the same task. When explicitly false, this automatic rewrite-retry is disabled and a moderation failure returns the real error without rewriting the prompt. See "Safety Prompt Repair Retry" below.',
-            },
-            {
-              name: "gptModel / gpt_model",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "When routed to Codex/Responses accounts, this is the top-level Responses GPT model. Plain Images API backends may ignore it.",
-            },
-            {
-              name: "thinking",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "minimal, none, low, medium, high, or xhigh. Only applies to Codex/Responses backends; Web or plain Images API backends may ignore it.",
-            },
-            {
-              name: "web_first / webFirst / force_web / forceWeb",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Only supported by image endpoints. Prefer web_first / webFirst; force_web / forceWeb are compatibility aliases with the same Web-first preference semantics, not hard Web-only routing. Mixed backend groups prefer Web accounts when the requested total pixels are between IMAGE_FORCE_WEB_MIN_PIXELS and IMAGE_FORCE_WEB_MAX_PIXELS. If Web is unavailable, fails, or is exhausted, routing falls back to Codex/Responses. The default range is 0.66MP-2MP; non-mixed or out-of-range requests ignore this field.",
-            },
-          ],
-          responses: [
-            {
-              name: "created",
-              description: "Unix timestamp in seconds.",
-            },
-            {
-              name: "data[].b64_json / data[].url",
-              description: "Base64 or URL according to response_format.",
-            },
-            {
-              name: "data[].revised_prompt",
-              description:
-                "Returned when the upstream provides a revised prompt.",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level.",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "FluxMedia extension. FluxMedia-billed credits for this request.",
-              custom: true,
-            },
-            {
-              name: "SSE image_generation.partial_image",
-              description:
-                "Only returned with stream=true or Accept: text/event-stream. Represents one partial image.",
-            },
-            {
-              name: "SSE image_generation.completed",
-              description:
-                "Only returned in streaming mode. Indicates one image is complete; event data includes generation_id, credits_consumed, model, size, and the final image.",
-            },
-          ],
-          notes: [
-            "This endpoint does not call page /api/images/generate; it directly enters the shared service layer.",
-            "When routed to a Responses account, the image request is converted into a Responses image_generation tool request.",
-            "Each request creates exactly one generation record. Explicit n is rejected with HTTP 400; batch image generation is no longer supported.",
-            "Concurrency and queueing are governed by the site-wide execution limit and the per-user image limit. The default user limit is 20 and can be overridden on the user edit page. Async tasks use the backend-group numeric priority in ascending order; smaller values run first.",
-            "Waiting in a queue does not create a generation record or charge image credits. If the shared queue wait exceeds IMAGE_GENERATION_QUEUE_TIMEOUT_MS, the API returns a 429-style error. The 20-minute runtime timeout starts only after an individual image task begins execution, and timeout settlement follows the failed-generation credit rules.",
-            "Web backends cannot strictly control output dimensions or output format. FluxMedia labels stored files by the detected image header and MIME.",
-            "background=transparent is not universally supported. OpenAI's official docs currently list gpt-image-1.5, gpt-image-1, and gpt-image-1-mini as supporting transparent backgrounds, and png or webp output is usually required. Unsupported upstream models may reject the request with HTTP 400 instead of silently falling back.",
-            "Async tasks are persisted in PostgreSQL and awakened by BullMQ. Recovery jobs continue unfinished work after restarts, instance switches, or temporary delivery failures.",
-            "If the generated dimensions differ from the requested aspect-ratio/resolution target, FluxMedia records and bills using the detected dimensions.",
-            "The official Images API may return usage. FluxMedia usually returns usage: null, but FluxMedia-billed credits are returned through top-level credits_consumed, error payloads, or streaming completion events.",
-          ],
-        },
-        {
-          title: "Create image edit",
-          method: "POST",
-          path: "/v1/images/edits",
-          contentType: "multipart/form-data or application/json",
-          description:
-            "Compatible with OpenAI Images edit. multipart uploads files; JSON can reference public image URLs.",
-          example: `# 1. multipart upload reference image.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-2" \\
-  -F prompt="Turn the reference image into a cinematic poster" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F quality="high" \\
-  -F response_format="url" \\
-  -F output_format="jpeg" \\
-  -F output_compression="90" \\
-  -F background="opaque" \\
-  -F 'image[]=@/path/to/reference.png'
-
-# 2. multipart multiple references + mask + Codex/Responses fields.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-2" \\
-  -F prompt="Only redraw the masked area and keep the face unchanged" \\
-  -F aspectRatio="3:2" \\
-  -F resolution="1k" \\
-  -F quality="medium" \\
-  -F response_format="b64_json" \\
-  -F promptOptimization="false" \\
-  -F gpt_model="gpt-5.4" \\
-  -F thinking="medium" \\
-  -F 'image[]=@/path/to/person.png' \\
-  -F 'image_2=@/path/to/style.png' \\
-  -F mask="@/path/to/mask.png"
-
-# 3. JSON image URLs. Prefer images; image_url/image_urls are shortcuts.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "Turn the reference into a clean ecommerce hero image",
-    "images": [
-      "https://example.com/reference.png",
-      { "image_url": "https://example.com/detail.webp" }
-    ],
-    "image_url": "https://example.com/single-reference.png",
-    "image_urls": ["https://example.com/extra.jpg"],
-    "mask_url": "https://example.com/mask.png",
-    "mask_image_url": "https://example.com/mask-alt.png",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "auto",
-    "response_format": "url",
-    "output_format": "webp",
-    "output_compression": 80,
-    "background": "transparent",
-    "prompt_optimization": false,
-    "gptModel": "gpt-5.4-mini",
-    "thinking": "low"
-  }'
-
-# 4. Prefer Web account scheduling for mixed groups within the configured pixel range. Failed or exhausted Web routing falls back to Codex/Responses.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "Keep the person and make it look like a cinematic still",
-    "images": ["https://example.com/reference.png"],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "response_format": "url",
-    "web_first": true
-  }'
-
-# 5. Streaming image edit.
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -F model="gpt-image-2" \\
-  -F prompt="Keep the composition and convert it to watercolor illustration" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F stream="true" \\
-  -F 'image=@/path/to/reference.png'
-
-# 6. Async image edit. You may also append ?async=true. callback_url is optional.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-image-1.5" \\
-  -F prompt="Remove the background and output a transparent PNG" \\
-  -F aspectRatio="1:1" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F output_format="png" \\
-  -F background="transparent" \\
-  -F async="true" \\
-  -F callback_url="https://your-server.example/callback" \\
-  -F 'image=@/path/to/reference.png'`,
-          responseExample: `{
-  "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# SSE when stream=true
-event: image_edit.partial_image
-data: {"type":"image_edit.partial_image","index":0,"partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: image_edit.completed
-data: {"type":"image_edit.completed","index":0,"generation_id":"...","generationId":"...","model":"gpt-image-2","size":"1024x1024","credits_consumed":1.31,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","revised_prompt":"..."}]}
-
-# async=true task polling and callback shape match /v1/images/generations.
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "Required",
-              description: "Edit prompt, up to 32000 characters.",
-            },
-            {
-              name: "image / image[] / image_*",
-              requirement: "Required for multipart",
-              description: "Reference image files, up to 16 images.",
-            },
-            {
-              name: "images",
-              requirement: "Optional for JSON",
-              description:
-                "Image reference array. FluxMedia accepts string URLs or { image_url/url }. file_id is not supported.",
-            },
-            {
-              name: "mask",
-              requirement: "Optional",
-              description:
-                "PNG mask file; JSON can provide a mask URL reference.",
-            },
-            {
-              name: "model",
-              requirement: "Required",
-              description:
-                "Exact image model ID returned by GET /v1/models for the current API key. Out-of-catalog IDs and other aliases are not rewritten. The same rule applies to /v1/images/generations.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Optional",
-              description:
-                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
-            },
-            {
-              name: "resolution",
-              requirement: "Optional",
-              description:
-                "Image resolution tier; unset values are chosen by the upstream.",
-            },
-            {
-              name: "quality",
-              requirement: "Optional",
-              description:
-                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
-            },
-            {
-              name: "response_format",
-              requirement: "Optional",
-              description: "url or b64_json. Defaults to b64_json.",
-            },
-            {
-              name: "output_format",
-              requirement: "Optional",
-              description:
-                "png, jpeg, or webp. Controls the actual output image format; upstream support may vary.",
-            },
-            {
-              name: "output_compression",
-              requirement: "Optional",
-              description:
-                "compression level 0-100, only meaningful for jpeg/webp; higher = more compression, smaller file, lower quality (OpenAI-native output_compression semantics, passed through).",
-            },
-            {
-              name: "background",
-              requirement: "Optional",
-              description:
-                "transparent, opaque, or auto. Transparent backgrounds require support from the selected upstream model and usually require png or webp output. Unsupported models may return a 400 error such as “Transparent background is not supported for this model”. To still get a transparent result on an unsupported backend, also pass transparent_matte=true (see next field). Use auto or opaque when support is unknown.",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Defaults to false. Only takes effect when background=transparent and explicitly set to true: if the selected backend rejects transparent with a 400, the request is regenerated opaque and matted server-side (ISNet) into a transparent PNG. When off, transparent is passed through and an unsupported backend returns the real 400 error. Applies to single image generation/edit/chat only, not the agent layered mode.",
-            },
-            {
-              name: "stream",
-              requirement: "Optional",
-              description: "true returns text/event-stream.",
-            },
-            {
-              name: "async",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Async switch. Set body async:true OR append ?async=true to the URL (the two are equivalent). When on, the endpoint returns a task_... object immediately (status:processing) and runs the edit in the background; poll GET /v1/images/{task_id} for the result. Cannot be combined with stream (sending both returns async cannot be used with stream.).",
-            },
-            {
-              name: "callback_url",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Completion-callback webhook (not a URL you poll). Async only: when the task completes or fails, the server POSTs the final task object to this URL with headers X-Tokens-Callback: true and Content-Type: application/json. The URL must be publicly reachable over http/https. An already-sent callback is unaffected even if the task later expires (30 min) or is lost on restart.",
-            },
-            {
-              name: "image_url / image_urls",
-              requirement: "Optional JSON or form field",
-              custom: true,
-              description:
-                "Compatibility shortcut fields. Prefer images; when both are provided, FluxMedia merges them into one reference list and deduplicates by URL.",
-            },
-            {
-              name: "mask_url / mask_image_url",
-              requirement: "Optional JSON or form field",
-              custom: true,
-              description: "Convenience fields for a mask image URL.",
-            },
-            {
-              name: "promptOptimization / prompt_optimization",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Controls whether FluxMedia may further optimize prompt. If prompt is already the final optimized prompt, pass false.",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "Optional",
-              custom: true,
-              description:
-                'Safety prompt-repair retry toggle (issue #24). Defaults to the platform setting (usually enabled): when local moderation or an upstream safety refusal yields no image, the system rewrites the prompt through Responses and re-moderates and retries inside the same task. When explicitly false, this automatic rewrite-retry is disabled and a moderation failure returns the real error without rewriting the prompt. See "Safety Prompt Repair Retry" below.',
-            },
-            {
-              name: "gptModel / gpt_model",
-              requirement: "Optional",
-              custom: true,
-              description: "Same as Create image.",
-            },
-            {
-              name: "thinking",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "minimal, none, low, medium, high, or xhigh. Only applies to Codex/Responses backends; Web or plain Images API backends may ignore it.",
-            },
-            {
-              name: "web_first / webFirst / force_web / forceWeb",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Only supported by image endpoints. Prefer web_first / webFirst; force_web / forceWeb are compatibility aliases with the same Web-first preference semantics, not hard Web-only routing. Mixed backend groups prefer Web accounts when the requested total pixels are between IMAGE_FORCE_WEB_MIN_PIXELS and IMAGE_FORCE_WEB_MAX_PIXELS. If Web is unavailable, fails, or is exhausted, routing falls back to Codex/Responses. The default range is 0.66MP-2MP; non-mixed or out-of-range requests ignore this field.",
-            },
-          ],
-          responses: [
-            {
-              name: "created / data[]",
-              description: "Same as /v1/images/generations.",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level.",
-              custom: true,
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "FluxMedia extension. FluxMedia-billed credits for this request.",
-              custom: true,
-            },
-            {
-              name: "SSE image_edit.partial_image",
-              description:
-                "Only returned with stream=true or Accept: text/event-stream. Represents one partial edited image.",
-            },
-            {
-              name: "SSE image_edit.completed",
-              description:
-                "Only returned in streaming mode. Indicates one edited image is complete; event data includes generation_id, credits_consumed, model, size, and the final image.",
-            },
-          ],
-          notes: [
-            "URL images are downloaded server-side and checked for public reachability, type, and size.",
-            "Private networks, localhost, metadata/internal hosts, and URLs with credentials are rejected.",
-            "Official JSON file_id image references are not implemented. Use public image_url or multipart uploads.",
-            "background=transparent is not universally supported. OpenAI's official docs currently list gpt-image-1.5, gpt-image-1, and gpt-image-1-mini as supporting transparent backgrounds, and png or webp output is usually required. Unsupported upstream models may reject the request with HTTP 400 instead of silently falling back.",
-            "async tasks are process-local and expire after 30 minutes. A restart or multi-instance switch can make unfinished tasks unavailable for polling; already-sent callbacks are unaffected.",
-          ],
-        },
-        {
-          title: "Get async image task",
-          method: "GET",
-          path: "/v1/images/{task_id}",
-          contentType: "No request body",
-          description:
-            "Extension: look up a single image generation by ID. The {task_id} path parameter accepts two kinds of ID: (1) the task_... created with async=true (an in-process in-memory task object that expires after 30 minutes and becomes unavailable after a restart or multi-instance switch); (2) the generation_id (gen_...) from any sync/async response, read persistently from the DB and available across restarts / multi-instance switches. It checks the in-memory task first, then looks up by generation_id. Only the caller's own records are returned.",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "id": "task_...",
-  "object": "image",
-  "model": "gpt-image-2",
-  "status": "completed",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed": 1713833700,
-  "completed_at": "2026-05-28T00:01:12.000Z",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 1.31,
-  "usage": null
-}
-
-# While still running (status:processing, no data yet)
-{
-  "id": "task_...",
-  "object": "image.generation",
-  "model": "gpt-image-2",
-  "status": "processing",
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "generation_id": "gen_..."
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "Required header",
-              description: "Bearer <FluxMedia API Key>.",
-            },
-            {
-              name: "task_id",
-              requirement: "Required path parameter",
-              custom: true,
-              description:
-                "ID (path parameter). Either the task_... returned with async=true (in-memory task; expires after 30 minutes, unavailable after restart / multi-instance switch), or the generation_id (gen_...) from any response (read persistently from the DB, available across restarts / multi-instance switches). Max length 128 chars; missing/over-length returns 400 Invalid task_id, not found / expired returns 404. Scoped to the owning user; only your own records are returned.",
-            },
-          ],
-          responses: [
-            {
-              name: "id",
-              description:
-                "Task ID (task_...), matching {task_id} in the path.",
-            },
-            {
-              name: "object",
-              description:
-                "image.generation while running, image once finished.",
-            },
-            {
-              name: "status",
-              description:
-                "Task status: processing (running), completed (success), or failed (the object then includes error).",
-            },
-            {
-              name: "data",
-              description:
-                "When status=completed, the image result array (same shape as /v1/images/generations, elements carry url or b64_json). Absent while still running.",
-            },
-            {
-              name: "created / created_at / completed / completed_at",
-              description:
-                "Task create and completion times (unix seconds and ISO strings); completed* appear only after completion.",
-            },
-            {
-              name: "generation_id / generationId",
-              description: "The associated generation record ID.",
-            },
-            {
-              name: "credits_consumed",
-              description:
-                "Credits settled on completion; 0 when a user-supplied API was used.",
-            },
-          ],
-          notes: [
-            "Tasks are persisted in PostgreSQL and awakened by BullMQ. Recovery jobs continue unfinished work after restarts, instance switches, or temporary delivery failures.",
-            "You can only query tasks created by the user that owns the current API Key.",
-            "The response matches exactly the task object POSTed to callback_url.",
-          ],
-        },
-        {
-          title: "Create video",
-          method: "POST",
-          path: "/v1/videos/generations",
-          contentType: "application/json",
-          description:
-            "Creates a persistent FluxMedia video task through POST /v1/videos/generations. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. POST /v1/videos is no longer a creation endpoint.",
-          example: `# 1. Text-to-video. model is the real model ID; parameters are separate.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-001",
-    "model": "veo31",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "1080p",
-    "prompt": "A corgi running on the beach, cinematic camera, golden hour",
-    "negative_prompt": "low resolution, blurry, watermark",
-    "quote_token": "<from /v1/videos/capabilities>"
-  }'
-
-# 2. First/last-frame generation. Frames and reference images are mutually exclusive for every model.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-002",
-    "model": "seedance2-fast",
-    "duration_seconds": 10,
-    "aspect_ratio": "9:16",
-    "resolution": "720p",
-    "prompt": "Make the person slowly look up and smile",
-    "first_frame": "data:image/png;base64,iVBORw0KGgo...",
-    "last_frame": "data:image/png;base64,iVBORw0KGgo...",
-    "generate_audio": false
-  }'
-
-# 3. Compatibility async field. true, false, or omission creates the same persistent task.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "client_request_id": "video-request-003",
-    "model": "veo31",
-    "seconds": 8,
-    "aspect_ratio": "16:9",
-    "resolution": "1080p",
-    "prompt": "City night timelapse, neon reflections",
-    "async": true,
-    "callback_url": "https://your-server.example/callback"
-  }'
-# Returns HTTP 202. Poll the same persistent task ID, or wait for callback_url:
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "queued",
-  "model": "veo31",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "billing": {
-    "kind": "snapshot",
-    "mode": "per_second",
-    "unit": "second",
-    "unitPrice": 3,
-    "creditsPerSecond": 3,
-    "durationSeconds": 8,
-    "quotedCredits": 24,
-    "actualCredits": 0
-  }
-}`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "Required",
-              description: "Video prompt, up to 32000 characters.",
-            },
-            {
-              name: "model",
-              requirement: "Required",
-              description:
-                "Real video model ID, such as seedance2, seedance2-fast, or veo31. Do not encode duration, ratio, or resolution in the ID; composite IDs are rejected. See /v1/models for available models.",
-            },
-            {
-              name: "clientRequestId / client_request_id",
-              requirement: "Required",
-              description:
-                "Caller-generated idempotency ID, up to 128 characters. Reuse it when retrying the same request.",
-            },
-            {
-              name: "seconds / duration / duration_seconds",
-              requirement: "Required",
-              description:
-                "Video duration in seconds; must be an integer supported by the selected model.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Required",
-              description:
-                "Video aspect ratio, such as 16:9 or 9:16; must be supported by the selected model.",
-            },
-            {
-              name: "resolution",
-              requirement: "Required",
-              description:
-                "Lowercase resolution such as 480p, 720p, or 1080p; must be supported by the selected model.",
-            },
-            {
-              name: "quote_token / quoteToken",
-              requirement: "Optional",
-              description:
-                "Short-lived opaque token for the current quote of the selected model and resolution, from the billing row of GET /v1/videos/capabilities. A stale token returns 409 with the latest currentQuote; omitting it remains compatible with existing callers.",
-            },
-            {
-              name: "negative_prompt / negativePrompt",
-              requirement: "Optional",
-              description: "Negative prompt, up to 8000 characters.",
-            },
-            {
-              name: "firstFrame / first_frame, lastFrame / last_frame",
-              requirement: "Optional",
-              description:
-                "First frame and optional last frame as base64 image data URLs. lastFrame requires firstFrame; last-frame support is model-specific.",
-            },
-            {
-              name: "referenceImages / reference_images",
-              requirement: "Optional",
-              description:
-                "Ordered base64 image data URL array. The limit is model-specific; Seedance defaults to 10 and admins may configure it. Reference images and frame inputs are mutually exclusive for every model.",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              requirement: "Optional",
-              description:
-                "Whether to generate audio. true is accepted only for models with audio capability.",
-            },
-            {
-              name: "async",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Compatibility field. true, false, or omission creates the same persistent task and returns HTTP 202; it does not enable a synchronous mode. URL ?async is not a supported video mode switch.",
-            },
-            {
-              name: "callback_url / callbackUrl",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Terminal webhook for the persistent task. The server POSTs terminal output to this public https URL when the task completes or fails. It is independent of async, and retries with the same clientRequestId must keep the callback URL unchanged.",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "Always video.task.",
-            },
-            {
-              name: "id / task_id / generation_id",
-              description:
-                "The same persistent video task ID, used with GET /v1/videos/{id}.",
-            },
-            {
-              name: "status",
-              description:
-                "Current task state: queued, in_progress, completed, or failed.",
-            },
-            {
-              name: "model",
-              description: "The real video model ID used.",
-            },
-            {
-              name: "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
-              description:
-                "Independent generation parameters saved on the task.",
-            },
-            {
-              name: "billing",
-              description:
-                "Snapshot locked at creation. per_second multiplies unit price by duration; per_item charges one unit price and does not return creditsPerSecond.",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              description:
-                "Returned as equivalent aliases when the create request explicitly includes the audio switch.",
-            },
-          ],
-          notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos/generations is an equivalent alias. POST /v1/videos is no longer a creation endpoint; GET /v1/videos/{id} remains available for task queries.",
-            "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
-            "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
-            "The global model configuration determines billing mode: per_second charges the resolution unit price × duration, while per_item charges the resolution unit price once. The billing snapshot is fixed at creation, so later configuration changes do not affect the task. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
-            "Requires the externalApi.images.generate system capability switch, plus a valid API key, bound group, and sufficient account credits.",
-          ],
-        },
-        {
-          title: "Get video task",
-          method: "GET",
-          path: "/v1/videos/{id}",
-          contentType: "No request body",
-          description:
-            "FluxMedia extension: looks up status by the persistent video task ID returned by the create endpoint. It reads only the database-backed video task and verifies API-key ownership; it does not consult the process-local async image task store.",
-          example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
-          responseExample: `{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "completed",
-  "model": "veo31",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "generateAudio": false,
-  "generate_audio": false,
-  "input": {"mode": "none", "count": 0},
-  "billing": {
-    "kind": "snapshot",
-    "mode": "per_item",
-    "unit": "item",
-    "unitPrice": 3,
-    "durationSeconds": 8,
-    "quotedCredits": 3,
-    "actualCredits": 3
-  },
-  "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed_at": "2026-05-28T00:01:40.000Z"
-}
-
-# While still running, video_url and data are omitted.
-{
-  "object": "video.task",
-  "id": "video_0123456789abcdef0123456789abcdef01234567",
-  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "in_progress",
-  "model": "veo31",
-  "duration": 8,
-  "duration_seconds": 8,
-  "aspectRatio": "16:9",
-  "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "generateAudio": false,
-  "generate_audio": false,
-  "input": {"mode": "none", "count": 0},
-  "created_at": "2026-05-28T00:00:00.000Z"
-}`,
-          fields: [
-            {
-              name: "Authorization",
-              requirement: "Required header",
-              description: "Bearer <FluxMedia API key>.",
-            },
-            {
-              name: "id",
-              requirement: "Required path parameter",
-              custom: true,
-              description:
-                "The id, task_id, or generation_id from the create response; all three are the same persistent video task ID. Max length is 128 characters; missing or over-length values return 400 Invalid task_id. Access is scoped to the API-key owner.",
-            },
-          ],
-          responses: [
-            {
-              name: "object",
-              description: "Always video.task.",
-            },
-            {
-              name: "id / task_id / generation_id",
-              description:
-                "The same persistent video task ID, matching {id} in the request path.",
-            },
-            {
-              name: "status",
-              description:
-                "queued, in_progress, completed, or failed. error.message is included when an error is available.",
-            },
-            {
-              name: "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
-              description:
-                "The real model ID and independent generation parameters persisted on the task.",
-            },
-            {
-              name: "generateAudio / generate_audio",
-              description: "The effective audio switch used by the task.",
-            },
-            {
-              name: "input.mode / input.count",
-              description:
-                "Input summary. mode is none, first-frame, first-last-frames, references, reference-videos, reference-audio, or mixed; count is the number of inputs. Actual input media are not returned.",
-            },
-            {
-              name: "billing",
-              description:
-                "Immutable quote and actual consumption. legacy identifies an old task whose creation unit price and quote are unknown, so no current price is fabricated. A refund preserves quotedCredits and sets actualCredits to 0.",
-            },
-            {
-              name: "data[].url / video_url",
-              description:
-                "When status=completed, the signed FluxMedia storage URL of the produced video (data[].url equals the top-level video_url); absent while running.",
-            },
-            {
-              name: "created_at / completed_at",
-              description:
-                "ISO task creation timestamp. completed_at is included only after completion.",
-            },
-          ],
-          notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint; /api/v1/videos/{id} is an alias.",
-            "Only tasks created by the user that owns the current API key are queryable; the response is Cache-Control: no-store.",
-            "Status and output come from the persistent video record; there is no 30-minute in-memory task expiry contract.",
-          ],
-        },
-        {
-          title: "Create Agent image run",
-          method: "POST",
-          path: "/v1/agents/images",
-          contentType: "application/json or multipart/form-data",
-          description:
-            "FluxMedia extension that exposes the page Agent run style to external API clients. It uses Codex/Responses scheduling, web search, tool loop continuation, attachment context, and multi-round image iteration.",
-          example: `# 1. JSON Agent image run. Enable the externalApi.agent system capability.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "prompt": "Search public information about Zhejiang Shuangyuan Technology and iterate an enterprise poster",
-    "aspectRatio": "3:2",
-    "resolution": "1k",
-    "quality": "high",
-    "thinking": "medium",
-    "agent_max_rounds": 3,
-    "agent_force_max_rounds": false,
-    "response_format": "url"
-  }'
-
-# 2. With reference image URLs. images / image_url / image_urls are merged and deduplicated.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "image_model": "gpt-image-2",
-    "prompt": "Analyze this product photo and create an ecommerce poster",
-    "images": ["https://example.com/product.png"],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "agent_max_rounds": 2
-  }'
-
-# 3. multipart reference image plus PDF/text attachments.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -F model="gpt-5.4" \\
-  -F image_model="gpt-image-2" \\
-  -F prompt="Read the attachment and create a trade-show poster" \\
-  -F aspectRatio="3:2" \\
-  -F resolution="1k" \\
-  -F response_format="url" \\
-  -F agent_max_rounds="3" \\
-  -F 'image[]=@/path/to/reference.png' \\
-  -F 'file=@/path/to/company-profile.pdf'
-
-# 4. Streaming Agent events.
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Accept: text/event-stream" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "image_model": "gpt-image-2",
-    "prompt": "Search first, then iterate a technology-blue enterprise poster",
-    "aspectRatio": "3:2",
-    "resolution": "1k",
-    "stream": true,
-    "agent_max_rounds": 2,
-    "agent_force_max_rounds": true
-  }'`,
-          responseExample: `{
-  "object": "agent.image_run",
-  "created": 1713833628,
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "model": "gpt-5.4",
-  "size": "1536x1024",
-  "response_text": "Research and poster generation completed.",
-  "agent_round_count": 2,
-  "credits_consumed": 8.42,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "...",
-      "output_role": "agent_draft"
-    },
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "...",
-      "output_role": "final"
-    }
-  ],
-  "agent_events": [],
-  "usage": null
-}
-
-# SSE when stream=true
-event: agent.event
-data: {"type":"agent.event","event":{"kind":"web_search","status":"completed","title":"Web search completed","detail":"Zhejiang Shuangyuan Technology official site"}}
-
-event: agent.partial_image
-data: {"type":"agent.partial_image","partial_image_index":0,"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}
-
-event: agent.completed
-data: {"type":"agent.completed","generation_id":"...","generationId":"...","agent_round_count":2,"credits_consumed":8.42,"data":[{"url":"${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...","output_role":"final"}]}
-`,
-          fields: [
-            {
-              name: "prompt",
-              requirement: "Required",
-              description: "Current Agent task, up to 32000 characters.",
-            },
-            {
-              name: "model / gptModel / gpt_model",
-              requirement: "Optional",
-              description:
-                "Top-level GPT/Responses model. If model is gpt-image-*, FluxMedia treats it as image_model for compatibility.",
-            },
-            {
-              name: "image_model / imageModel",
-              requirement: "Optional",
-              description:
-                "Image model used by the image_generation tool, usually gpt-image-*.",
-            },
-            {
-              name: "images / image_url / image_urls",
-              requirement: "Optional for JSON",
-              description:
-                "Public reference image URLs. The server downloads and validates public reachability, type, and size.",
-            },
-            {
-              name: "image / image[] / image_*",
-              requirement: "Optional for multipart",
-              description:
-                "Reference image files. Images plus attachments are limited by system media settings.",
-            },
-            {
-              name: "file / file[] / attachment",
-              requirement: "Optional for multipart",
-              description:
-                "Text, code, CSV, JSON, Markdown, XML, YAML, log, or PDF attachments. Text files become context; PDFs become Responses file inputs.",
-            },
-            {
-              name: "history",
-              requirement: "Optional",
-              description:
-                "Previous conversation array such as [{ role, text, imageUrls, variants }] for continuing an external Agent conversation.",
-            },
-            {
-              name: "agent_max_rounds",
-              requirement: "Optional",
-              custom: true,
-              description: "1 to 8. Caps automatic Agent iteration rounds.",
-            },
-            {
-              name: "agent_force_max_rounds",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "When true, runs exactly agent_max_rounds. When false, the model may stop through continue_generation.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Optional",
-              description:
-                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used. Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "resolution",
-              requirement: "Optional",
-              description:
-                "Image resolution tier; unset values are chosen by the upstream. Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "quality",
-              requirement: "Optional",
-              description:
-                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models. Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "output_format",
-              requirement: "Optional",
-              description:
-                "png, jpeg, or webp; controls the output image format. Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "output_compression",
-              requirement: "Optional",
-              description:
-                "compression level 0-100, only meaningful for jpeg/webp; higher = more compression, smaller file, lower quality (OpenAI-native semantics, passed through). Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "background",
-              requirement: "Optional",
-              description:
-                "transparent, opaque, or auto. Same meaning as /v1/images/generations.",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Defaults to false. Only when background=transparent and set to true: if the selected backend rejects transparent with a 400, the request is regenerated opaque and matted server-side (ISNet) into a transparent PNG; not effective in the agent layered mode. See /v1/images/generations.",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "FluxMedia extension: safety prompt-repair retry toggle. When false, a moderation failure returns the real error directly instead of rewriting the prompt and retrying.",
-            },
-            {
-              name: "thinking",
-              requirement: "Optional",
-              custom: true,
-              description: "minimal, none, low, medium, high, or xhigh.",
-            },
-            {
-              name: "response_format",
-              requirement: "Optional",
-              description:
-                "url or b64_json. Agent defaults to url to avoid oversized multi-round responses.",
-            },
-            {
-              name: "stream",
-              requirement: "Optional",
-              description:
-                "true or Accept: text/event-stream returns SSE and also requires externalApi.streaming.",
-            },
-          ],
-          responses: [
-            {
-              name: "object / generation_id / model / size",
-              description:
-                "Agent run object, generation record, model, and size.",
-            },
-            {
-              name: "data[]",
-              description:
-                "Images produced by this Agent run. output_role may be agent_draft or final; the final item is the default deliverable.",
-            },
-            {
-              name: "agent_events[]",
-              description:
-                "Structured task events such as web search, image generation, and continue/stop decisions.",
-            },
-            {
-              name: "credits_consumed",
-              custom: true,
-              description:
-                "FluxMedia-billed credits. Agent always requires Codex/Responses capability. The current base round charge is 0; completed images use final image fixed prices and runtime review fees, without group multipliers.",
-            },
-            {
-              name: "agent_round_count",
-              custom: true,
-              description: "Number of execution rounds for this Agent task.",
-            },
-            {
-              name: "SSE agent.event / agent.text_delta / agent.thinking_delta / agent.delta / agent.partial_image / agent.completed / agent.failed",
-              description:
-                "Streaming task events, streaming previews, and final completion.",
-            },
-          ],
-          notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/agents/images is an alias.",
-            "Requires the externalApi.agent system capability; administrators can change it in system settings.",
-            "It forces requiresResponsesBackend and never schedules Web accounts; it can use Codex/Responses accounts or external API backends that support /responses.",
-            "It does not call page /api/images/chat; it shares the runImageGenerationForUser service layer with page Agent.",
-          ],
-        },
-        {
-          title: "Create response",
-          method: "POST",
-          path: "/v1/responses",
-          contentType: "application/json",
-          description:
-            "A FluxMedia image-generation adapter based on the OpenAI Responses API. It routes as responses and selects Codex/Responses groups or external /responses API backends.",
-          example: `# 1. Minimal Responses image request. Requires an API key, available group, and sufficient credits.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "input": "Generate a 1:1 futuristic product render",
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "quality": "high"
-  }'
-
-# 2. Explicit image_generation tool with image model.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "input": "Generate a landscape technology product key visual",
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "16:9",
-    "resolution": "1k",
-    "quality": "medium",
-    "reasoning": { "effort": "low" },
-    "store": true
-  }'
-
-# 3. Responses input with a reference image.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4-mini",
-    "input": [
-      {
-        "role": "user",
-        "content": [
-          { "type": "input_text", "text": "Use this image as reference and make a winter poster" },
-          { "type": "input_image", "image_url": "https://example.com/reference.png" }
-        ]
-      }
-    ],
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "output_format": "webp",
-    "output_compression": 85
-  }'
-
-# 4. Continue a previous response and stream the result.
-curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
-  -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gpt-5.4",
-    "previous_response_id": "resp_previous_id",
-    "input": "Add a moon based on the previous image",
-    "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "aspectRatio": "1:1",
-    "resolution": "1k",
-    "reasoning": { "effort": "minimal" },
-    "stream": true
-  }'`,
-          responseExample: `{
-  "id": "resp_...",
-  "object": "response",
-  "created_at": 1713833628,
-  "status": "completed",
-  "model": "gpt-5.4",
-  "output": [
-    {
-      "id": "ig_...",
-      "type": "image_generation_call",
-      "status": "completed",
-      "result": "..."
-    }
-  ],
-  "usage": null,
-  "metadata": {
-    "generation_id": "...",
-    "credits_consumed": 1.31,
-    "size": "1024x1024"
-  }
-}
-
-# SSE when stream=true
-event: response.output_item.done
-data: {"type":"response.output_item.done","item":{"id":"ig_...","type":"image_generation_call","status":"completed","result":"..."}}
-
-event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_...","object":"response","created_at":1713833628,"status":"completed","model":"gpt-5.4","output":[{"id":"ig_...","type":"image_generation_call","status":"completed","result":"..."}],"usage":null,"metadata":{"generation_id":"...","credits_consumed":1.31,"size":"1024x1024"}}}
-`,
-          fields: [
-            {
-              name: "model",
-              requirement: "Optional",
-              description:
-                "Top-level Responses model. Availability is determined by /v1/models and the API key's bound group.",
-            },
-            {
-              name: "input",
-              requirement: "Required",
-              description:
-                "A string or message array. Message content supports strings, input_text/output_text, and input_image.image_url.",
-            },
-            {
-              name: "previous_response_id",
-              requirement: "Optional",
-              description:
-                "Continues a previous response. FluxMedia loads stored webConversation/fallbackHistory continuation state.",
-            },
-            {
-              name: "tools",
-              requirement: "Optional",
-              description:
-                'If provided, must include { type: "image_generation" }. If omitted, FluxMedia adds image_generation automatically. Put the image model in the image_generation tool\'s model field.',
-            },
-            {
-              name: "tool_choice",
-              requirement: "Optional",
-              description:
-                "Accepted for compatibility. Do not force it in chat or multi-tool runs unless needed, because it can prevent the model from using web search, code interpreter, or image generation together.",
-            },
-            {
-              name: "stream",
-              requirement: "Optional",
-              description: "true returns Responses-style SSE events.",
-            },
-            {
-              name: "store",
-              requirement: "Optional",
-              description:
-                "Accepted for compatibility. FluxMedia stores continuation state internally and does not guarantee official store semantics.",
-            },
-            {
-              name: "reasoning.effort",
-              requirement: "Optional",
-              description:
-                "Supports minimal, none, low, medium, high, and xhigh. Actual support depends on the selected backend.",
-            },
-            {
-              name: "aspectRatio / aspect_ratio",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field used as the run-time image aspect ratio when the image_generation tool does not provide one.",
-            },
-            {
-              name: "resolution",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field used as the run-time image resolution when the image_generation tool does not provide one.",
-            },
-            {
-              name: "quality",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field used as the run-time image quality. quality is supported only by gpt-image-2; do not send it for other image models.",
-            },
-            {
-              name: "output_format",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field used as the run-time output_format when the image_generation tool does not provide one. You may also put it directly in the image_generation tool.",
-            },
-            {
-              name: "output_compression",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field used as the run-time output_compression when the image_generation tool does not provide one.",
-            },
-            {
-              name: "background",
-              requirement: "Optional",
-              description:
-                "transparent, opaque, or auto, used as this run's background. See /v1/images/generations.",
-            },
-            {
-              name: "transparent_matte",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Defaults to false. Only when background=transparent and set to true: if the selected backend rejects transparent with a 400, the request is regenerated opaque and matted server-side (ISNet) into a transparent PNG; not effective in the agent layered mode. See /v1/images/generations.",
-            },
-            {
-              name: "promptRepair / prompt_repair",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field: safety prompt-repair retry toggle. When false, a moderation failure returns the real error directly instead of rewriting the prompt and retrying.",
-            },
-          ],
-          responses: [
-            {
-              name: "id / object / created_at / status / model / output",
-              description:
-                "Compatible with the basic Responses response object.",
-            },
-            {
-              name: "output[].type = image_generation_call",
-              description: "Image result is returned in result as b64_json.",
-            },
-            {
-              name: "output[].type = message",
-              description:
-                "Upstream text, when present, is returned as output_text.",
-            },
-            {
-              name: "metadata.generation_id / credits_consumed / size",
-              description:
-                "FluxMedia generation record, billed credits, and size metadata.",
-              custom: true,
-            },
-            {
-              name: "SSE response.output_item.done / response.completed",
-              description: "Streaming output item and completion events.",
-            },
-            {
-              name: "SSE response.output_text.delta / response.reasoning_summary_text.delta",
-              description: "Text and reasoning summary delta events.",
-            },
-          ],
-          notes: [
-            "This endpoint requires a valid API key, available group, and sufficient account credits.",
-            "This is not Chat Completions. Use /v1/chat/completions for normal chat-to-image, and this endpoint for Responses tool semantics.",
-            "input_image supports image_url/data URLs. file_id/file inputs are not used as references today.",
-            "If tools is provided without image_generation, FluxMedia returns an error to avoid text-only responses.",
-            "Page Chat mode uses normal multimodal chat/image semantics. Agent mode provides image_generation, web_search, and the linear continuation tool continue_generation by default without forcing tool_choice.",
-            "Page Chat/Agent can read uploaded local text/code files as request context. Prompted server filesystem paths are not read.",
-            "The current Page Chat/Agent base round charge is 0; completed images are billed by actual size, count, and moderation cost.",
-            "Agent feeds the previous round's text, tool outputs, and generated draft images into the next round so the model can decide whether to refine again. The cap is IMAGE_AGENT_MAX_ROUNDS, default 3.",
-            "Multiple Agent image_generation_call outputs are shown as automatic iteration variants, with the last image selected by default.",
-          ],
-        },
-      ],
-    },
-    web: {
-      title: "Web Accounts",
-      description:
-        "Uses ChatGPT Web image generation. It can reuse Web account quota, but it is not a strictly parameterized Images/Responses API.",
-      valid: [
-        "**Resolution and aspect ratio are generation targets rather than strict output guarantees.**",
-        "**4K output is not guaranteed; high-resolution output depends on current ChatGPT Web capability and account state.**",
-        "The main GPT conversation model and Web thinking level can be controlled; image model is not mapped to a separate Web image model.",
-        "When prompt optimization is off, FluxMedia sends the original prompt and forces Web thinking to instant to reduce platform-side rewriting.",
-      ],
-      invalid: [
-        "External /v1/responses is adapted into the shared chat generation path, but its scheduling type remains responses; it only selects Codex/Responses groups or external Responses API backends, not Web account pools.",
-        "For external /v1/responses, an empty model uses the backend default; explicit models must be listed by /v1/models or FluxMedia rejects them.",
-        "Cannot guarantee prompt text is never interpreted, expanded, or revised by ChatGPT Web upstream.",
-      ],
-    },
-    codex: {
-      title: "Codex / Responses Accounts",
-      description:
-        "Uses Responses semantics and is the most parameterized system-account backend.",
-      valid: [
-        "GPT model is sent as the top-level Responses model.",
-        "Image model is sent as the image_generation tool model.",
-        "aspectRatio/aspect_ratio, resolution, quality, reference images, and mask are assembled into the Responses tool request.",
-        "quality is used only when the image model is gpt-image-2; it is omitted for other image models.",
-        "Page Chat mode uses normal multimodal chat/image semantics. Page Agent mode provides image_generation, web_search, and continue_generation by default without forcing tool_choice, and can continue across linear automatic rounds so the model can search, read uploaded text-file context, generate drafts, and refine like Codex.",
-        "Uploaded local text/code files in Chat/Agent are read as request context. Server filesystem paths written in prompts are not read.",
-        "Supports external /v1/responses and can also handle converted /v1/images/generations and /v1/images/edits requests.",
-        "When prompt optimization is off, FluxMedia instructs the model not to modify the prompt; this is best effort and upstream may still deviate.",
-        "The current Page Chat/Agent base round charge is 0; completed images are billed by actual size, count, and moderation cost.",
-      ],
-      invalid: [
-        "Not ChatGPT Web, so Web-only capability or quota semantics do not apply.",
-        "On rate limits, quota errors, or invalid credentials, the scheduler cools down/marks the account and tries another one.",
-      ],
-    },
-    api: {
-      title: "External API Backends",
-      description:
-        "Uses an admin-configured OpenAI-compatible Base URL/API Key. Final capability depends on that service.",
-      valid: [
-        "Interface mode only declares which upstream endpoints exist: Images-only participates in image generation/edit only; Responses-only participates in Chat/Agent/Responses unless Images upstream is set to Responses; Mixed API can participate in both sides.",
-        "Images upstream independently controls image generation/edit: native Images calls external /images/generations and /images/edits; Responses conversion calls external /responses + the image_generation tool.",
-        "Chat Completions upstream independently controls /v1/chat/completions: Responses image mode calls external /responses; native mode calls external /chat/completions.",
-        "Model, aspect-ratio/resolution handling, quality, streaming events, and usage fields depend on the external API implementation.",
-      ],
-      invalid: [
-        "Does not consume FluxMedia Web or Codex account pool quota.",
-        "If the external service rewrites prompts or limits resolution, FluxMedia cannot override it.",
-      ],
-    },
-    prompt: {
-      title: "Prompt Optimization And Thinking",
-      rows: [
-        [
-          "Prompt optimization on",
-          "Optimized prompt may be used; Web thinking follows the selected value.",
-        ],
-        [
-          "Prompt optimization off",
-          "Original prompt is sent; Web is forced to instant to minimize changes.",
-        ],
-        [
-          "Codex/Responses",
-          "When prompt optimization is off, FluxMedia instructs the model not to modify the prompt, but final behavior still depends on the upstream model/tool.",
+          "Next.js pages",
+          "Components, Server Actions, and request proxies",
+          "Render interfaces and adapt forms and responses; obtain business data from Go.",
         ],
         [
           "External API",
-          "The platform passes through where possible; the external service decides final behavior.",
+          "/v1/images/*, /v1/videos/*, /v1/models, /v1/credits",
+          "Authenticate with Bearer API keys. /api/v1/* aliases use the same Go handlers.",
+        ],
+        [
+          "Go business services",
+          "Identity, permissions, tasks, credits, payments, and storage",
+          "Own model availability, task access, billing, output persistence, history, and errors.",
+        ],
+        [
+          "Private runtimes",
+          "Upstream script conversion and media processing",
+          "Called by Go; they do not expose independent user business endpoints or settle credits.",
+        ],
+      ],
+      note: "Pages and external APIs share the Go backend. Each entry adapts its identity and response format.",
+    },
+    moderation: {
+      title: "Content Moderation and Failures",
+      description:
+        "Go checks prompts and reference images using platform moderation settings and records the actual result on the task.",
+      valid: [
+        "Administrators configure moderation providers and thresholds; a user override takes precedence over the global default.",
+        "API keys and request fields cannot bypass platform moderation policy.",
+        "Moderation blocks, provider failures, and infrastructure errors retain their own reasons; charges or refunds follow the task result.",
+      ],
+      invalid: [
+        "A moderation block does not mean an image was generated. Adjust the input according to the error before resubmitting.",
+        "Provider outages and insufficient credits do not automatically rewrite the prompt.",
+      ],
+    },
+    core: {
+      title: "Go Business Backend",
+      description: "The shared authority for user identity and business state.",
+      valid: [
+        "Handles authentication, administrator permissions, model configuration, pricing, and group visibility.",
+        "Persists image and video tasks, history, global usage, and output ownership.",
+        "Handles credit reservations, settlement, refunds, checkout orders, and payment callbacks.",
+      ],
+      invalid: [
+        "Pages should not bypass Go authorization through local database reads.",
+      ],
+    },
+    runtime: {
+      title: "Private Compute Runtimes",
+      description: "Bounded computation called by Go.",
+      valid: [
+        "The upstream runtime executes restricted JavaScript for request and response conversion.",
+        "The media runtime performs image transformations, super-resolution, and restoration.",
+        "Go schedules extra provider calls for generative repair and records their separate charges.",
+      ],
+      invalid: [
+        "Runtimes do not own user sessions, billing decisions, model permissions, or task access.",
+      ],
+    },
+    api: {
+      title: "API Accounts",
+      description:
+        "Administrators configure provider access; Go executes the requests.",
+      valid: [
+        "Configure generation and query paths, model mappings, and parameter transformations per operation.",
+        "Administrators explicitly select the video protocol; inputs are checked against provider capabilities.",
+        "Persistent tasks retain provider task IDs and adapter versions so recovery continues the original task.",
+      ],
+      invalid: [
+        "Output format, quality, and dimensions depend on the provider and configured model capabilities.",
+      ],
+    },
+    prompt: {
+      title: "Prompts and Provider Parameters",
+      rows: [
+        [
+          "Prompt",
+          "Submit the user’s input and apply platform moderation. Preserve an upstream revised_prompt as result information when supplied.",
+        ],
+        [
+          "Image dimensions",
+          "Use aspectRatio / aspect_ratio and resolution. Provider size configuration determines the upstream mapping.",
+        ],
+        [
+          "Model and quality",
+          "Query /v1/models first, then choose quality, background, and output format supported by the model.",
+        ],
+        [
+          "References and masks",
+          "Image edits accept uploaded files or image references. Task and storage access are checked against the owner.",
         ],
       ],
     },
     postProcess: {
-      title: "Super-Resolution And HD Repair",
+      title: "Image Processing and Repair",
       rows: [
         [
-          "Super-resolution (auto)",
-          "Web / Codex backends often return images below the requested resolution. When a final image's longer edge falls below 2/3 of the target, the platform auto-upscales it with Real-ESRGAN (no crop, aspect preserved), so Web / Codex can deliver near-4K target resolution. Controlled by the admin 'resolution super-resolution' switch; ~1-2s per image.",
+          "Super-resolution and restoration",
+          "When enabled, Go sends final images to the private media runtime. Super-resolution fills the requested pixel size; restoration reduces noise and repairs detail. Processing time depends on the workload.",
         ],
         [
-          "HD repair (manual)",
-          "Independent of super-resolution. When the user checks 'HD repair' or the API sends hd_repair=true, the final image is restored with SCUNet (denoise / de-blocking / detail enhancement, no size change). CPU-heavy (about 11s at 512, 35s at 1024) and serialized server-side, so it takes longer; controlled by the admin 'HD repair (SCUNet)' switch, off by default and opt-in per request.",
+          "Generative repair",
+          "When requested and enabled, Go invokes an available image provider for repair and bills the additional generation separately. Platform settings select whole-image or mask repair.",
         ],
         [
-          "Generative repair (manual, gpt-image-2)",
-          "Unlike HD repair, this redraws through the real generation backend. When the user checks 'Generative repair' or the API sends block_repair=true, the final image is shrunk to the web sweet-spot resolution (~1280) and redrawn once with gpt-image-2 img2img (fixing text/detail while keeping composition and content unchanged, using repair_prompt or a built-in default), then upscaled to the target size. A single whole-image redraw means no seams (no tiling, no overlap ghosting); one extra backend call billed separately — slower and costlier than super-resolution / HD repair; controlled by the admin 'Generative repair' switch, off by default and opt-in. When active it replaces auto super-resolution.",
-        ],
-        [
-          "Order & composition",
-          "Super-resolution and HD repair can stack: restore first (native resolution, cheaper), then upscale to target. Generative repair, when enabled, upscales to target itself and replaces auto super-resolution. Nothing crops or changes aspect ratio; on any failure it falls back to the original and never blocks generation.",
+          "Charges and failures",
+          "Go records processing results and generation charges. Optional enhancement failures preserve the original output where possible; required transparency processing failures and task cancellation still return errors.",
         ],
       ],
     },
+    operations: {
+      title: "Deployment and Runtime Checks",
+      items: [
+        "Use consistent deployment configuration for Next.js and Go. Verify that Go connects to the existing PostgreSQL and Redis rather than an empty database.",
+        "Go reads model, payment, storage, and provider configuration. Production also runs queue workers, the upstream script runtime, and the media processing runtime.",
+        "Containers reach private runtimes through service names; browsers use the public site address and authorized endpoints.",
+        "Investigate task failures by correlating the task ID with Go logs, usage records, and provider status. Avoid duplicate payments or generations while troubleshooting.",
+      ],
+    },
+    externalDocs: getSystemExternalDocs("en"),
     imageSizeTable: {
       title: "Image Size Table",
       description:
@@ -4898,15 +665,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       headers: IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
       rows: IMAGE_SIZE_DOC_TABLE_ROWS,
       note: IMAGE_SIZE_DOC_TABLE_NOTE_EN,
-    },
-    roadmap: {
-      title: "Roadmap",
-      items: [
-        "Sub2API non-database interface: current sync uses SUB2API_POSTGRES_URL to connect to Sub2API PostgreSQL. Future work should evaluate the Sub2API admin key / HTTP API path for account lookup, group filtering, status reads, error cleanup, and sync jobs; keep direct DB access only as a fallback when the API lacks required fields.",
-        "PSD generation API: prepare support for PSD/layered outputs by defining the upstream contract, MIME/extension handling, storage and preview behavior, credit billing, external API response fields, capability matrix switch, and page download entry.",
-        "Image reference UX: improve atomic @图1 and @第N轮图M tokens, remap references after image reorder, and surface missing-reference warnings.",
-        "Agent branching: when editing or regenerating an older round, fork a new branch instead of overwriting later records.",
-      ],
     },
   },
 } as const;
@@ -5246,39 +1004,6 @@ function RelationshipTable({
               </div>
             )
           )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * 渲染 Agent 能力与限制说明。
- *
- * @param agent 当前语言的 Agent 文档数据。
- * @returns 双栏能力卡片；空列表仍保持布局稳定。
- */
-function AgentDocs({
-  agent,
-}: {
-  agent: typeof sections.zh.agent | typeof sections.en.agent;
-}) {
-  return (
-    <Card className="rounded-lg">
-      <CardHeader>
-        <CardTitle className="font-serif text-lg tracking-tight">
-          {agent.title}
-        </CardTitle>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          {agent.description}
-        </p>
-      </CardHeader>
-      <CardContent className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-md border bg-muted/20 p-4">
-          <ListBlock items={agent.valid} type="valid" />
-        </div>
-        <div className="rounded-md border bg-muted/20 p-4">
-          <ListBlock items={agent.invalid} type="invalid" />
         </div>
       </CardContent>
     </Card>
@@ -5675,8 +1400,10 @@ export function getSystemDocsMetadata(locale = "en") {
  */
 export function getSystemDocsVideoEndpoints(locale = "en", baseUrl?: string) {
   const content = locale === "zh" ? sections.zh : sections.en;
-  const endpoints = content.externalDocs.docs.filter((endpoint) =>
-    endpoint.path.startsWith("/v1/videos")
+  const endpoints = content.externalDocs.docs.filter(
+    (endpoint) =>
+      endpoint.path === "/v1/videos/generations" ||
+      endpoint.path === "/v1/videos/{id}"
   );
   return baseUrl
     ? endpoints.map((endpoint) =>
@@ -5705,12 +1432,11 @@ export function SystemDocsContent({
   const content = locale === "zh" ? sections.zh : sections.en;
 
   // 章节锚点目录:文案全部沿用各章节卡片既有标题,不新增文案。
-  // 「后端落点」复用路由图列标题指代下方四张后端能力卡。
+  // 「后端落点」复用路由图列标题指代下方三张后端能力卡。
   const tocItems = [
     { id: "flow", label: content.flow.title },
     { id: "relationship", label: content.relationship.title },
-    { id: "moderation-repair", label: content.moderationRepair.title },
-    { id: "agent", label: content.agent.title },
+    { id: "moderation", label: content.moderation.title },
     { id: "external-api", label: content.externalDocs.title },
     { id: "image-size-table", label: content.imageSizeTable.title },
     { id: "route-tables", label: content.routeTables.title },
@@ -5721,7 +1447,7 @@ export function SystemDocsContent({
     },
     { id: "prompt", label: content.prompt.title },
     { id: "post-process", label: content.postProcess.title },
-    { id: "roadmap", label: content.roadmap.title },
+    { id: "operations", label: content.operations.title },
   ];
 
   return (
@@ -5770,31 +1496,24 @@ export function SystemDocsContent({
         <RelationshipTable relationship={content.relationship} />
       </div>
 
-      <Card className="scroll-mt-32 rounded-lg" id="moderation-repair">
+      <Card className="scroll-mt-32 rounded-lg" id="moderation">
         <CardHeader>
           <CardTitle className="font-serif text-lg tracking-tight">
-            {content.moderationRepair.title}
+            {content.moderation.title}
           </CardTitle>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            {content.moderationRepair.description}
+            {content.moderation.description}
           </p>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-md border bg-muted/20 p-4">
-            <ListBlock items={content.moderationRepair.valid} type="valid" />
+            <ListBlock items={content.moderation.valid} type="valid" />
           </div>
           <div className="rounded-md border bg-muted/20 p-4">
-            <ListBlock
-              items={content.moderationRepair.invalid}
-              type="invalid"
-            />
+            <ListBlock items={content.moderation.invalid} type="invalid" />
           </div>
         </CardContent>
       </Card>
-
-      <div className="scroll-mt-32" id="agent">
-        <AgentDocs agent={content.agent} />
-      </div>
 
       <div className="scroll-mt-32" id="external-api">
         <ExternalApiDocs baseUrl={baseUrl} docs={content.externalDocs} />
@@ -5825,7 +1544,7 @@ export function SystemDocsContent({
       </Card>
 
       <div className="scroll-mt-32 grid gap-4 lg:grid-cols-3" id="backends">
-        {[content.web, content.codex, content.api].map((section) => (
+        {[content.core, content.runtime, content.api].map((section) => (
           <Card className="rounded-lg" key={section.title}>
             <CardHeader>
               <CardTitle className="font-serif text-lg tracking-tight">
@@ -5889,15 +1608,15 @@ export function SystemDocsContent({
         </CardContent>
       </Card>
 
-      <Card className="scroll-mt-32 rounded-lg" id="roadmap">
+      <Card className="scroll-mt-32 rounded-lg" id="operations">
         <CardHeader>
           <CardTitle className="font-serif text-lg tracking-tight">
-            {content.roadmap.title}
+            {content.operations.title}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm text-muted-foreground">
-            {content.roadmap.items.map((item) => (
+            {content.operations.items.map((item) => (
               <li className="flex gap-2" key={item}>
                 <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 <span>{item}</span>

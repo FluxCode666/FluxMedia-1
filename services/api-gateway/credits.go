@@ -26,6 +26,23 @@ func (b *backend) handleExternalAuth(w http.ResponseWriter, r *http.Request) err
 }
 
 func (b *backend) authenticateAPI(r *http.Request) (*apiPrincipal, error) {
+	// Internal UOL callers cannot forward a browser cookie or the plaintext key.
+	// A signed identity still needs a live, owned external key in PostgreSQL.
+	if principal, ok := b.signedInternalPrincipal(r); ok {
+		if principal.Type != "apiKey" || principal.CredentialKind != "external" {
+			return nil, &apiError{401, "invalid_api_key", "External API key authentication required"}
+		}
+		var p apiPrincipal
+		err := b.db.QueryRow(r.Context(), `UPDATE external_api_key k SET last_used_at=now(),updated_at=now() FROM "user" u WHERE k.user_id=u.id AND k.id=$1 AND k.user_id=$2 AND k.is_active AND NOT u.banned RETURNING k.id,k.user_id`, principal.APIKeyID, principal.UserID).Scan(&p.KeyID, &p.UserID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &apiError{401, "invalid_api_key", "Invalid or missing API key"}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &p, nil
+	}
+
 	fields := strings.Fields(r.Header.Get("Authorization"))
 	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || len(fields[1]) > 512 {
 		return nil, &apiError{401, "invalid_api_key", "Invalid or missing API key"}
@@ -42,12 +59,7 @@ func (b *backend) authenticateAPI(r *http.Request) (*apiPrincipal, error) {
 	return &p, nil
 }
 func (b *backend) expireCredits(r *http.Request, tx pgx.Tx, userID string) error {
-	_, err := tx.Exec(r.Context(), `WITH expired AS (
- UPDATE credits_batch SET status='expired',updated_at=now() WHERE user_id=$1 AND status='active' AND expires_at<now() AND remaining>0
- RETURNING id,user_id,amount,remaining,expires_at), ledger AS (
- INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,metadata)
- SELECT $2||id,user_id,'expiration',remaining,'WALLET:'||user_id,'SYSTEM:expired','批次 '||id||' 过期',json_build_object('batchId',id,'originalAmount',amount,'expiredAmount',remaining,'expiresAt',expires_at) FROM expired RETURNING amount)
- UPDATE credits_balance SET balance=GREATEST(0,balance-COALESCE((SELECT sum(amount) FROM ledger),0)),updated_at=now() WHERE user_id=$1 AND EXISTS(SELECT 1 FROM ledger)`, userID, newRequestID())
+	_, err := b.expireUserCreditsTx(r.Context(), tx, userID)
 	return err
 }
 func (b *backend) handleExternalCredits(w http.ResponseWriter, r *http.Request) error {

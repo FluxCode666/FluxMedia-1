@@ -1,8 +1,7 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
+import { RuntimePool, RuntimePoolError } from "./pool.mjs";
 
 const bind = process.env.SCRIPT_RUNTIME_BIND || ":8090";
 const listenTarget = bind.startsWith(":") ? Number(bind.slice(1)) : bind;
@@ -15,8 +14,6 @@ const maxScriptCharacters = 32_768;
 const maxSerializedBytes = 2 * 1024 * 1024;
 const maxDepth = 16;
 const maxNodes = 10_000;
-const scriptTimeoutMs = 50;
-const workerWallTimeoutMs = 500;
 const operations = new Set([
   "images.generate",
   "images.generate.query",
@@ -70,127 +67,10 @@ function parseRequest(payload) {
   if (Buffer.byteLength(inputJson) > maxSerializedBytes || Buffer.byteLength(contextJson) > maxSerializedBytes) {
     throw new Error("JSON resource limit exceeded");
   }
-  return { script: payload.script.trim(), operation: payload.operation, stage: payload.stage, inputJson, contextJson };
+  if (payload.validateOnly !== undefined && typeof payload.validateOnly !== "boolean") throw new Error("validateOnly must be a boolean");
+  if (payload.responsePermitId !== undefined && (typeof payload.responsePermitId !== "string" || !/^[a-f0-9-]{36}$/.test(payload.responsePermitId))) throw new Error("response permit is invalid");
+  return { responsePermitId: payload.responsePermitId, kind: payload.validateOnly === true ? "validate" : "execute", script: payload.script.trim(), operation: payload.operation, stage: payload.stage, inputJson, contextJson };
 }
-
-class RuntimePool {
-  constructor() {
-    this.slots = [];
-    this.queue = [];
-    this.closed = false;
-    this.workerPath = null;
-  }
-
-  async start() {
-    this.workerPath = resolve(fileURLToPath(new URL(".", import.meta.url)), "worker.mjs");
-    await Promise.all(Array.from({ length: workerCount }, async () => {
-      const worker = new Worker(this.workerPath);
-      const slot = { worker, ready: false, busy: false, pending: null };
-      this.slots.push(slot);
-      await this.initializeWorker(slot, worker);
-    }));
-  }
-
-  async initializeWorker(slot, worker) {
-    await new Promise((resolveReady, rejectReady) => {
-      const timer = setTimeout(() => rejectReady(new Error("script worker startup timeout")), 10_000);
-      worker.once("message", (message) => {
-        if (message?.type !== "ready") return rejectReady(new Error("invalid script worker handshake"));
-        clearTimeout(timer);
-        slot.ready = true;
-        resolveReady();
-      });
-      worker.once("error", (error) => { clearTimeout(timer); rejectReady(error); });
-    });
-    worker.on("message", (message) => this.finish(slot, message));
-    worker.on("error", (error) => this.fail(slot, error));
-    worker.on("exit", (code) => {
-      if (!this.closed && code !== 0) {
-        this.fail(slot, new Error("script worker exited"));
-        void this.replaceWorker(slot);
-      }
-    });
-  }
-
-  async replaceWorker(slot) {
-    if (this.closed || slot.restarting) return;
-    slot.restarting = true;
-    slot.ready = false;
-    try {
-      const worker = new Worker(this.workerPath);
-      slot.worker = worker;
-      await this.initializeWorker(slot, worker);
-      slot.restarting = false;
-      this.dispatch();
-    } catch {
-      slot.restarting = false;
-      if (!this.closed) setTimeout(() => void this.replaceWorker(slot), 100);
-    }
-  }
-
-  execute(job) {
-    if (this.closed) return Promise.reject(new Error("script runtime is closed"));
-    return new Promise((resolveJob, rejectJob) => {
-      this.queue.push({ job, resolve: resolveJob, reject: rejectJob });
-      this.dispatch();
-    });
-  }
-
-  dispatch() {
-    for (const slot of this.slots) {
-      if (!slot.ready || slot.busy || !this.queue.length) continue;
-      const queued = this.queue.shift();
-      slot.busy = true;
-      slot.pending = queued;
-      slot.timer = setTimeout(() => {
-        this.fail(slot, new Error("script execution timeout"));
-        void slot.worker.terminate();
-      }, workerWallTimeoutMs);
-      slot.worker.postMessage({
-        type: "job", id: randomUUID(), kind: "execute", script: queued.job.script,
-        inputJson: queued.job.inputJson, contextJson: queued.job.contextJson,
-        timeoutMs: scriptTimeoutMs, memoryLimitBytes, stackLimitBytes,
-        maxScriptCharacters, maxSerializedBytes,
-      });
-    }
-  }
-
-  finish(slot, message) {
-    if (!slot.pending || message?.type !== "result") return;
-    clearTimeout(slot.timer);
-    const pending = slot.pending;
-    slot.pending = null;
-    slot.busy = false;
-    if (message.ok && typeof message.outputJson === "string") {
-      try {
-        const output = JSON.parse(message.outputJson);
-        safeTree(output);
-        pending.resolve(output);
-      } catch (error) { pending.reject(error); }
-    } else {
-      pending.reject(new Error(message.code || "script execution failed"));
-    }
-    this.dispatch();
-  }
-
-  fail(slot, error) {
-    if (!slot.pending) return;
-    clearTimeout(slot.timer);
-    const pending = slot.pending;
-    slot.pending = null;
-    slot.busy = false;
-    pending.reject(error);
-    this.dispatch();
-  }
-
-  async close() {
-    this.closed = true;
-    for (const slot of this.slots) await slot.worker.terminate();
-  }
-}
-
-const pool = new RuntimePool();
-await pool.start();
 
 function writeJson(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -208,26 +88,69 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-const server = createServer(async (request, response) => {
-  if (request.method === "GET" && request.url === "/healthz") {
-    return writeJson(response, 200, { status: "ok", service: "api-upstream-script-runtime", workers: workerCount });
-  }
-  if (request.method !== "POST" || request.url !== "/v1/execute") {
-    return writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
-  }
-  if (authToken && request.headers.authorization !== `Bearer ${authToken}`) {
-    return writeJson(response, 401, { error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
-  }
-  try {
-    const payload = parseRequest(await readJson(request));
-    const output = payload.script ? await pool.execute(payload) : payload.input;
-    return writeJson(response, 200, { data: { output } });
-  } catch (_error) {
-    return writeJson(response, 422, { error: { code: "SCRIPT_EXECUTION_FAILED", message: "Script execution failed" } });
-  }
-});
+// Dependency injection keeps HTTP tests on the same authentication/dispatch
+// path while allowing deterministic worker fault and queue tests.
+export function createRuntimeServer(pool, token = authToken) {
+  return createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/healthz") {
+      const snapshot = pool.diagnostics();
+      const healthy = snapshot.lifecycle === "ready" && snapshot.liveWorkerCount > 0;
+      return writeJson(response, healthy ? 200 : 503, {
+        status: healthy ? "ok" : "unavailable",
+        service: "api-upstream-script-runtime", workers: snapshot.liveWorkerCount,
+      });
+    }
+    if (token && request.headers.authorization !== `Bearer ${token}`) {
+      return writeJson(response, 401, { error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
+    }
+    if (request.method === "GET" && request.url === "/v1/diagnostics") {
+      return writeJson(response, 200, { data: pool.diagnostics() });
+    }
+    const release = /^\/v1\/response-permits\/([a-f0-9-]{36})$/.exec(request.url ?? "");
+    if (request.method === "DELETE" && release) {
+      pool.releaseResponse(release[1]);
+      response.writeHead(204, { "Cache-Control": "no-store" });
+      return response.end();
+    }
+    const controller = new AbortController();
+    response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+    try {
+      if (request.method === "POST" && request.url === "/v1/response-permits") {
+        const id = await pool.reserveResponse(controller.signal);
+        if (controller.signal.aborted) { pool.releaseResponse(id); return; }
+        // If the connection is lost before the ID reaches Go, reclaim it now;
+        // the TTL also covers a Go process that dies after receiving the ID.
+        response.once("close", () => { if (!response.writableFinished) pool.releaseResponse(id); });
+        return writeJson(response, 200, { data: { id } });
+      }
+      if (request.method !== "POST" || request.url !== "/v1/execute") {
+        return writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
+      }
+      const payload = parseRequest(await readJson(request));
+      if (!payload.script) payload.script = "return input;";
+      const output = await pool.execute(payload, controller.signal);
+      safeTree(output);
+      return writeJson(response, 200, { data: { output } });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error instanceof RuntimePoolError && ["runtime_saturated", "runtime_closed"].includes(error.code)) {
+        response.setHeader("Retry-After", "1");
+        return writeJson(response, 503, { error: { code: "SCRIPT_RUNTIME_UNAVAILABLE", message: "Script runtime temporarily unavailable" } });
+      }
+      if (error instanceof RuntimePoolError && error.code === "invalid_response_permit") {
+        return writeJson(response, 409, { error: { code: "INVALID_RESPONSE_PERMIT", message: "Response permit is invalid or expired" } });
+      }
+      return writeJson(response, 422, { error: { code: "SCRIPT_EXECUTION_FAILED", message: "Script execution failed" } });
+    }
+  });
+}
 
-server.listen(listenTarget, () => console.log(`api upstream script runtime listening on ${bind}`));
-const shutdown = async () => { server.close(); await pool.close(); process.exit(0); };
-process.once("SIGTERM", shutdown);
-process.once("SIGINT", shutdown);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const pool = new RuntimePool({ workerCount, memoryLimitBytes, stackLimitBytes });
+  await pool.start();
+  const server = createRuntimeServer(pool);
+  server.listen(listenTarget, () => console.log(`api upstream script runtime listening on ${bind}`));
+  const shutdown = async () => { server.close(); await pool.close(); process.exit(0); };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+}

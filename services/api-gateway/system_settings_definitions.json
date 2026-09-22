@@ -1,0 +1,1580 @@
+[
+  {
+    "key": "NEXT_PUBLIC_APP_URL",
+    "label": "应用地址",
+    "description": "Web 站点公开访问地址，用于回调、邮件链接和图片 URL。",
+    "category": "general",
+    "valueType": "string",
+    "requiresRestart": true,
+    "requiresRebuild": true
+  },
+  {
+    "key": "NEXT_PUBLIC_APP_NAME",
+    "label": "应用名称",
+    "description": "公开展示的应用名称，用于邮件、页面和通知。",
+    "category": "general",
+    "valueType": "string",
+    "defaultValue": "FluxMedia",
+    "requiresRebuild": true
+  },
+  {
+    "key": "NEXT_PUBLIC_ASSET_PREFIX",
+    "label": "静态资源前缀",
+    "description": "Next.js assetPrefix。用于 CDN 或静态资源版本路径。",
+    "category": "general",
+    "valueType": "string",
+    "requiresRebuild": true
+  },
+  {
+    "key": "SITE_LOGO_URL",
+    "label": "网站 Logo 地址",
+    "description": "用于导航、认证页、控制台与结构化数据的 Logo。支持站内根路径或 HTTPS 地址；留空回退内置矢量 Logo。",
+    "category": "general",
+    "valueType": "string",
+    "defaultValue": "/assets/icon.svg",
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "PAGINATION_PAGE_SIZE_OPTIONS",
+    "label": "列表分页大小",
+    "description": "配置系统列表允许选择的每页记录数。取值必须是 1 至 100 的不重复整数，并包含固定默认值 20。",
+    "category": "general",
+    "valueType": "json",
+    "defaultValue": [
+      10,
+      20,
+      50
+    ],
+    "exampleValue": [
+      10,
+      20,
+      50
+    ]
+  },
+  {
+    "key": "MARKETING_SLA_STATUS_ENABLED",
+    "label": "首页 SLA 展示",
+    "description": "控制主页是否展示生图服务 SLA 区块。管理员和超管可在首页直接关闭或开启；观察管理员只读。",
+    "category": "general",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "DASHBOARD_SUPPORT_CONFIG",
+    "label": "控制台账户与支持",
+    "description": "配置控制台的官方支持渠道、二维码和 Service & Support 服务入口；支持 QQ、微信、推特、团队介绍 URL、中英文文案、站内路径与 HTTP(S) 链接。",
+    "category": "support",
+    "valueType": "json",
+    "defaultValue": {
+      "version": 1,
+      "officialSupport": {
+        "enabled": true,
+        "channel": {
+          "zh": "官方支持中心",
+          "en": "Official support center"
+        },
+        "description": {
+          "zh": "通过站内工单联系官方支持，处理账户、积分、支付与服务接入问题。",
+          "en": "Contact the official team for account, credits, billing, and service integration help."
+        },
+        "actionLabel": {
+          "zh": "联系支持",
+          "en": "Contact support"
+        },
+        "actionUrl": "/dashboard/support/new"
+      },
+      "services": [
+        {
+          "id": "system-docs",
+          "enabled": true,
+          "icon": "documentation",
+          "title": {
+            "zh": "API 文档",
+            "en": "API docs"
+          },
+          "description": {
+            "zh": "查看图像 API 接口和使用说明",
+            "en": "Explore image APIs and usage guides"
+          },
+          "actionLabel": {
+            "zh": "查看",
+            "en": "Open"
+          },
+          "url": "/dashboard/api-docs"
+        },
+        {
+          "id": "support-tickets",
+          "enabled": true,
+          "icon": "support",
+          "title": {
+            "zh": "支持工单",
+            "en": "Support tickets"
+          },
+          "description": {
+            "zh": "查看问题进度并与支持团队沟通",
+            "en": "Track requests and communicate with the support team"
+          },
+          "actionLabel": {
+            "zh": "进入",
+            "en": "Open"
+          },
+          "url": "/dashboard/support"
+        },
+        {
+          "id": "announcements",
+          "enabled": true,
+          "icon": "website",
+          "title": {
+            "zh": "平台公告",
+            "en": "Announcements"
+          },
+          "description": {
+            "zh": "了解服务更新、维护与重要通知",
+            "en": "Read service updates, maintenance notes, and notices"
+          },
+          "actionLabel": {
+            "zh": "查看",
+            "en": "Open"
+          },
+          "url": "/dashboard/announcements"
+        }
+      ]
+    },
+    "exampleValue": {
+      "version": 1,
+      "officialSupport": {
+        "enabled": true,
+        "channel": {
+          "zh": "官方支持中心",
+          "en": "Official support center"
+        },
+        "description": {
+          "zh": "通过站内工单联系官方支持，处理账户、积分、支付与服务接入问题。",
+          "en": "Contact the official team for account, credits, billing, and service integration help."
+        },
+        "actionLabel": {
+          "zh": "联系支持",
+          "en": "Contact support"
+        },
+        "actionUrl": "/dashboard/support/new"
+      },
+      "services": [
+        {
+          "id": "system-docs",
+          "enabled": true,
+          "icon": "documentation",
+          "title": {
+            "zh": "API 文档",
+            "en": "API docs"
+          },
+          "description": {
+            "zh": "查看图像 API 接口和使用说明",
+            "en": "Explore image APIs and usage guides"
+          },
+          "actionLabel": {
+            "zh": "查看",
+            "en": "Open"
+          },
+          "url": "/dashboard/api-docs"
+        },
+        {
+          "id": "support-tickets",
+          "enabled": true,
+          "icon": "support",
+          "title": {
+            "zh": "支持工单",
+            "en": "Support tickets"
+          },
+          "description": {
+            "zh": "查看问题进度并与支持团队沟通",
+            "en": "Track requests and communicate with the support team"
+          },
+          "actionLabel": {
+            "zh": "进入",
+            "en": "Open"
+          },
+          "url": "/dashboard/support"
+        },
+        {
+          "id": "announcements",
+          "enabled": true,
+          "icon": "website",
+          "title": {
+            "zh": "平台公告",
+            "en": "Announcements"
+          },
+          "description": {
+            "zh": "了解服务更新、维护与重要通知",
+            "en": "Read service updates, maintenance notes, and notices"
+          },
+          "actionLabel": {
+            "zh": "查看",
+            "en": "Open"
+          },
+          "url": "/dashboard/announcements"
+        }
+      ]
+    }
+  },
+  {
+    "key": "EXTERNAL_API_CORS_ENABLED",
+    "label": "外部 API 跨域(CORS)",
+    "description": "控制外部 API(/v1、/api/v1)是否允许浏览器跨域调用。开启后对所有来源开放(Access-Control-Allow-Origin: *,Bearer 鉴权不带 cookie,不开启凭据);关闭则不返回跨域头,浏览器跨域被拦,服务端直连不受影响。",
+    "category": "general",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "SELF_USE_MODE_ENABLED",
+    "label": "自用模式",
+    "description": "默认开启。开启后禁止公开注册；启动时没有超管会使用环境变量配置的凭据创建超管。",
+    "category": "auth",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "BETTER_AUTH_SECRET",
+    "label": "认证 Cookie 密钥",
+    "description": "Better Auth 会话签名密钥，修改后已有会话可能失效。",
+    "category": "auth",
+    "valueType": "string",
+    "secret": true,
+    "requiresRestart": true
+  },
+  {
+    "key": "BETTER_AUTH_URL",
+    "label": "认证服务地址",
+    "description": "Better Auth 基础 URL，OAuth 回调依赖此值。",
+    "category": "auth",
+    "valueType": "string",
+    "requiresRestart": true
+  },
+  {
+    "key": "GOOGLE_CLIENT_ID",
+    "label": "Google Client ID",
+    "description": "Google OAuth 客户端 ID。",
+    "category": "auth",
+    "valueType": "string",
+    "requiresRestart": true
+  },
+  {
+    "key": "GOOGLE_CLIENT_SECRET",
+    "label": "Google Client Secret",
+    "description": "Google OAuth 客户端密钥。",
+    "category": "auth",
+    "valueType": "string",
+    "secret": true,
+    "requiresRestart": true
+  },
+  {
+    "key": "GITHUB_CLIENT_ID",
+    "label": "GitHub Client ID",
+    "description": "GitHub OAuth 客户端 ID。",
+    "category": "auth",
+    "valueType": "string",
+    "requiresRestart": true
+  },
+  {
+    "key": "GITHUB_CLIENT_SECRET",
+    "label": "GitHub Client Secret",
+    "description": "GitHub OAuth 客户端密钥。",
+    "category": "auth",
+    "valueType": "string",
+    "secret": true,
+    "requiresRestart": true
+  },
+  {
+    "key": "PAYMENT_PROVIDER",
+    "label": "支付通道",
+    "description": "选择一次性积分充值的支付通道；支付宝当面付仅支持 CNY 按金额充值。",
+    "category": "payment",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "不启用(自用)",
+        "value": "none"
+      },
+      {
+        "label": "Creem",
+        "value": "creem"
+      },
+      {
+        "label": "易支付",
+        "value": "epay"
+      },
+      {
+        "label": "支付宝当面付(仅按金额充值)",
+        "value": "alipay_f2f"
+      }
+    ],
+    "defaultValue": "creem"
+  },
+  {
+    "key": "NEXT_PUBLIC_PAYMENT_PROVIDER",
+    "label": "前端支付通道",
+    "description": "前端展示用支付通道，应与支付通道保持一致；支付宝当面付仅支持 CNY 按金额充值。",
+    "category": "payment",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "不启用(自用)",
+        "value": "none"
+      },
+      {
+        "label": "Creem",
+        "value": "creem"
+      },
+      {
+        "label": "易支付",
+        "value": "epay"
+      },
+      {
+        "label": "支付宝当面付(仅按金额充值)",
+        "value": "alipay_f2f"
+      }
+    ],
+    "defaultValue": "creem",
+    "requiresRebuild": true
+  },
+  {
+    "key": "CREEM_API_KEY",
+    "label": "Creem API Key",
+    "description": "Creem 支付接口密钥。",
+    "category": "payment",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "CREEM_WEBHOOK_SECRET",
+    "label": "Creem Webhook Secret",
+    "description": "Creem Webhook 签名密钥。",
+    "category": "payment",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "EPAY_PID",
+    "label": "易支付商户 ID",
+    "description": "易支付 pid。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "EPAY_KEY",
+    "label": "易支付商户密钥",
+    "description": "易支付签名密钥。",
+    "category": "payment",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "EPAY_API_URL",
+    "label": "易支付接口地址",
+    "description": "易支付网关地址。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "EPAY_NOTIFY_URL",
+    "label": "易支付异步通知地址",
+    "description": "留空则使用应用地址自动生成。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "EPAY_DEFAULT_PAYMENT_TYPE",
+    "label": "易支付默认方式",
+    "description": "如 alipay、wxpay。",
+    "category": "payment",
+    "valueType": "string",
+    "defaultValue": "alipay"
+  },
+  {
+    "key": "NEXT_PUBLIC_EPAY_DEFAULT_PAYMENT_TYPE",
+    "label": "前端易支付默认方式",
+    "description": "前端展示用默认支付方式，应与易支付默认方式保持一致。",
+    "category": "payment",
+    "valueType": "string",
+    "defaultValue": "alipay",
+    "requiresRebuild": true
+  },
+  {
+    "key": "ALIPAY_F2F_ENABLED",
+    "label": "启用支付宝当面付",
+    "description": "开启后，已完成密钥配置的 CNY 积分充值可生成支付宝扫码支付二维码。",
+    "category": "payment",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "ALIPAY_APP_ID",
+    "label": "支付宝 App ID",
+    "description": "支付宝开放平台应用 App ID。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIPAY_PRIVATE_KEY",
+    "label": "支付宝应用私钥",
+    "description": "RSA2 应用私钥，支持 PEM 内容；不会回显。",
+    "category": "payment",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "ALIPAY_PUBLIC_KEY",
+    "label": "支付宝公钥",
+    "description": "支付宝开放平台提供的 RSA2 验签公钥；不会回显。",
+    "category": "payment",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "ALIPAY_SELLER_ID",
+    "label": "支付宝卖家 PID（可选）",
+    "description": "直连当面付可留空，支付宝会使用应用签约账户；多商户或可查到 PID 时填写，回调会额外严格校验 seller_id。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIPAY_GATEWAY",
+    "label": "支付宝网关",
+    "description": "留空使用生产网关；沙箱环境请填沙箱网关地址。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIPAY_NOTIFY_URL",
+    "label": "支付宝异步通知地址",
+    "description": "填写协议加域名即可，例如 https://pay.example.com；系统自动追加 /api/webhooks/alipay，支持 HTTP 或 HTTPS。",
+    "category": "payment",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIPAY_F2F_TIMEOUT_MINUTES",
+    "label": "支付宝当面付超时（分钟）",
+    "description": "二维码订单的支付超时；超时后支付宝不再允许付款，已成功付款的延迟通知仍会履约。",
+    "category": "payment",
+    "valueType": "number",
+    "min": 1,
+    "max": 1440,
+    "defaultValue": 30
+  },
+  {
+    "key": "CONTENT_MODERATION_ENABLED",
+    "label": "开启内容审核",
+    "description": "控制文本/图片审核总开关。",
+    "category": "moderation",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "CONTENT_MODERATION_FAIL_CLOSED",
+    "label": "审核异常时拦截",
+    "description": "开启后审核服务不可用时拒绝请求；关闭后失败放行。",
+    "category": "moderation",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "CONTENT_MODERATION_BLOCK_RISK_LEVEL",
+    "label": "全站审核拦截级别",
+    "description": "用户无管理员覆盖时使用的全站审核级别。",
+    "category": "moderation",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "低风险",
+        "value": "low"
+      },
+      {
+        "label": "中风险",
+        "value": "medium"
+      },
+      {
+        "label": "高风险",
+        "value": "high"
+      }
+    ],
+    "defaultValue": "high",
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "CONTENT_MODERATION_PROVIDER",
+    "label": "审核服务商",
+    "description": "选择阿里云、OpenAI、自动或关闭。",
+    "category": "moderation",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "自动",
+        "value": "auto"
+      },
+      {
+        "label": "阿里云",
+        "value": "aliyun"
+      },
+      {
+        "label": "OpenAI",
+        "value": "openai"
+      },
+      {
+        "label": "关闭",
+        "value": "none"
+      }
+    ],
+    "defaultValue": "auto"
+  },
+  {
+    "key": "CONTENT_MODERATION_PROXY_URL",
+    "label": "审核代理地址",
+    "description": "可选，先请求代理审核服务。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "CONTENT_MODERATION_PROXY_SECRET",
+    "label": "审核代理密钥",
+    "description": "审核代理鉴权密钥。",
+    "category": "moderation",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "CONTENT_MODERATION_PROXY_GATEWAY_SECRET",
+    "label": "审核网关密钥",
+    "description": "外部网关调用本站审核代理时使用的密钥。",
+    "category": "moderation",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "CONTENT_MODERATION_PROXY_TIMEOUT_MS",
+    "label": "审核代理超时 ms",
+    "description": "审核代理请求超时时间。",
+    "category": "moderation",
+    "valueType": "number",
+    "min": 1,
+    "max": 300000,
+    "defaultValue": 10000
+  },
+  {
+    "key": "CONTENT_MODERATION_PROVIDER_TIMEOUT_MS",
+    "label": "审核服务超时 ms",
+    "description": "直接请求审核服务商的超时时间。",
+    "category": "moderation",
+    "valueType": "number",
+    "min": 1,
+    "max": 300000,
+    "defaultValue": 10000
+  },
+  {
+    "key": "CONTENT_MODERATION_PUBLIC_BASE_URL",
+    "label": "审核图片公开地址",
+    "description": "图片审核临时文件公开基础地址。使用本地存储且审核服务需要公网图片 URL 时，用它拼接 /api/storage/...；对象存储签名 URL 已是公网地址时可留空。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_ACCESS_KEY_ID",
+    "label": "阿里云 AccessKey ID",
+    "description": "阿里云内容安全 AccessKey ID。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_ACCESS_KEY_SECRET",
+    "label": "阿里云 AccessKey Secret",
+    "description": "阿里云内容安全 AccessKey Secret。",
+    "category": "moderation",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "ALIYUN_MODERATION_TEXT_REGION_ID",
+    "label": "阿里云文本 Region",
+    "description": "文本审核专用 Region。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_TEXT_ENDPOINT",
+    "label": "阿里云文本 Endpoint",
+    "description": "文本审核专用 Endpoint。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_TEXT_SERVICE",
+    "label": "阿里云文本服务",
+    "description": "阿里云文本审核 service code。",
+    "category": "moderation",
+    "valueType": "string",
+    "defaultValue": "ugc_moderation_byllm_cb"
+  },
+  {
+    "key": "ALIYUN_MODERATION_IMAGE_REGION_ID",
+    "label": "阿里云图片 Region",
+    "description": "图片审核专用 Region。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_IMAGE_ENDPOINT",
+    "label": "阿里云图片 Endpoint",
+    "description": "图片审核专用 Endpoint。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "ALIYUN_MODERATION_IMAGE_SERVICE",
+    "label": "阿里云图片服务",
+    "description": "图片审核服务 code。",
+    "category": "moderation",
+    "valueType": "string"
+  },
+  {
+    "key": "OPENAI_MODERATION_API_KEY",
+    "label": "OpenAI 审核 API Key",
+    "description": "OpenAI moderation 使用的密钥。",
+    "category": "moderation",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "OPENAI_MODERATION_MODEL",
+    "label": "OpenAI 审核模型",
+    "description": "默认 omni-moderation-latest。",
+    "category": "moderation",
+    "valueType": "string",
+    "defaultValue": "omni-moderation-latest"
+  },
+  {
+    "key": "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
+    "label": "全局生图并发",
+    "description": "整站同时执行的生图任务硬上限；用户准入并发由系统默认值和用户覆盖独立控制。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 10000,
+    "integer": true,
+    "defaultValue": 500
+  },
+  {
+    "key": "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY",
+    "label": "默认用户生图并发",
+    "description": "单个用户同时处于准入状态的生图任务上限；用户没有单独覆盖时使用此值。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 10000,
+    "integer": true,
+    "defaultValue": 20
+  },
+  {
+    "key": "MEDIA_MAX_FILE_SIZE_MB",
+    "label": "单文件大小 MB",
+    "description": "单个图片或视频输入文件允许的最大大小。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 200,
+    "integer": true,
+    "defaultValue": 5
+  },
+  {
+    "key": "MEDIA_MAX_UPLOAD_SIZE_MB",
+    "label": "单次上传总量 MB",
+    "description": "一次媒体请求中所有输入文件允许的总大小。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 512,
+    "integer": true,
+    "defaultValue": 75
+  },
+  {
+    "key": "IMAGE_EDIT_MAX_REFERENCE_IMAGES",
+    "label": "编辑参考图数",
+    "description": "一次图片编辑请求允许提交的参考图数量。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 256,
+    "integer": true,
+    "defaultValue": 16
+  },
+  {
+    "key": "IMAGE_BACKEND_SCHEDULING_STRATEGY",
+    "label": "媒体后端调度策略",
+    "description": "控制统一号池的新获租请求排序。切换后无需重启；缺失或非法值安全回退为按优先级。",
+    "category": "models",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "按优先级",
+        "value": "priority"
+      },
+      {
+        "label": "按最少调用",
+        "value": "least_acquired"
+      },
+      {
+        "label": "按最小负载",
+        "value": "least_load"
+      }
+    ],
+    "defaultValue": "priority"
+  },
+  {
+    "key": "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES",
+    "label": "后端默认恢复分钟",
+    "description": "生图后端错误没有命中更具体规则时的默认冷却时间。未配置时为 15 分钟。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_RATE_LIMIT_COOLDOWN_MINUTES",
+    "label": "后端 429 兜底恢复分钟",
+    "description": "账号/API 返回 429、rate limit、too many requests 时的兜底冷却时间；如上游返回 Retry-After 或 reset 时间，会优先按上游时间恢复。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_TOOL_RATE_LIMIT_COOLDOWN_MINUTES",
+    "label": "后端画图工具限流恢复分钟",
+    "description": "ChatGPT 账号画图工具被限流(image_gen.text2im / ChatGPTAgentToolRateLimitException)时的兜底冷却时间;此类为账号级滚动限流、恢复快,未配置时为 3 分钟;如上游返回 Retry-After 或 reset 时间,会优先按上游时间恢复。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 3
+  },
+  {
+    "key": "IMAGE_BACKEND_OVERLOAD_COOLDOWN_MINUTES",
+    "label": "后端 529/过载兜底恢复分钟",
+    "description": "账号/API 返回 529、overloaded、temporarily unavailable、server overloaded 时的冷却时间；过载类错误不使用上游 reset 时间。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_USAGE_LIMIT_COOLDOWN_MINUTES",
+    "label": "后端额度限制兜底恢复分钟",
+    "description": "账号/API 返回 usage limit、quota exceeded、insufficient quota、billing hard limit 时的兜底冷却时间；如上游返回 Retry-After、resetAt、reset_at、reset_after、restoreAt 等恢复时间，会优先按上游时间恢复。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_UNSUPPORTED_MODEL_COOLDOWN_MINUTES",
+    "label": "后端模型不支持兜底恢复分钟",
+    "description": "账号额度未用完但返回不支持该模型、model not supported、unsupported model 时的冷却时间；模型不支持错误不使用上游 reset 时间。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_TEMPORARY_ERROR_COOLDOWN_MINUTES",
+    "label": "后端临时错误兜底恢复分钟",
+    "description": "超时、连接失败、500、502、503、504 等临时错误的冷却时间；临时错误不使用上游 reset 时间。",
+    "category": "models",
+    "valueType": "number",
+    "defaultValue": 15
+  },
+  {
+    "key": "IMAGE_BACKEND_UNRECOVERABLE_ERROR_KEYWORDS",
+    "label": "后端不可恢复错误关键词",
+    "description": "命中这些关键词时，账号/API 会直接标记为错误并跳过后续调度。支持用逗号、换行或分号分隔。",
+    "category": "models",
+    "valueType": "string",
+    "defaultValue": "refresh token, invalid refresh token, invalid_grant, authentication, account deactivated, deactivated account"
+  },
+  {
+    "key": "STORAGE_ACCESS_KEY_ID",
+    "label": "存储 AccessKey ID",
+    "description": "S3/R2/MinIO AccessKey ID。",
+    "category": "storage",
+    "valueType": "string"
+  },
+  {
+    "key": "STORAGE_SECRET_ACCESS_KEY",
+    "label": "存储 Secret AccessKey",
+    "description": "S3/R2/MinIO Secret。",
+    "category": "storage",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "STORAGE_ENDPOINT",
+    "label": "存储 Endpoint",
+    "description": "S3 兼容存储 endpoint。留空使用本地存储。",
+    "category": "storage",
+    "valueType": "string"
+  },
+  {
+    "key": "STORAGE_REGION",
+    "label": "存储 Region",
+    "description": "默认 auto。",
+    "category": "storage",
+    "valueType": "string",
+    "defaultValue": "auto"
+  },
+  {
+    "key": "STORAGE_BUCKET_NAME",
+    "label": "上传 Bucket",
+    "description": "通用上传 bucket。",
+    "category": "storage",
+    "valueType": "string"
+  },
+  {
+    "key": "SYSTEM_ASSETS_BUCKET_NAME",
+    "label": "系统通用资产 Bucket",
+    "description": "头像、模型广场封面和网站品牌资产共用的公开 bucket，必须与用户生成内容 bucket 隔离。",
+    "category": "storage",
+    "valueType": "string",
+    "defaultValue": "system"
+  },
+  {
+    "key": "GENERATIONS_BUCKET_NAME",
+    "label": "用户生成内容 Bucket",
+    "description": "生成图片与生成视频共用的私有 bucket，必须与系统通用资产 bucket 隔离。",
+    "category": "storage",
+    "valueType": "string",
+    "defaultValue": "generations"
+  },
+  {
+    "key": "GENERATION_IMAGE_RETENTION_MODE",
+    "label": "图片清理模式",
+    "description": "选择如何清理生成图片文件：关闭=永久保存（默认）；按时间=超过“照片销毁时间（小时）”后删除；按张数=每个用户各自仅保留最新的若干张，删除其更老的。清理只删图片文件与图库展示，生成记录与计费流水仍保留。",
+    "category": "storage",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "关闭（永久保存）",
+        "value": "off"
+      },
+      {
+        "label": "按时间过期",
+        "value": "time"
+      },
+      {
+        "label": "按每用户最大张数",
+        "value": "count"
+      }
+    ],
+    "defaultValue": "off"
+  },
+  {
+    "key": "GENERATION_IMAGE_RETENTION_HOURS",
+    "label": "照片销毁时间（小时）",
+    "description": "生成图片文件的保留时长；填 0 表示永久保存。仅在清理模式为“按时间过期”时生效。过期后只删除图片文件和图库展示，生成记录与计费流水仍保留。",
+    "category": "storage",
+    "valueType": "number",
+    "defaultValue": 0
+  },
+  {
+    "key": "GENERATION_IMAGE_MAX_COUNT",
+    "label": "每用户最大保留张数",
+    "description": "“按每用户最大张数”模式下，每个用户各自保留的已生成图片张数上限；该用户超出后从其最老的开始删除（按用户独立计数，不是全站合计）。仅在清理模式为“按每用户最大张数”时生效。",
+    "category": "storage",
+    "valueType": "number",
+    "defaultValue": 10000,
+    "min": 1
+  },
+  {
+    "key": "LOCAL_STORAGE_PATH",
+    "label": "本地存储路径",
+    "description": "未启用 S3 时的本地文件目录。",
+    "category": "storage",
+    "valueType": "string"
+  },
+  {
+    "key": "EMAIL_PROVIDER",
+    "label": "邮件通道",
+    "description": "smtp 或 resend。",
+    "category": "mail",
+    "valueType": "select",
+    "options": [
+      {
+        "label": "SMTP",
+        "value": "smtp"
+      },
+      {
+        "label": "Resend",
+        "value": "resend"
+      }
+    ]
+  },
+  {
+    "key": "EMAIL_FROM",
+    "label": "发件人",
+    "description": "如 FluxMedia <support@media.flux-code.cc>。",
+    "category": "mail",
+    "valueType": "string"
+  },
+  {
+    "key": "SMTP_HOST",
+    "label": "SMTP Host",
+    "description": "SMTP 服务器地址。",
+    "category": "mail",
+    "valueType": "string"
+  },
+  {
+    "key": "SMTP_PORT",
+    "label": "SMTP Port",
+    "description": "默认 465。",
+    "category": "mail",
+    "valueType": "number",
+    "defaultValue": 465
+  },
+  {
+    "key": "SMTP_SECURE",
+    "label": "SMTP SSL",
+    "description": "是否使用 SSL。",
+    "category": "mail",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "SMTP_USER",
+    "label": "SMTP 用户名",
+    "description": "SMTP 登录用户名。",
+    "category": "mail",
+    "valueType": "string"
+  },
+  {
+    "key": "SMTP_PASS",
+    "label": "SMTP 密码",
+    "description": "SMTP 登录密码。",
+    "category": "mail",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "RESEND_API_KEY",
+    "label": "Resend API Key",
+    "description": "Resend 邮件 API Key。",
+    "category": "mail",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "SUPPORT_TICKET_NOTIFICATION_EMAIL",
+    "label": "工单通知邮箱",
+    "description": "有用户新建工单或追加回复时，发送新动态提醒到这个邮箱；留空则不发送。",
+    "category": "mail",
+    "valueType": "string"
+  },
+  {
+    "key": "REGISTRATION_BONUS_CREDITS",
+    "label": "注册奖励积分",
+    "description": "新用户首次进入账户时发放的积分。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0,
+    "max": 1000000,
+    "defaultValue": 100
+  },
+  {
+    "key": "FREE_CREDITS_EXPIRY_DAYS",
+    "label": "免费积分有效期天数",
+    "description": "注册奖励和管理员赠送等免费积分的默认有效期。",
+    "category": "credits",
+    "valueType": "number",
+    "defaultValue": 7
+  },
+  {
+    "key": "CREDITS_EXPIRY_DAYS",
+    "label": "积分包有效期天数",
+    "description": "按量购买积分默认有效期；填 0 表示永不过期。注册赠送积分使用独立的有效期设置。",
+    "category": "credits",
+    "valueType": "number",
+    "defaultValue": 0
+  },
+  {
+    "key": "IMAGE_BASE_CREDITS_1024",
+    "label": "历史 1024 档基础生图积分",
+    "description": "仅供旧数据迁移时补齐全局模型价格；当前运行时计费和管理页面均不读取或编辑此键。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0.01,
+    "max": 100000,
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "IMAGE_BASE_CREDITS_1K",
+    "label": "历史 1K 档基础生图积分",
+    "description": "仅供旧数据迁移时补齐全局模型价格；当前运行时计费和管理页面均不读取或编辑此键。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0.01,
+    "max": 100000,
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "IMAGE_BASE_CREDITS_2K",
+    "label": "历史 2K 档基础生图积分",
+    "description": "仅供旧数据迁移时补齐全局模型价格；当前运行时计费和管理页面均不读取或编辑此键。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0.01,
+    "max": 100000,
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "IMAGE_BASE_CREDITS_4K",
+    "label": "历史 4K 基础生图积分",
+    "description": "仅供旧数据迁移时补齐全局模型价格；当前运行时计费和管理页面均不读取或编辑此键。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0.01,
+    "max": 100000,
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "IMAGE_SUPER_RESOLUTION_ENABLED",
+    "label": "出图分辨率超分校准",
+    "description": "开启后，上游返回图的较长边低于请求尺寸 2/3 时，用 Real-ESRGAN 超分放大并缩到目标分辨率（不裁剪、不改宽高比）。CPU 推理，单张约 1-2 秒，仅对最终图触发；默认关闭。",
+    "category": "models",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "IMAGE_RESTORATION_ENABLED",
+    "label": "出图高清修复（SCUNet）",
+    "description": "开启后，用户在创作时勾选「高清修复」的最终图会用 SCUNet 盲复原（去噪/去压缩块/增强质感，不改分辨率）。CPU 推理较重（512 约 11 秒、1024 约 35 秒），有全局串行闸防并发打满机器；需用户手动勾选、仅对最终图触发；默认关闭。与「超分校准」独立：修复在原分辨率跑、超分再放大。",
+    "category": "models",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "IMAGE_BLOCK_REPAIR_ENABLED",
+    "label": "出图生成式修复（gpt-image-2 整图重绘）",
+    "description": "开启后，用户勾选「生成式修复」的最终图会缩到约 1280 像素，一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变），再超分补足到目标分辨率。整图一次重绘无接缝；单独从统一号池获租并计费。替代自动超分。修复提示词有内置默认，用户/API 可用 repair_prompt 覆盖。需用户手动勾选、仅对最终图触发；默认关闭。与「掩码外绘」互斥，后者优先。",
+    "category": "models",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "IMAGE_MASK_OUTPAINT_ENABLED",
+    "label": "出图掩码外绘修复（gpt-image-2 无缝分块）",
+    "description": "开启后（优先于「生成式修复」），用户勾选「生成式修复」的最终图在目标分辨率上切成 1K 重叠块，按顺序逐块用 gpt-image-2 带 mask 编辑：锁住与已完成邻块的重叠区、只重绘新区域，让相邻块无缝衔接。每块独立从统一号池获得支持蒙版的成员并单独计费，比整图重绘更慢更贵。需用户手动勾选、仅对最终图触发；默认关闭。",
+    "category": "models",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "IMAGE_MODEL_CREDIT_PRICES",
+    "label": "图像模型固定价格",
+    "description": "按模型配置必填的 1024、1K、2K、4K 固定基础积分。分组可以逐档覆盖；未覆盖时始终使用本全局模型价格。请在独立的“模型配置”页签编辑。",
+    "category": "credits",
+    "valueType": "json",
+    "defaultValue": {
+      "version": 1,
+      "byModel": {
+        "gpt-image-2": {
+          "base1024Credits": 1.27,
+          "base1kCredits": 1.27,
+          "base2kCredits": 5.07,
+          "base4kCredits": 10
+        },
+        "gpt-image-1.5": {
+          "base1024Credits": 1.27,
+          "base1kCredits": 1.27,
+          "base2kCredits": 5.07,
+          "base4kCredits": 10
+        },
+        "nano-banana-pro": {
+          "base1024Credits": 1.27,
+          "base1kCredits": 1.27,
+          "base2kCredits": 5.07,
+          "base4kCredits": 10
+        },
+        "nano-banana": {
+          "base1024Credits": 1.27,
+          "base1kCredits": 1.27,
+          "base2kCredits": 5.07,
+          "base4kCredits": 10
+        },
+        "nano-banana-2": {
+          "base1024Credits": 1.27,
+          "base1kCredits": 1.27,
+          "base2kCredits": 5.07,
+          "base4kCredits": 10
+        }
+      }
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "MODEL_MARKETPLACE_CONFIG",
+    "label": "模型广场配置",
+    "description": "保存自定义模型 ID、媒体类型、支持分辨率，以及模型广场与官网首页展示、封面和并发修订号；只能通过独立的模型配置入口修改。",
+    "category": "models",
+    "valueType": "json",
+    "defaultValue": {
+      "version": 2,
+      "imageByModel": {},
+      "videoByFamily": {},
+      "customModels": [],
+      "writeReceipts": {}
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "IMAGE_TEXT_MODERATION_CREDITS",
+    "label": "文本审核积分",
+    "description": "每次文本审核附加的积分费用。允许设为 0；关闭内容审核总开关后不执行审核且不收费。",
+    "category": "moderation",
+    "valueType": "number",
+    "min": 0,
+    "max": 100000,
+    "defaultValue": 0.04
+  },
+  {
+    "key": "IMAGE_INPUT_MODERATION_CREDITS",
+    "label": "输入图片审核积分",
+    "description": "每张输入图片审核附加的积分费用。允许设为 0；关闭内容审核总开关后不执行审核且不收费。",
+    "category": "moderation",
+    "valueType": "number",
+    "min": 0,
+    "max": 100000,
+    "defaultValue": 0.06
+  },
+  {
+    "key": "VIDEO_BASE_CREDITS_PER_SECOND",
+    "label": "历史视频每秒基础积分",
+    "description": "仅供旧倍率与稀疏视频价格迁移时补齐全局模型价格；当前运行时计费和管理页面均不读取或编辑此键。",
+    "category": "credits",
+    "valueType": "number",
+    "min": 0.01,
+    "max": 100000,
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "VIDEO_MODEL_BILLING_MODES",
+    "label": "视频模型计费模式",
+    "description": "按真实视频模型 ID 选择按秒或按条计费。模式只能在独立的“模型配置”入口修改，分组和供应商账号不能覆盖。",
+    "category": "credits",
+    "valueType": "json",
+    "defaultValue": {
+      "sora2": "per_second",
+      "sora2-pro": "per_second",
+      "veo31": "per_second",
+      "veo31-fast": "per_second",
+      "veo31-ref": "per_second",
+      "kling-o3": "per_second",
+      "kling3": "per_second",
+      "kling3-omni": "per_second",
+      "runway-gen45": "per_second",
+      "ray314": "per_second",
+      "ray314-hdr": "per_second",
+      "seedance2": "per_second",
+      "seedance2-fast": "per_second"
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "VIDEO_MODEL_CREDITS_PER_ITEM",
+    "label": "视频模型分辨率每条积分",
+    "description": "按真实视频模型 ID 与输出分辨率维护完整的每条积分矩阵，默认 3 积分/条。请在独立的“模型配置”入口修改。",
+    "category": "credits",
+    "valueType": "json",
+    "defaultValue": {
+      "sora2@720p": 3,
+      "sora2-pro@720p": 3,
+      "veo31@1080p": 3,
+      "veo31@720p": 3,
+      "veo31-fast@1080p": 3,
+      "veo31-fast@720p": 3,
+      "veo31-ref@1080p": 3,
+      "veo31-ref@720p": 3,
+      "kling-o3@1080p": 3,
+      "kling3@1080p": 3,
+      "kling3@720p": 3,
+      "kling3-omni@1080p": 3,
+      "kling3-omni@720p": 3,
+      "runway-gen45@720p": 3,
+      "ray314@4k": 3,
+      "ray314@1080p": 3,
+      "ray314@720p": 3,
+      "ray314-hdr@4k": 3,
+      "ray314-hdr@1080p": 3,
+      "ray314-hdr@720p": 3,
+      "seedance2@1080p": 3,
+      "seedance2@720p": 3,
+      "seedance2@480p": 3,
+      "seedance2-fast@720p": 3,
+      "seedance2-fast@480p": 3
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "VIDEO_MODEL_CREDITS_PER_SECOND",
+    "label": "视频模型分辨率每秒积分",
+    "description": "按视频模型族与输出分辨率设置必填的每秒积分。分组可设置模型族或分辨率覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型配置”页签编辑。",
+    "category": "credits",
+    "valueType": "json",
+    "defaultValue": {
+      "sora2": 30,
+      "sora2@720p": 30,
+      "sora2-pro": 60,
+      "sora2-pro@720p": 60,
+      "veo31": 45,
+      "veo31@1080p": 45,
+      "veo31@720p": 45,
+      "veo31-fast": 30,
+      "veo31-fast@1080p": 30,
+      "veo31-fast@720p": 30,
+      "veo31-ref": 45,
+      "veo31-ref@1080p": 45,
+      "veo31-ref@720p": 45,
+      "kling-o3": 30,
+      "kling-o3@1080p": 30,
+      "kling3": 30,
+      "kling3@1080p": 30,
+      "kling3@720p": 30,
+      "kling3-omni": 30,
+      "kling3-omni@1080p": 30,
+      "kling3-omni@720p": 30,
+      "runway-gen45": 30,
+      "runway-gen45@720p": 30,
+      "ray314": 30,
+      "ray314@4k": 30,
+      "ray314@1080p": 30,
+      "ray314@720p": 30,
+      "ray314-hdr": 30,
+      "ray314-hdr@4k": 30,
+      "ray314-hdr@1080p": 30,
+      "ray314-hdr@720p": 30,
+      "seedance2": 30,
+      "seedance2@1080p": 30,
+      "seedance2@720p": 30,
+      "seedance2@480p": 30,
+      "seedance2-fast": 30,
+      "seedance2-fast@720p": 30,
+      "seedance2-fast@480p": 30
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "VIDEO_MODEL_CAPABILITY_OVERRIDES",
+    "label": "视频模型能力覆盖",
+    "description": "按真实视频模型 ID 保存描述符允许的动态能力覆盖；当前仅 Seedance 参考图上限可配置，且只能通过独立的模型配置入口修改。",
+    "category": "models",
+    "valueType": "json",
+    "defaultValue": {
+      "version": 1,
+      "byModel": {}
+    },
+    "managedByDedicatedOperation": true
+  },
+  {
+    "key": "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS",
+    "label": "视频同账号重试等待秒数",
+    "description": "API 供应商创建视频失败后，同一账号再次请求前的基础等待时间；0 表示立即安排重试。",
+    "category": "models",
+    "valueType": "number",
+    "min": 0,
+    "max": 300,
+    "integer": true,
+    "defaultValue": 2
+  },
+  {
+    "key": "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS",
+    "label": "视频创建 HTTP 超时秒数",
+    "description": "API 供应商创建视频任务的单次同步 HTTP 请求超时；不影响后续查询、下载或回调。",
+    "category": "models",
+    "valueType": "number",
+    "min": 1,
+    "max": 300,
+    "integer": true,
+    "defaultValue": 30
+  },
+  {
+    "key": "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+    "label": "视频账号容量等待超时秒数",
+    "description": "存在合格 API 账号但并发槽均满时的最长等待时间；0 表示不等待并立即进入失败退款。",
+    "category": "models",
+    "valueType": "number",
+    "min": 0,
+    "max": 1800,
+    "integer": true,
+    "defaultValue": 120
+  },
+  {
+    "key": "CREDIT_PACKAGE_MATRIX",
+    "label": "按量积分包配置",
+    "description": "表格配置一次性积分包的积分数、统一价格、结账币种、显示状态、数量购买和 Creem 产品 ID。Epay 仅支持 CNY；Creem 可按预建产品收取对应币种。",
+    "category": "credits",
+    "valueType": "json",
+    "exampleValue": {
+      "packages": [
+        {
+          "id": "payg_starter",
+          "name": "Pay as you go",
+          "description": "One-time credit package",
+          "credits": 5000,
+          "price": 20,
+          "currency": "CNY",
+          "popular": true,
+          "visible": true,
+          "allowQuantity": false
+        },
+        {
+          "id": "enterprise_resource",
+          "name": "Resource Pack",
+          "description": "One-time 5,000-credit resource pack",
+          "credits": 5000,
+          "price": 15,
+          "currency": "CNY",
+          "visible": false,
+          "allowQuantity": true,
+          "maxQuantity": 999
+        }
+      ]
+    }
+  },
+  {
+    "key": "CREDIT_TOP_UP_CONFIG",
+    "label": "按金额充值与兑换比例",
+    "description": "按 ISO 币种配置积分兑换比例、最小/最大金额（最小货币单位）和可用支付方式。订单创建时冻结比例与金额；支付宝当面付仅支持 CNY。",
+    "category": "credits",
+    "valueType": "json",
+    "exampleValue": {
+      "enabled": true,
+      "defaultCurrency": "CNY",
+      "currencies": [
+        {
+          "currency": "CNY",
+          "creditsPerMajorUnit": 10,
+          "minAmountMinor": 100,
+          "maxAmountMinor": 1000000,
+          "enabled": true,
+          "providers": [
+            "alipay_f2f"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "key": "REFERRAL_REWARD_CONFIG",
+    "label": "推广首充奖励",
+    "description": "新人通过推广码注册后首次成功充值时，邀请人和新人各获得一次积分奖励；可分别按首充积分比例或固定积分配置。关闭后不会发放，历史已发放奖励不回收。",
+    "category": "credits",
+    "valueType": "json",
+    "defaultValue": {
+      "enabled": false,
+      "inviter": {
+        "mode": "percentage",
+        "value": 10
+      },
+      "invitee": {
+        "mode": "percentage",
+        "value": 10
+      }
+    },
+    "exampleValue": {
+      "enabled": false,
+      "inviter": {
+        "mode": "percentage",
+        "value": 10
+      },
+      "invitee": {
+        "mode": "percentage",
+        "value": 10
+      }
+    }
+  },
+  {
+    "key": "NEXT_PUBLIC_GA_ID",
+    "label": "Google Analytics ID",
+    "description": "GA Measurement ID。",
+    "category": "analytics",
+    "valueType": "string",
+    "requiresRebuild": true
+  },
+  {
+    "key": "NEXT_PUBLIC_SENTRY_DSN",
+    "label": "Sentry DSN",
+    "description": "Sentry 监控 DSN。",
+    "category": "analytics",
+    "valueType": "string",
+    "secret": true,
+    "requiresRebuild": true
+  },
+  {
+    "key": "SENTRY_AUTH_TOKEN",
+    "label": "Sentry Auth Token",
+    "description": "Sentry sourcemap 上传 Token。",
+    "category": "analytics",
+    "valueType": "string",
+    "secret": true,
+    "requiresRebuild": true
+  },
+  {
+    "key": "AXIOM_TOKEN",
+    "label": "Axiom Token",
+    "description": "Axiom 日志采集 Token。",
+    "category": "analytics",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "AXIOM_DATASET",
+    "label": "Axiom Dataset",
+    "description": "Axiom 日志数据集名称。",
+    "category": "analytics",
+    "valueType": "string",
+    "defaultValue": "gpt2image"
+  },
+  {
+    "key": "INTERNAL_JOB_SCHEDULER_ENABLED",
+    "label": "内置定时任务",
+    "description": "启用后 Web 进程会自动执行 pending 超时、照片清理和积分过期任务；多实例会用数据库锁避免重复执行。",
+    "category": "general",
+    "valueType": "boolean",
+    "defaultValue": true
+  },
+  {
+    "key": "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES",
+    "label": "图片维护任务间隔（分钟）",
+    "description": "pending 超时退款和照片销毁清理的内置执行间隔。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 5
+  },
+  {
+    "key": "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES",
+    "label": "积分过期任务间隔（分钟）",
+    "description": "过期积分批次处理的内置执行间隔。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 1440
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED",
+    "label": "运营导出处理任务",
+    "description": "独立启用运营 CSV 导出 worker；默认关闭，启用前需确认对象存储流式写入配置可用。",
+    "category": "general",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES",
+    "label": "运营导出处理间隔（分钟）",
+    "description": "扫描并处理排队或租约已陈旧导出任务的执行间隔。",
+    "category": "general",
+    "valueType": "number",
+    "min": 1,
+    "max": 1440,
+    "integer": true,
+    "defaultValue": 1
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+    "label": "运营导出处理批次",
+    "description": "单次最多认领并处理的导出任务数，范围为 1 至 100。",
+    "category": "general",
+    "valueType": "number",
+    "min": 1,
+    "max": 100,
+    "integer": true,
+    "defaultValue": 10
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED",
+    "label": "运营导出过期清理任务",
+    "description": "独立启用运营 CSV 文件过期与对象清理；默认关闭，不依赖导出处理任务开关。",
+    "category": "general",
+    "valueType": "boolean",
+    "defaultValue": false
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES",
+    "label": "运营导出清理间隔（分钟）",
+    "description": "扫描超过七天保留期的导出文件并推进幂等清理的执行间隔。",
+    "category": "general",
+    "valueType": "number",
+    "min": 1,
+    "max": 10080,
+    "integer": true,
+    "defaultValue": 60
+  },
+  {
+    "key": "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE",
+    "label": "运营导出清理批次",
+    "description": "单次最多过期并清理的导出任务数，范围为 1 至 100。",
+    "category": "general",
+    "valueType": "number",
+    "min": 1,
+    "max": 100,
+    "integer": true,
+    "defaultValue": 100
+  },
+  {
+    "key": "UPSTASH_REDIS_REST_URL",
+    "label": "Upstash Redis URL",
+    "description": "限流 Redis REST URL。",
+    "category": "general",
+    "valueType": "string"
+  },
+  {
+    "key": "UPSTASH_REDIS_REST_TOKEN",
+    "label": "Upstash Redis Token",
+    "description": "限流 Redis REST Token。",
+    "category": "general",
+    "valueType": "string",
+    "secret": true
+  },
+  {
+    "key": "RATE_LIMIT_GLOBAL_REQUESTS_PER_MINUTE",
+    "label": "全局限流（次/分钟）",
+    "description": "全局请求限流阈值。配置 Upstash Redis 后生效；未配置 Upstash 时跳过限流。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 100
+  },
+  {
+    "key": "RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE",
+    "label": "认证限流（次/分钟）",
+    "description": "登录、注册、找回密码等认证接口的每分钟请求阈值。配置 Upstash Redis 后生效。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 5
+  },
+  {
+    "key": "RATE_LIMIT_AI_REQUESTS_PER_MINUTE",
+    "label": "AI 与生图限流（次/分钟）",
+    "description": "页面生图、图生图、Chat/Agent 和外部媒体 API 的每分钟请求阈值。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 20
+  },
+  {
+    "key": "RATE_LIMIT_PAYMENT_REQUESTS_PER_MINUTE",
+    "label": "支付限流（次/分钟）",
+    "description": "支付相关接口的每分钟请求阈值。配置 Upstash Redis 后生效。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 10
+  },
+  {
+    "key": "RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE",
+    "label": "上传限流（次/分钟）",
+    "description": "文件上传接口的每分钟请求阈值。配置 Upstash Redis 后生效。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 30
+  },
+  {
+    "key": "RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE",
+    "label": "严格限流（次/分钟）",
+    "description": "敏感操作的严格每分钟请求阈值。配置 Upstash Redis 后生效。",
+    "category": "general",
+    "valueType": "number",
+    "defaultValue": 3
+  }
+]

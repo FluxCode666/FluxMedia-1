@@ -327,8 +327,7 @@ export function ModelConfigurationTable({
                 <HomepageBadge entry={entry} />
               </td>
               <td className="px-4 py-3 tabular-nums">
-                {entry.category === "image" &&
-                entry.pricingSource === "unconfigured"
+                {entry.pricingSource === "unconfigured"
                   ? "未配置"
                   : formatModelConfigurationMinimumCredits(
                       entry.minimumCredits

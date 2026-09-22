@@ -76,7 +76,6 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -100,7 +99,7 @@ import type {
   ModerationPolicySource,
 } from "../../../moderation/policy-contract";
 import { getPaginationWindow } from "../../../pagination/state";
-import { buildStorageThumbnailUrl } from "../../../storage/signed-url";
+import { StorageThumbnail } from "../../../storage/storage-thumbnail";
 import { formatDateInTimeZone } from "../../../time-zone";
 import {
   adminAdjustCreditsAction,
@@ -1750,18 +1749,14 @@ export function AdminUsersManagement({
                             >
                               <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-md bg-muted">
                                 {item.imageUrl ? (
-                                  <Image
+                                  <StorageThumbnail
                                     // 走 /w/ 路径段缩略图 + unoptimized 直连。
                                     // 不能用 Next 图片优化器:它对带 ?sig= 的本地图会
                                     // 返回 400("url parameter is not allowed",需配
                                     // images.localPatterns);且优化器会拉 5~7MB 原图来
                                     // 生成 80px 缩略图。改直连 /w160/ 小 webp。
-                                    src={
-                                      buildStorageThumbnailUrl(
-                                        item.imageUrl,
-                                        160
-                                      ) ?? item.imageUrl
-                                    }
+                                    src={item.imageUrl}
+                                    thumbnailWidth={160}
                                     alt={item.prompt}
                                     width={80}
                                     height={80}

@@ -361,7 +361,7 @@ WITH events AS (
       WHEN v.id IS NOT NULL OR g.usage_log_visible IS TRUE
         OR t.operation_type IN ('manual_consumption','admin_credit_adjustment','uol_credit_consumption') THEN 'web'
       ELSE 'unknown' END,
-    t.operation_type,'refund',NULL,t.created_at,0,'refund',t.id::text,'refund',NULL,
+    t.operation_type,'refund',NULL,t.created_at,0,'refund',t.id::text,'','refund',NULL,
     0::float8,t.amount::float8
   FROM credits_transaction t
   LEFT JOIN generation g ON t.operation_type='image_generation' AND g.user_id=t.user_id AND g.id=t.operation_id

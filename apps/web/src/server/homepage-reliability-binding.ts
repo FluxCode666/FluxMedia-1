@@ -14,7 +14,7 @@ import {
   type HomepageGenerationSlaStatsOutput,
   homepageGenerationSlaStatsOutputSchema,
 } from "@repo/shared/uol/operations";
-import { getRecentGenerationSlaStats } from "@/features/image-generation/sla";
+import { requestGoJson } from "@/server/go-backend-client";
 
 /** 首页可靠性 late binding 可注入的 Web 运行时读取依赖。 */
 export type HomepageReliabilityBindingDependencies = {
@@ -22,7 +22,10 @@ export type HomepageReliabilityBindingDependencies = {
 };
 
 const defaultDependencies: HomepageReliabilityBindingDependencies = {
-  loadGenerationSlaStats: () => getRecentGenerationSlaStats(1000),
+  loadGenerationSlaStats: () =>
+    requestGoJson<HomepageGenerationSlaStatsOutput>(
+      "/api/marketing/sla-stats"
+    ),
 };
 
 /**

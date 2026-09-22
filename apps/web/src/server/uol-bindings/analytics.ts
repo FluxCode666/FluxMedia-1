@@ -14,7 +14,6 @@ import {
   usageTrendsOutputSchema,
 } from "@repo/shared/analytics/contracts";
 import { isAdminRole } from "@repo/shared/auth/roles";
-import { checkRateLimit } from "@repo/shared/rate-limit";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
 import {
   GoBackendRequestError,
@@ -67,16 +66,7 @@ bindExecute(
         "User session authentication required"
       );
     }
-    const rateLimit = await checkRateLimit(
-      `analytics-dashboard:${principal.userId}`,
-      "global"
-    );
-    if (!rateLimit.success) {
-      throw new OperationError(
-        "rate_limited",
-        "Data dashboard requests are too frequent"
-      );
-    }
+
     const result = await requestAnalyticsGo<{
       status: "ready";
       snapshot: unknown;
@@ -95,16 +85,7 @@ bindExecute(
     if (principal.type !== "user" || !isAdminRole(principal.role)) {
       throw new OperationError("forbidden", "Administrator access required");
     }
-    const rateLimit = await checkRateLimit(
-      `admin-analytics-dashboard:${principal.userId}`,
-      "global"
-    );
-    if (!rateLimit.success) {
-      throw new OperationError(
-        "rate_limited",
-        "Admin data dashboard requests are too frequent"
-      );
-    }
+
     const parsedInput = adminDataDashboardInputSchema.parse(input);
     const result = await requestAnalyticsGo<{
       status: "ready";
@@ -124,16 +105,7 @@ bindExecute(
     if (principal.type !== "user" || !isAdminRole(principal.role)) {
       throw new OperationError("forbidden", "Administrator access required");
     }
-    const rateLimit = await checkRateLimit(
-      `admin-analytics-dashboard-users:${principal.userId}`,
-      "global"
-    );
-    if (!rateLimit.success) {
-      throw new OperationError(
-        "rate_limited",
-        "Admin data dashboard user searches are too frequent"
-      );
-    }
+
     const parsedInput = adminDataDashboardUserSearchInputSchema.parse(input);
     const query = new URLSearchParams({
       query: parsedInput.query,

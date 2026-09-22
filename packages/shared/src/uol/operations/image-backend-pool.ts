@@ -439,12 +439,12 @@ export const testApiUpstreamAdapter = defineOperation({
   },
 });
 
-/** 读取当前 Web 进程的脱敏 Worker Pool 运行诊断。 */
+/** 经 Go 读取私有脚本运行时的脱敏 Worker Pool 诊断。 */
 export const getApiUpstreamRuntimeDiagnostics = defineOperation({
   name: "pool.getApiUpstreamRuntimeDiagnostics",
   domain: "image-backend-pool",
   title: "获取 API 上游脚本运行诊断",
-  description: "读取当前进程的 Worker、队列和响应许可快照，不返回配置正文。",
+  description: "读取私有脚本运行时的 Worker、队列和响应许可实时快照，不返回配置正文。",
   input: z.object({}).strict(),
   output: z
     .object({

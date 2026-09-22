@@ -157,9 +157,32 @@ jobs:
           RELEASE_GATE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
         run: pnpm --filter @repo/integration-tests test:release-governance
 
+      - name: Configure authenticated Redis for integration tests
+        run: >-
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass
+          fluxmedia-ci-redis-secret
+
+      - name: Test Go backend with PostgreSQL, Redis, and race detection
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+          GO_BACKEND_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+          BETTER_AUTH_SECRET: fluxmedia-ci-go-auth-secret
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: "6379"
+          REDIS_ADDR: 127.0.0.1:6379
+          REDIS_PASSWORD: fluxmedia-ci-redis-secret
+          REDIS_DB: "4"
+          REDIS_TLS: "false"
+        run: |
+          set -euo pipefail
+          docker exec "${{ job.services.postgres.id }}" \
+            createdb -U postgres fluxmedia_go_test_ci
+          go -C services/api-gateway test -race -tags=integration ./...
+
       - name: Test unified media pool with PostgreSQL
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          GO_BACKEND_TEST_REDIS_URL: redis://:fluxmedia-ci-redis-secret@127.0.0.1:6379/14
           IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
@@ -173,7 +196,7 @@ jobs:
 
       - name: Test media task queue with Redis
         env:
-          MEDIA_TASK_MQ_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+          MEDIA_TASK_MQ_TEST_REDIS_URL: redis://:fluxmedia-ci-redis-secret@127.0.0.1:6379/15
         run: pnpm --filter @repo/integration-tests test:media-task-mq
 
       - name: Verify release database gates
@@ -223,6 +246,7 @@ jobs:
       web_image: ${{ steps.meta.outputs.web_image }}
       backend_image: ${{ steps.meta.outputs.backend_image }}
       script_runtime_image: ${{ steps.meta.outputs.script_runtime_image }}
+      media_processing_image: ${{ steps.meta.outputs.media_processing_image }}
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
@@ -238,6 +262,7 @@ jobs:
           echo "web_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "backend_image=${REGISTRY}/${owner_lower}/fluxmedia-1-backend" >> "${GITHUB_OUTPUT}"
           echo "script_runtime_image=${REGISTRY}/${owner_lower}/fluxmedia-1-script-runtime" >> "${GITHUB_OUTPUT}"
+          echo "media_processing_image=${REGISTRY}/${owner_lower}/fluxmedia-1-media-processing" >> "${GITHUB_OUTPUT}"
           echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
@@ -304,6 +329,22 @@ jobs:
           cache-from: type=gha,scope=fluxmedia-script-runtime
           cache-to: type=gha,mode=max,scope=fluxmedia-script-runtime
 
+      - name: Build and push media processing image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.media-processing-runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.media_processing_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.media_processing_image }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=fluxmedia-media-processing
+          cache-to: type=gha,mode=max,scope=fluxmedia-media-processing
+
   deploy:
     name: Migrate database and deploy web with Docker Compose
     needs: build-and-push
@@ -321,6 +362,7 @@ jobs:
       WEB_IMAGE: ${{ needs.build-and-push.outputs.web_image }}
       BACKEND_IMAGE: ${{ needs.build-and-push.outputs.backend_image }}
       SCRIPT_RUNTIME_IMAGE: ${{ needs.build-and-push.outputs.script_runtime_image }}
+      MEDIA_PROCESSING_IMAGE: ${{ needs.build-and-push.outputs.media_processing_image }}
       IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
     steps:
       - name: Checkout deployment files
@@ -425,6 +467,7 @@ jobs:
               "${WEB_IMAGE}" \
               "${BACKEND_IMAGE}" \
               "${SCRIPT_RUNTIME_IMAGE}" \
+              "${MEDIA_PROCESSING_IMAGE}" \
               "${IMAGE_TAG}" \
               "${DEPLOY_PATH}" \
               "${GITHUB_SHA}" <<'REMOTE_SCRIPT' | tee "${result_file}"
@@ -433,9 +476,10 @@ jobs:
           web_image="$1"
           backend_image="$2"
           script_runtime_image="$3"
-          image_tag="$4"
-          deploy_path="$5"
-          git_sha="$6"
+          media_processing_image="$4"
+          image_tag="$5"
+          deploy_path="$6"
+          git_sha="$7"
           cd "${deploy_path}"
 
           if [ ! -f .env ]; then
@@ -543,6 +587,12 @@ jobs:
             if [ -n "${previous_backend_image}" ]; then
               set_env_value FLUXMEDIA_BACKEND_IMAGE "${previous_backend_image}"
             fi
+            if [ -n "${previous_script_runtime_image}" ]; then
+              set_env_value FLUXMEDIA_SCRIPT_RUNTIME_IMAGE "${previous_script_runtime_image}"
+            fi
+            if [ -n "${previous_media_processing_image}" ]; then
+              set_env_value FLUXMEDIA_MEDIA_PROCESSING_IMAGE "${previous_media_processing_image}"
+            fi
             if [ -n "${previous_tag}" ]; then
               set_env_value FLUXMEDIA_TAG "${previous_tag}"
             fi
@@ -550,6 +600,8 @@ jobs:
 
           previous_image="$(read_env_value FLUXMEDIA_IMAGE)"
           previous_backend_image="$(read_env_value FLUXMEDIA_BACKEND_IMAGE)"
+          previous_script_runtime_image="$(read_env_value FLUXMEDIA_SCRIPT_RUNTIME_IMAGE)"
+          previous_media_processing_image="$(read_env_value FLUXMEDIA_MEDIA_PROCESSING_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
           previous_release_available=false
           if [[ "${previous_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
@@ -601,7 +653,7 @@ jobs:
             if [ "${recovery_action}" = "restart-previous" ]; then
               echo "迁移尚未开始，恢复原本运行的上一版 Web 服务。" >&2
               if ! docker compose up -d --no-deps \
-                web backend script-runtime >/dev/null 2>&1; then
+                web backend script-runtime media-processing >/dev/null 2>&1; then
                 echo "上一版服务恢复失败，保持维护状态。" >&2
               fi
             elif [ "${recovery_action}" = "keep-maintenance" ] \
@@ -615,10 +667,11 @@ jobs:
           set_env_value FLUXMEDIA_IMAGE "${web_image}"
           set_env_value FLUXMEDIA_BACKEND_IMAGE "${backend_image}"
           set_env_value FLUXMEDIA_SCRIPT_RUNTIME_IMAGE "${script_runtime_image}"
+          set_env_value FLUXMEDIA_MEDIA_PROCESSING_IMAGE "${media_processing_image}"
           set_env_value FLUXMEDIA_TAG "${image_tag}"
           docker compose --profile maintenance config --quiet
 
-          if ! docker compose --profile maintenance pull web backend script-runtime; then
+          if ! docker compose --profile maintenance pull web backend script-runtime media-processing; then
             exit 1
           fi
 
@@ -638,11 +691,12 @@ jobs:
           if [ -n "$(docker compose ps -q --status running web)" ]; then
             previous_web_was_running=true
           fi
-          docker compose stop --timeout 60 web backend script-runtime
+          docker compose stop --timeout 60 web backend script-runtime media-processing
           web_stopped=true
           if [ -n "$(docker compose ps -q --status running web)" ] || \
             [ -n "$(docker compose ps -q --status running backend)" ] || \
-            [ -n "$(docker compose ps -q --status running script-runtime)" ]; then
+            [ -n "$(docker compose ps -q --status running script-runtime)" ] || \
+            [ -n "$(docker compose ps -q --status running media-processing)" ]; then
             echo "旧 Web 或 Go backend容器仍在运行，拒绝迁移。" >&2
             exit 1
           fi
@@ -690,7 +744,7 @@ jobs:
           fi
 
           echo "启动 Go backend与 web 服务。"
-          if ! docker compose up -d --remove-orphans web backend script-runtime; then
+          if ! docker compose up -d --remove-orphans web backend script-runtime media-processing; then
             echo "新 Web 或 Go backend启动失败，保持维护状态。" >&2
             exit 1
           fi
@@ -737,7 +791,7 @@ jobs:
             sleep 10
           done
 
-          docker compose logs --tail=100 web backend script-runtime >&2
+          docker compose logs --tail=100 web backend script-runtime media-processing >&2
           echo "新 Web 或 Go backend健康检查失败，保持维护状态且不启动旧镜像。" >&2
           exit 1
           REMOTE_SCRIPT

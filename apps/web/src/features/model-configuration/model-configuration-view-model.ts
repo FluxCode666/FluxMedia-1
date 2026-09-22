@@ -69,7 +69,7 @@ export function getModelConfigurationCategoryLabel(
 export function getModelConfigurationVisibilityLabel(
   entry: ModelConfigurationEntry
 ): "已展示" | "已隐藏" | "未配置价格" {
-  if (entry.category === "image" && entry.pricingSource === "unconfigured") {
+  if (entry.pricingSource === "unconfigured") {
     return "未配置价格";
   }
   return entry.visible ? "已展示" : "已隐藏";

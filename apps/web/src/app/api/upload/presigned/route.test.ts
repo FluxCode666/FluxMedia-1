@@ -1,116 +1,73 @@
-/**
- * 通用预签名上传路由的 DB-free 契约测试。
- *
- * 覆盖鉴权，以及 S3 endpoint、bucket 与 local 模式运行时变化后，路由立即使用
- * 新快照，同时保持既有响应字段和预签名有效期。
- */
-
-import type { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  getSession: vi.fn(),
-  getSignedUploadUrl: vi.fn(),
-  getStorageRuntimeSnapshot: vi.fn(),
-  logError: vi.fn(),
-}));
-
-vi.mock("nanoid", () => ({ nanoid: () => "fixed-id" }));
-vi.mock("@repo/shared/api-logger", () => ({
-  withApiLogging: <T>(handler: T): T => handler,
-}));
-vi.mock("@repo/shared/auth", () => ({
-  auth: { api: { getSession: mocks.getSession } },
-}));
-vi.mock("@repo/shared/logger", () => ({ logError: mocks.logError }));
-vi.mock("@repo/shared/storage/providers", () => ({
-  getStorageRuntimeSnapshot: mocks.getStorageRuntimeSnapshot,
-}));
-
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 
-/** 构造符合路由入参的 JSON 请求。 */
-function createRequest(filename = "document.pdf"): NextRequest {
-  return new Request("http://localhost/api/upload/presigned", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filename, fileSize: 1024 }),
-  }) as NextRequest;
-}
+const fetchMock = vi.fn<typeof fetch>();
 
-describe("POST /api/upload/presigned", () => {
+describe("POST /api/upload/presigned Go transport", () => {
   beforeEach(() => {
-    mocks.getSession.mockReset();
-    mocks.getSignedUploadUrl.mockReset();
-    mocks.getStorageRuntimeSnapshot.mockReset();
-    mocks.logError.mockReset();
-    mocks.getSignedUploadUrl.mockResolvedValue("https://signed.example.test");
-    mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GO_BACKEND_URL", "http://go-backend:8080");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
-  it("未登录时保持 401 响应且不读取存储配置", async () => {
-    mocks.getSession.mockResolvedValue(null);
-
-    const response = await POST(createRequest());
-
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Unauthorized" });
-    expect(mocks.getStorageRuntimeSnapshot).not.toHaveBeenCalled();
-  });
-
-  it("同一请求使用运行时 S3 endpoint 与 bucket 生成响应", async () => {
-    mocks.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: { getSignedUploadUrl: mocks.getSignedUploadUrl },
-      bucketName: "uploads-a",
-      endpoint: "https://s3-a.example.test",
+  it("forwards exact upload metadata and session; returns Go storage URL fields", async () => {
+    const body = JSON.stringify({
+      filename: "文档.pdf",
+      contentType: "application/pdf",
+      fileSize: 1024,
     });
-
-    const response = await POST(createRequest());
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(mocks.getSignedUploadUrl).toHaveBeenCalledWith(
-      "uploads/user-1/fixed-id.pdf",
-      "uploads-a",
-      "application/pdf",
-      3600
-    );
-    expect(body).toEqual({
-      presignedUrl: "https://signed.example.test",
-      fileKey: "uploads/user-1/fixed-id.pdf",
-      fileUrl:
-        "https://s3-a.example.test/uploads-a/uploads/user-1/fixed-id.pdf",
+    const payload = {
+      presignedUrl: "https://signed.example.test/object?signature=a%2Bb",
+      fileKey: "uploads/user/file.pdf",
+      fileUrl: "/api/storage/bucket/uploads/user/file.pdf",
       contentType: "application/pdf",
       expiresIn: 3600,
-    });
+    };
+    fetchMock.mockResolvedValue(Response.json(payload));
+    const request = new Request(
+      "https://media.example.com/api/upload/presigned",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "content-type": "application/json",
+          cookie: "session=test",
+          host: "media.example.com",
+          "content-length": String(new TextEncoder().encode(body).length),
+        },
+      }
+    );
+    const response = await POST(request);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://go-backend:8080/api/upload/presigned",
+      expect.objectContaining({ method: "POST", signal: request.signal })
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe(body);
+    const headers = new Headers(init?.headers);
+    expect(headers.get("cookie")).toBe("session=test");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.has("host")).toBe(false);
+    expect(headers.has("content-length")).toBe(false);
+    expect(await response.json()).toEqual(payload);
   });
 
-  it("下一请求立即使用修改后的 bucket 和 local 模式", async () => {
-    mocks.getStorageRuntimeSnapshot
-      .mockResolvedValueOnce({
-        provider: { getSignedUploadUrl: mocks.getSignedUploadUrl },
-        bucketName: "uploads-a",
-        endpoint: "https://s3-a.example.test",
+  it.each([
+    401, 413, 503,
+  ])("preserves Go rejection %s and its payload", async (status) => {
+    const payload = { error: { message: "upload rejected" } };
+    fetchMock.mockResolvedValue(Response.json(payload, { status }));
+    const response = await POST(
+      new Request("https://media.example.com/api/upload/presigned", {
+        method: "POST",
+        body: "{}",
       })
-      .mockResolvedValueOnce({
-        provider: { getSignedUploadUrl: mocks.getSignedUploadUrl },
-        bucketName: "uploads-b",
-        endpoint: null,
-      });
-
-    await POST(createRequest("first.pdf"));
-    const response = await POST(createRequest("second.pdf"));
-    const body = await response.json();
-
-    expect(mocks.getStorageRuntimeSnapshot).toHaveBeenCalledTimes(2);
-    expect(mocks.getSignedUploadUrl).toHaveBeenLastCalledWith(
-      "uploads/user-1/fixed-id.pdf",
-      "uploads-b",
-      "application/pdf",
-      3600
     );
-    expect(body.fileUrl).toBe(
-      "/api/storage/uploads-b/uploads/user-1/fixed-id.pdf"
-    );
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(payload);
   });
 });

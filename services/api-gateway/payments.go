@@ -7,13 +7,12 @@ import (
 	"crypto/md5"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"sort"
@@ -226,6 +225,10 @@ func (b *backend) handleCreemWebhook(w http.ResponseWriter, r *http.Request) err
 }
 
 func (b *backend) handleAlipayWebhook(w http.ResponseWriter, r *http.Request) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" {
+		return invalid("支付宝通知必须使用表单编码")
+	}
 	p, err := parsePaymentParams(r)
 	if err != nil {
 		return err
@@ -236,9 +239,8 @@ func (b *backend) handleAlipayWebhook(w http.ResponseWriter, r *http.Request) er
 	if !b.verifyAlipaySignature(r.Context(), p) {
 		return &apiError{400, "INVALID_SIGNATURE", "支付宝签名无效"}
 	}
-	app := b.paymentSetting(r.Context(), "ALIPAY_APP_ID")
-	if app != "" && p["app_id"] != app {
-		return &apiError{400, "INVALID_REQUEST", "App ID 不匹配"}
+	if err := b.validateAlipayMerchant(r.Context(), p["app_id"], p["seller_id"]); err != nil {
+		return err
 	}
 	order := p["out_trade_no"]
 	if order == "" {
@@ -246,8 +248,8 @@ func (b *backend) handleAlipayWebhook(w http.ResponseWriter, r *http.Request) er
 	}
 	var expected int64
 	var trade string
-	var provider string
-	if err := b.db.QueryRow(r.Context(), `SELECT amount_minor,provider_trade_no,provider FROM payment_order WHERE id=$1`, order).Scan(&expected, &trade, &provider); err != nil || provider != "alipay_f2f" {
+	var provider, currency, purpose string
+	if err := b.db.QueryRow(r.Context(), `SELECT amount_minor,COALESCE(provider_trade_no,''),provider,currency,purpose FROM payment_order WHERE id=$1`, order).Scan(&expected, &trade, &provider, &currency, &purpose); err != nil || provider != "alipay_f2f" || currency != "CNY" || purpose != "credit_top_up" {
 		return &apiError{400, "INVALID_REQUEST", "订单不存在"}
 	}
 	if trade != "" && trade != p["trade_no"] {
@@ -272,24 +274,8 @@ func (b *backend) verifyAlipaySignature(ctx context.Context, p map[string]string
 	if key == "" || sig == "" {
 		return false
 	}
-	key = strings.ReplaceAll(key, `\n`, "\n")
-	if !strings.Contains(key, "BEGIN") {
-		key = "-----BEGIN PUBLIC KEY-----\n" + key + "\n-----END PUBLIC KEY-----"
-	}
-	block, _ := pem.Decode([]byte(key))
-	if block == nil {
-		return false
-	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	rsaPub, err := parseAlipayCheckoutPublicKey(key)
 	if err != nil {
-		if pk, e := x509.ParsePKCS1PublicKey(block.Bytes); e == nil {
-			pub = pk
-		} else {
-			return false
-		}
-	}
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
 		return false
 	}
 	keys := make([]string, 0, len(p))
@@ -315,8 +301,18 @@ func (b *backend) verifyAlipaySignature(ctx context.Context, p map[string]string
 }
 func parseMinor(s string) int64 {
 	f := strings.Split(strings.TrimSpace(s), ".")
-	if len(f) > 2 {
+	if len(f) > 2 || len(f[0]) == 0 {
 		return -1
+	}
+	for _, part := range f {
+		if part == "" {
+			return -1
+		}
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return -1
+			}
+		}
 	}
 	frac := ""
 	if len(f) == 2 {
@@ -329,9 +325,12 @@ func parseMinor(s string) int64 {
 		frac += "0"
 	}
 	n, err := strconv.ParseInt(f[0], 10, 64)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > 90071992547409 {
 		return -1
 	}
-	q, _ := strconv.ParseInt(frac, 10, 64)
+	q, err := strconv.ParseInt(frac, 10, 64)
+	if err != nil || n*100+q > 9007199254740991 {
+		return -1
+	}
 	return n*100 + q
 }

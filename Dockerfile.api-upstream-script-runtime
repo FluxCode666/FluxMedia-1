@@ -7,6 +7,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY services/api-upstream-script-runtime/package.json ./services/api-upstream-script-runtime/package.json
 RUN pnpm install --frozen-lockfile --filter @fluxmedia/api-upstream-script-runtime...
 COPY services/api-upstream-script-runtime/server.mjs ./services/api-upstream-script-runtime/server.mjs
+COPY services/api-upstream-script-runtime/pool.mjs ./services/api-upstream-script-runtime/pool.mjs
 COPY services/api-upstream-script-runtime/worker.mjs ./services/api-upstream-script-runtime/worker.mjs
 RUN groupadd --system --gid 1001 runtime && useradd --system --uid 1001 --gid runtime runtime
 USER runtime:runtime

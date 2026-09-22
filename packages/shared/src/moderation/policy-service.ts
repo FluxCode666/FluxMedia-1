@@ -4,14 +4,12 @@
  * 职责：直接读取数据库策略真相，执行管理员权限与目标角色校验，并在服务自持
  * 事务中原子提交策略和管理员审计。缓存只在事务提交后失效，失败时告警但不回滚。
  * 使用方：审核策略 UOL operations、管理员读模型与图像生成管线。
- * 关键依赖：policy-contract、auth/roles；默认仓储通过参数化 SQL 适配 Drizzle。
+ * 生产 I/O 由 Go 执行；policy-contract、auth/roles 与注入式服务保留纯策略回归。
  */
-import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
 import { type AppUserRole, canActOnTargetRole } from "../auth/roles";
-import { logWarn } from "../logger";
 import {
   CONTENT_MODERATION_BLOCK_RISK_LEVEL_SETTING_KEY,
   type ModerationBlockRiskLevel,
@@ -20,7 +18,6 @@ import {
   type ResolvedModerationPolicyValues,
   resolveModerationPolicyValues,
 } from "./policy-contract";
-import { defaultModerationPolicyRepository } from "./policy-repository";
 
 export { CONTENT_MODERATION_BLOCK_RISK_LEVEL_SETTING_KEY } from "./policy-contract";
 
@@ -536,22 +533,48 @@ export function createModerationPolicyService(
   };
 }
 
-/** 默认缓存失效端口，动态加载以保持注入式单测 DB-free。 */
-async function invalidateDefaultSystemSettingsCache(): Promise<void> {
-  const { invalidateSystemSettingsCache } = await import(
-    "../system-settings/cache"
-  );
-  await invalidateSystemSettingsCache();
-}
-
-/** 默认生产服务；数据库与缓存模块只在方法真正执行时动态加载。 */
-export const moderationPolicyService = createModerationPolicyService({
-  repository: defaultModerationPolicyRepository,
-  invalidateSystemSettingsCache: invalidateDefaultSystemSettingsCache,
-  warn: (message, data) => logWarn(message, data),
-  now: () => new Date(),
-  createAuditId: randomUUID,
-});
+/** Production policy reads and audited writes execute at the Go boundary. */
+export const moderationPolicyService: ModerationPolicyService = {
+  async getGlobalPolicy() {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    const raw = await requestGoBackendJson<{ policy: ResolvedModerationPolicyValues }>("/api/system-settings/moderation-policy");
+    return raw.policy;
+  },
+  async getUserPolicy(userId) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    return requestGoBackendJson<ResolvedModerationPolicyValues>(`/api/moderation/users/${encodeURIComponent(userId)}/policy`);
+  },
+  async resolveEffectivePolicy(userId) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    const secret = process.env.CRON_SECRET?.trim();
+    if (!secret) throw new ModerationPolicyServiceError("invariant_error", "审核策略服务未配置");
+    return requestGoBackendJson<ResolvedModerationPolicyValues>(`/api/moderation/users/${encodeURIComponent(userId)}/policy`, {
+      headers: { authorization: `Bearer ${secret}` },
+    });
+  },
+  async setGlobalRiskLevel(input) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    const raw = await requestGoBackendJson<{
+      changed: boolean; previousLevel: unknown; level: ModerationBlockRiskLevel;
+      auditLogId: string | null; updatedAt: string;
+    }>("/api/system-settings/moderation-policy", {
+      method: "PUT", headers: { "X-Request-ID": input.requestId },
+      body: JSON.stringify({ level: input.level, reason: input.reason }),
+    });
+    return { changed: raw.changed, before: raw.previousLevel, after: raw.level,
+      auditLogId: raw.auditLogId, updatedAt: new Date(raw.updatedAt) };
+  },
+  async setUserRiskLevelOverride(input) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    const raw = await requestGoBackendJson<Omit<SetUserRiskLevelOverrideResult, "updatedAt"> & { updatedAt: string }>(
+      `/api/moderation/users/${encodeURIComponent(input.userId)}/policy`, {
+        method: "POST", headers: { "X-Request-ID": input.requestId },
+        body: JSON.stringify({ userId: input.userId, level: input.level, reason: input.reason }),
+      }
+    );
+    return { ...raw, updatedAt: new Date(raw.updatedAt) };
+  },
+};
 
 /** 直接读取全站审核策略。 */
 export function getGlobalModerationPolicy() {

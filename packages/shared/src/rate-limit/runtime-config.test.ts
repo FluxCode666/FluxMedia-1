@@ -1,153 +1,16 @@
-/**
- * rate-limit 运行时配置单测。
- *
- * 通过内存桩验证配置指纹重建、动态阈值和 Upstash 故障降级，不连接数据库或网络。
- */
-
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const runtime = vi.hoisted(() => ({
-  settings: new Map<string, unknown>(),
-  redisConfigs: [] as Array<Record<string, unknown>>,
-  limiterConfigs: [] as Array<Record<string, unknown>>,
-  rejectLimit: false,
-}));
-const logWarnMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@repo/shared/logger", () => ({
-  logWarn: logWarnMock,
-}));
-
-vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingString: vi.fn(async (key: string) => {
-    const value = runtime.settings.get(key);
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
-  }),
-  getRuntimeSettingNumber: vi.fn(async (key: string, fallback: number) => {
-    const value = Number(runtime.settings.get(key));
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-  }),
-}));
-
-vi.mock("@upstash/redis", () => ({
-  Redis: class RedisMock {
-    constructor(config: Record<string, unknown>) {
-      runtime.redisConfigs.push(config);
-    }
-  },
-}));
-
-vi.mock("@upstash/ratelimit", () => ({
-  Ratelimit: class RatelimitMock {
-    static slidingWindow(requests: number, window: string) {
-      return { requests, window };
-    }
-
-    private readonly config: Record<string, unknown>;
-
-    constructor(config: Record<string, unknown>) {
-      this.config = config;
-      runtime.limiterConfigs.push(config);
-    }
-
-    async limit() {
-      if (runtime.rejectLimit) throw new Error("Upstash unavailable");
-      const limiter = this.config.limiter as { requests: number };
-      return {
-        success: true,
-        remaining: limiter.requests - 1,
-        reset: Date.now() + 60_000,
-        limit: limiter.requests,
-      };
-    }
-  },
-}));
-
-/**
- * 重新导入模块以隔离客户端和内存桶单例。
- *
- * @returns 新模块实例
- */
-async function importFreshModule() {
-  vi.resetModules();
-  return import("./index");
-}
-
-describe("rate limit runtime configuration", () => {
-  beforeEach(() => {
-    runtime.settings.clear();
-    runtime.redisConfigs.length = 0;
-    runtime.limiterConfigs.length = 0;
-    runtime.rejectLimit = false;
-    logWarnMock.mockClear();
-  });
-
-  it("rebuilds Redis and limiter clients only when their fingerprints change", async () => {
-    runtime.settings.set(
-      "UPSTASH_REDIS_REST_URL",
-      "https://redis-a.example.com"
-    );
-    runtime.settings.set("UPSTASH_REDIS_REST_TOKEN", "token-a");
-    runtime.settings.set("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE", 3);
-    const { checkRateLimit } = await importFreshModule();
-
-    const first = await checkRateLimit("first", "strict");
-    const second = await checkRateLimit("second", "strict");
-    expect(first.limit).toBe(3);
-    expect(second.limit).toBe(3);
-    expect(runtime.redisConfigs).toHaveLength(1);
-    expect(runtime.limiterConfigs).toHaveLength(1);
-
-    runtime.settings.set("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE", 7);
-    const afterThresholdChange = await checkRateLimit("third", "strict");
-    expect(afterThresholdChange.limit).toBe(7);
-    expect(runtime.redisConfigs).toHaveLength(1);
-    expect(runtime.limiterConfigs).toHaveLength(2);
-
-    runtime.settings.set("UPSTASH_REDIS_REST_TOKEN", "token-b");
-    await checkRateLimit("fourth", "strict");
-    expect(runtime.redisConfigs).toHaveLength(2);
-    expect(runtime.limiterConfigs).toHaveLength(3);
-  });
-
-  it("switches to dynamic memory limits when Upstash credentials are cleared", async () => {
-    runtime.settings.set(
-      "UPSTASH_REDIS_REST_URL",
-      "https://redis-a.example.com"
-    );
-    runtime.settings.set("UPSTASH_REDIS_REST_TOKEN", "token-a");
-    const { checkRateLimit } = await importFreshModule();
-
-    await checkRateLimit("remote", "strict");
-    expect(runtime.redisConfigs).toHaveLength(1);
-
-    runtime.settings.delete("UPSTASH_REDIS_REST_URL");
-    runtime.settings.delete("UPSTASH_REDIS_REST_TOKEN");
-    runtime.settings.set("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE", 1);
-    const first = await checkRateLimit("memory", "strict");
-    const second = await checkRateLimit("memory", "strict");
-
-    expect(first.success).toBe(true);
-    expect(first.limit).toBe(1);
-    expect(second.success).toBe(false);
-    expect(runtime.redisConfigs).toHaveLength(1);
-  });
-
-  it("falls back to memory limiting when Upstash requests fail", async () => {
-    runtime.settings.set(
-      "UPSTASH_REDIS_REST_URL",
-      "https://redis-a.example.com"
-    );
-    runtime.settings.set("UPSTASH_REDIS_REST_TOKEN", "token-a");
-    runtime.settings.set("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE", 1);
-    runtime.rejectLimit = true;
-    const { checkRateLimit } = await importFreshModule();
-
-    const first = await checkRateLimit("fallback", "strict");
-    const second = await checkRateLimit("fallback", "strict");
-
-    expect(first.success).toBe(true);
-    expect(second.success).toBe(false);
-    expect(logWarnMock).toHaveBeenCalledTimes(1);
-  });
+/** Runtime configuration is resolved by Go, and failures cannot bypass admission in Node. */
+import {beforeEach,describe,expect,it,vi} from "vitest";
+const mocks=vi.hoisted(()=>({request:vi.fn()}));
+vi.mock("../http/go-backend",()=>({requestGoBackendInternalJson:mocks.request}));
+import {checkRateLimit} from "./index";
+beforeEach(()=>{vi.clearAllMocks();vi.unstubAllEnvs()});
+describe("Go rate limit runtime authority",()=>{
+ it("accepts each Go runtime limit independently of local env metadata",async()=>{
+  vi.stubEnv("RATE_LIMIT_GLOBAL_REQUESTS_PER_MINUTE","99999");
+  mocks.request.mockResolvedValueOnce({success:true,remaining:1,reset:60000,limit:2,skipped:false}).mockResolvedValueOnce({success:false,remaining:0,reset:60000,limit:1,skipped:false});
+  expect((await checkRateLimit("analytics-dashboard:u")).limit).toBe(2);expect((await checkRateLimit("analytics-dashboard:u")).success).toBe(false);
+ });
+ it("propagates unavailable Go instead of opening a Node fallback bucket",async()=>{
+  mocks.request.mockRejectedValue(new Error("Go unavailable"));await expect(checkRateLimit("analytics-dashboard:u")).rejects.toThrow("Go unavailable");
+ });
 });

@@ -6,7 +6,7 @@
  * 关键依赖：专用 MODERATION_TEST_DATABASE_URL、0056 迁移、@repo/shared 策略服务。
  */
 import { randomUUID } from "node:crypto";
-
+import type { ModerationPolicyService } from "@repo/shared/moderation/policy-service";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -28,24 +28,6 @@ const seededUserIds = [
   deletionTargetId,
 ] as const;
 
-type RiskLevel = "low" | "medium" | "high";
-
-interface PolicyServiceModule {
-  setGlobalModerationRiskLevel: (input: {
-    actor: { userId: string; role: "super_admin" };
-    level: RiskLevel;
-    reason: string;
-    requestId: string;
-  }) => Promise<unknown>;
-  setUserModerationRiskLevelOverride: (input: {
-    actor: { userId: string; role: "super_admin" };
-    userId: string;
-    level: RiskLevel | null;
-    reason: string;
-    requestId: string;
-  }) => Promise<unknown>;
-}
-
 interface OriginalGlobalSetting {
   value: unknown;
   isSecret: boolean;
@@ -61,7 +43,10 @@ interface AuditLevelRow {
 }
 
 let pool: Pool | null = null;
-let policyService: PolicyServiceModule | null = null;
+let policyService: Pick<
+  ModerationPolicyService,
+  "setGlobalRiskLevel" | "setUserRiskLevelOverride"
+> | null = null;
 let originalGlobalSetting: OriginalGlobalSetting | null = null;
 let sharedDatabaseLoaded = false;
 
@@ -263,7 +248,20 @@ beforeAll(async () => {
      where key = $1`,
     [GLOBAL_SETTING_KEY, actorId]
   );
-  policyService = await import("@repo/shared/moderation/policy-service");
+  const [
+    { createModerationPolicyService },
+    { defaultModerationPolicyRepository },
+  ] = await Promise.all([
+    import("@repo/shared/moderation/policy-service"),
+    import("../../shared/src/moderation/policy-repository"),
+  ]);
+  policyService = createModerationPolicyService({
+    repository: defaultModerationPolicyRepository,
+    invalidateSystemSettingsCache: async () => undefined,
+    warn: () => undefined,
+    now: () => new Date(),
+    createAuditId: randomUUID,
+  });
   sharedDatabaseLoaded = true;
 });
 
@@ -287,13 +285,13 @@ describe("moderation policy service PostgreSQL integration", () => {
     const mediumRequestId = requestId("global-medium");
     const requests = [lowRequestId, mediumRequestId];
     await Promise.all([
-      policyService.setGlobalModerationRiskLevel({
+      policyService.setGlobalRiskLevel({
         actor: { userId: actorId, role: "super_admin" },
         level: "low",
         reason: "并发全站写 low",
         requestId: lowRequestId,
       }),
-      policyService.setGlobalModerationRiskLevel({
+      policyService.setGlobalRiskLevel({
         actor: { userId: actorId, role: "super_admin" },
         level: "medium",
         reason: "并发全站写 medium",
@@ -318,14 +316,14 @@ describe("moderation policy service PostgreSQL integration", () => {
     const mediumRequestId = requestId("user-medium");
     const requests = [lowRequestId, mediumRequestId];
     await Promise.all([
-      policyService.setUserModerationRiskLevelOverride({
+      policyService.setUserRiskLevelOverride({
         actor: { userId: actorId, role: "super_admin" },
         userId: userTargetId,
         level: "low",
         reason: "并发用户覆盖 low",
         requestId: lowRequestId,
       }),
-      policyService.setUserModerationRiskLevelOverride({
+      policyService.setUserRiskLevelOverride({
         actor: { userId: actorId, role: "super_admin" },
         userId: userTargetId,
         level: "medium",
@@ -349,7 +347,7 @@ describe("moderation policy service PostgreSQL integration", () => {
     );
     const currentRequestId = requestId("audit-failure");
     await expect(
-      policyService.setUserModerationRiskLevelOverride({
+      policyService.setUserRiskLevelOverride({
         actor: { userId: missingActorId, role: "super_admin" },
         userId: rollbackTargetId,
         level: "medium",
@@ -375,7 +373,7 @@ describe("moderation policy service PostgreSQL integration", () => {
     );
     const currentRequestId = requestId("global-audit-failure");
     await expect(
-      policyService.setGlobalModerationRiskLevel({
+      policyService.setGlobalRiskLevel({
         actor: { userId: missingActorId, role: "super_admin" },
         level: "medium",
         reason: "强制全站审计外键失败",
@@ -404,7 +402,7 @@ describe("moderation policy service PostgreSQL integration", () => {
       await holder.query(`select id from "user" where id = $1 for update`, [
         deletionTargetId,
       ]);
-      writePromise = policyService.setUserModerationRiskLevelOverride({
+      writePromise = policyService.setUserRiskLevelOverride({
         actor: { userId: actorId, role: "super_admin" },
         userId: deletionTargetId,
         level: "low",

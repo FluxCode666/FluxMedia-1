@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/jackc/pgx/v5"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ func mapString(m map[string]any, key string) string {
 func (b *backend) registerAdminUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/users", b.endpoint(b.handleAdminUsers))
 	mux.HandleFunc("GET /api/admin/users/{id}", b.endpoint(b.handleAdminUserDetail))
+	mux.HandleFunc("GET /api/admin/users/{id}/credits/{resource}", b.endpoint(b.handleAdminCreditsRead))
 	mux.HandleFunc("POST /api/admin/users", b.endpoint(b.handleAdminUserCreate))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", b.endpoint(b.handleAdminUserMutate))
 	mux.HandleFunc("POST /api/admin/users/{id}/credits/grant", b.endpoint(b.handleAdminUserGrant))
@@ -28,46 +30,80 @@ func (b *backend) registerAdminUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{id}/external-api-key-status", b.endpoint(b.handleAdminUserExternalAPIKeyStatus))
 	mux.HandleFunc("POST /api/admin/api-keys/{keyId}/status", b.endpoint(b.handleAdminUserKeyStatus))
 	mux.HandleFunc("POST /api/moderation/users/{id}/policy", b.endpoint(b.handleAdminUserModeration))
+	mux.HandleFunc("GET /api/moderation/users/{id}/policy", b.endpoint(b.handleAdminUserModerationGet))
 	mux.HandleFunc("POST /api/admin/users/{id}/concurrency", b.endpoint(b.handleAdminUserConcurrency))
 }
 
-func (b *backend) handleAdminUserModeration(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.adminTarget(r, false, r.PathValue("id"))
-	if err != nil {
-		return err
-	}
-	var in struct {
-		Level  *string `json:"level"`
-		Reason string  `json:"reason"`
-	}
-	if err = decodeBody(r, &in); err != nil {
-		return err
-	}
-	_, err = b.db.Exec(r.Context(), `UPDATE "user" SET moderation_block_risk_level_override=$1,updated_at=now() WHERE id=$2`, r.PathValue("id"), in.Level, s.User.ID)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, 200, map[string]any{"success": true, "after": in.Level, "changed": true})
-	return nil
-}
 func (b *backend) handleAdminUserConcurrency(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.adminTarget(r, false, r.PathValue("id"))
+	s, err := b.requireAdmin(r, false)
 	if err != nil {
 		return err
 	}
 	var in struct {
+		UserID   string `json:"userId"`
 		Override *int   `json:"override"`
 		Reason   string `json:"reason"`
 	}
 	if err = decodeBody(r, &in); err != nil {
 		return err
 	}
-	_, err = b.db.Exec(r.Context(), `UPDATE "user" SET image_generation_concurrency_override=$1,updated_at=now() WHERE id=$2`, in.Override, r.PathValue("id"))
+	id := r.PathValue("id")
+	if id == "" || in.UserID != "" && in.UserID != id {
+		return invalid("用户标识不匹配")
+	}
+	in.Reason = strings.TrimSpace(in.Reason)
+	if in.Reason == "" || len([]rune(in.Reason)) > 300 {
+		return invalid("操作原因不合法")
+	}
+	if in.Override != nil && (*in.Override < 1 || *in.Override > 10000) {
+		return invalid("用户生图并发必须是 1 至 10000 的整数")
+	}
+	defaultConcurrency, err := b.settingInt(r, "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY", 20, 1, 10000)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"success": true, "after": in.Override, "changed": true, "message": "用户生图并发限制已更新"})
-	_ = s
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var before *int
+	var role string
+	var updated time.Time
+	if err = tx.QueryRow(r.Context(), `SELECT image_generation_concurrency_override,role,updated_at FROM "user" WHERE id=$1 FOR UPDATE`, id).Scan(&before, &role, &updated); err != nil {
+		if err == pgx.ErrNoRows {
+			return &apiError{404, "NOT_FOUND", "用户不存在"}
+		}
+		return err
+	}
+	if s.User.Role != "super_admin" && (s.User.ID == id || role != "user" && role != "observer_admin") {
+		return forbidden()
+	}
+	changed := (before == nil) != (in.Override == nil) || (before != nil && in.Override != nil && *before != *in.Override)
+	var auditID *string
+	if changed {
+		updated = time.Now().UTC().Truncate(time.Microsecond)
+		if _, err = tx.Exec(r.Context(), `UPDATE "user" SET image_generation_concurrency_override=$1,updated_at=$2 WHERE id=$3`, in.Override, updated, id); err != nil {
+			return err
+		}
+		value := newRequestID()
+		auditID = &value
+		metadata := map[string]any{"requestId": requestID(r), "operation": "mediaLimits.setUserConcurrencyOverride", "actorUserId": s.User.ID, "actorRole": s.User.Role, "targetUserId": id, "targetRole": role}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after,metadata,created_at) VALUES($1,$2,$3,'mediaLimits.setUserConcurrencyOverride',$4,$5,$6,$7,$8)`, value, s.User.ID, id, strings.TrimSpace(in.Reason), mustJSON(map[string]any{"imageGenerationConcurrencyOverride": before}), mustJSON(map[string]any{"imageGenerationConcurrencyOverride": in.Override}), mustJSON(metadata), updated); err != nil {
+			return err
+		}
+	}
+	effective := defaultConcurrency
+	source := "system_default"
+	if in.Override != nil {
+		effective = *in.Override
+		source = "user_override"
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	noStore(w)
+	writeJSON(w, 200, map[string]any{"changed": changed, "before": before, "after": in.Override, "effectiveConcurrency": effective, "effectiveSource": source, "auditLogId": auditID, "updatedAt": updated.UTC(), "message": "用户生图并发限制已更新"})
 	return nil
 }
 func (b *backend) adminTarget(r *http.Request, super bool, id string) (*sessionResponse, error) {
@@ -188,7 +224,15 @@ func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) 
 	u = map[string]any{"id": id, "name": name, "email": email, "role": role, "banned": banned, "bannedReason": br, "emailVerified": ev, "image": image, "createdAt": created, "updatedAt": updated}
 	var bal, earned, spent float64
 	var st string
-	_ = b.db.QueryRow(r.Context(), `SELECT balance,total_earned,total_spent,status FROM credits_balance WHERE user_id=$1`, id).Scan(&bal, &earned, &spent, &st)
+	var walletCreated, walletUpdated time.Time
+	var wallet any
+	err := b.db.QueryRow(r.Context(), `SELECT balance,total_earned,total_spent,status,created_at,updated_at FROM credits_balance WHERE user_id=$1`, id).Scan(&bal, &earned, &spent, &st, &walletCreated, &walletUpdated)
+	if err != nil && err != pgx.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		wallet = map[string]any{"balance": bal, "totalEarned": earned, "totalSpent": spent, "status": st, "createdAt": walletCreated, "updatedAt": walletUpdated}
+	}
 	rows, e := b.db.Query(r.Context(), `SELECT id,type,amount,description,metadata,created_at FROM credits_transaction WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20`, id)
 	if e != nil {
 		return e
@@ -196,16 +240,24 @@ func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) 
 	defer rows.Close()
 	txs := []any{}
 	for rows.Next() {
-		var i, t, d string
+		var i, t string
+		var d *string
 		var a float64
 		var m any
 		var c time.Time
-		if e = rows.Scan(&i, &t, &a, &d, &m, &c); e == nil {
-			txs = append(txs, map[string]any{"id": i, "type": t, "amount": a, "description": d, "metadata": m, "createdAt": c})
+		if e = rows.Scan(&i, &t, &a, &d, &m, &c); e != nil {
+			return e
 		}
+		txs = append(txs, map[string]any{"id": i, "type": t, "amount": a, "description": d, "metadata": m, "createdAt": c})
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 	activeBatches := []any{}
-	brs, _ := b.db.Query(r.Context(), `SELECT id,amount,remaining,issued_at,expires_at,source_type FROM credits_batch WHERE user_id=$1 AND status='active' AND remaining>0 ORDER BY issued_at DESC LIMIT 10`, id)
+	brs, err := b.db.Query(r.Context(), `SELECT id,amount,remaining,issued_at,expires_at,source_type,source_ref FROM credits_batch WHERE user_id=$1 AND status='active' AND remaining>0 AND (expires_at IS NULL OR expires_at>now()) ORDER BY issued_at DESC,id DESC LIMIT 10`, id)
+	if err != nil {
+		return err
+	}
 	if brs != nil {
 		defer brs.Close()
 		for brs.Next() {
@@ -213,15 +265,27 @@ func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) 
 			var amount, rem float64
 			var issued time.Time
 			var exp *time.Time
-			if brs.Scan(&i, &amount, &rem, &issued, &exp, &src) == nil {
-				activeBatches = append(activeBatches, map[string]any{"id": i, "amount": amount, "remaining": rem, "issuedAt": issued, "expiresAt": exp, "sourceType": src})
+			var sourceRef *string
+			if err := brs.Scan(&i, &amount, &rem, &issued, &exp, &src, &sourceRef); err != nil {
+				return err
 			}
+			activeBatches = append(activeBatches, map[string]any{"id": i, "amount": amount, "remaining": rem, "issuedAt": issued, "expiresAt": exp, "sourceType": src, "sourceRef": sourceRef})
 		}
+		if err := brs.Err(); err != nil {
+			return err
+		}
+	}
+	var transactionsCount int
+	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM credits_transaction WHERE user_id=$1`, id).Scan(&transactionsCount); err != nil {
+		return err
 	}
 	gens := []any{}
 	var gt, gc, gf int
 	var gcredit float64
-	gr, _ := b.db.Query(r.Context(), `SELECT id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,file_size,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT 12`, id)
+	gr, err := b.db.Query(r.Context(), `SELECT id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,file_size,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT 12`, id)
+	if err != nil {
+		return err
+	}
 	if gr != nil {
 		defer gr.Close()
 		for gr.Next() {
@@ -232,36 +296,72 @@ func (b *backend) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) 
 			var md any
 			var ca time.Time
 			var done *time.Time
-			if gr.Scan(&i, &p, &rev, &model, &size, &stt, &sk, &sb, &fs, &cc, &er, &md, &ca, &done) == nil {
-				gens = append(gens, map[string]any{"id": i, "prompt": p, "revisedPrompt": rev, "model": model, "size": size, "status": stt, "storageKey": sk, "storageBucket": sb, "fileSize": fs, "creditsConsumed": cc, "error": er, "metadata": md, "createdAt": ca, "completedAt": done})
-				gt++
-				if stt == "completed" {
-					gc++
-				}
-				if stt == "failed" {
-					gf++
-				}
-				gcredit += cc
+			if err := gr.Scan(&i, &p, &rev, &model, &size, &stt, &sk, &sb, &fs, &cc, &er, &md, &ca, &done); err != nil {
+				return err
 			}
+			gens = append(gens, map[string]any{"id": i, "prompt": p, "revisedPrompt": rev, "model": model, "size": size, "status": stt, "storageKey": sk, "storageBucket": sb, "imageUrl": generationURL(sk, sb), "fileSize": fs, "creditsConsumed": cc, "error": er, "metadata": md, "createdAt": ca, "completedAt": done})
+		}
+		if err := gr.Err(); err != nil {
+			return err
 		}
 	}
-	_ = b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE status='completed'),count(*) FILTER(WHERE status='failed'),COALESCE(sum(credits_consumed),0) FROM generation WHERE user_id=$1`, id).Scan(&gt, &gc, &gf, &gcredit)
+	if err := b.db.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE status='completed'),count(*) FILTER(WHERE status='failed'),COALESCE(sum(credits_consumed),0) FROM generation WHERE user_id=$1`, id).Scan(&gt, &gc, &gf, &gcredit); err != nil {
+		return err
+	}
 	keys := []any{}
-	kr, _ := b.db.Query(r.Context(), `SELECT id,name,key_prefix,last_four,credit_limit,credits_used,last_used_at,is_active,created_at,updated_at FROM external_api_key WHERE user_id=$1 ORDER BY created_at DESC`, id)
+	kr, err := b.db.Query(r.Context(), `SELECT id,name,key_prefix,last_four,credit_limit,credits_used,last_used_at,is_active,created_at,updated_at FROM external_api_key WHERE user_id=$1 ORDER BY created_at DESC,id DESC`, id)
+	if err != nil {
+		return err
+	}
 	if kr != nil {
 		defer kr.Close()
 		for kr.Next() {
 			var i, n, kp, lf string
-			var cl, cu float64
+			var cl *float64
+			var cu float64
 			var lu *time.Time
 			var active bool
 			var ca, ua time.Time
-			if kr.Scan(&i, &n, &kp, &lf, &cl, &cu, &lu, &active, &ca, &ua) == nil {
-				keys = append(keys, map[string]any{"id": i, "name": n, "keyPrefix": kp, "lastFour": lf, "creditLimit": cl, "creditsUsed": cu, "lastUsedAt": lu, "isActive": active, "createdAt": ca, "updatedAt": ua})
+			if err := kr.Scan(&i, &n, &kp, &lf, &cl, &cu, &lu, &active, &ca, &ua); err != nil {
+				return err
 			}
+			keys = append(keys, map[string]any{"id": i, "name": n, "keyPrefix": kp, "lastFour": lf, "creditLimit": cl, "creditsUsed": cu, "lastUsedAt": lu, "isActive": active, "createdAt": ca, "updatedAt": ua})
+		}
+		if err := kr.Err(); err != nil {
+			return err
 		}
 	}
-	writeJSON(w, 200, map[string]any{"user": u, "creditsBalance": map[string]any{"balance": bal, "totalEarned": earned, "totalSpent": spent, "status": st}, "transactions": txs, "activeBatches": activeBatches, "generations": gens, "apiKeys": keys, "auditLogs": []any{}, "generationSummary": map[string]any{"total": gt, "completed": gc, "failed": gf, "creditsConsumed": gcredit}})
+	var moderationOverride *string
+	var globalRaw []byte
+	if err := b.db.QueryRow(r.Context(), `SELECT u.moderation_block_risk_level_override,s.value FROM "user" u LEFT JOIN system_setting s ON s.key=$2 WHERE u.id=$1`, id, globalModerationPolicySetting).Scan(&moderationOverride, &globalRaw); err != nil {
+		return err
+	}
+	moderationPolicy := resolveUserModerationPolicy(globalRaw, moderationOverride)
+	mediaLimits, err := b.adminUserMediaLimits(r, id)
+	if err != nil {
+		return err
+	}
+	auditLogs := []any{}
+	arows, err := b.db.Query(r.Context(), `SELECT id,admin_user_id,action,reason,before,after,metadata,created_at FROM admin_audit_log WHERE target_user_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50`, id)
+	if err != nil {
+		return err
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var aid, action string
+		var adminID, reason *string
+		var before, after, metadata json.RawMessage
+		var createdAt time.Time
+		if err := arows.Scan(&aid, &adminID, &action, &reason, &before, &after, &metadata, &createdAt); err != nil {
+			return err
+		}
+		auditLogs = append(auditLogs, map[string]any{"id": aid, "adminUserId": adminID, "action": action, "reason": reason, "before": before, "after": after, "metadata": metadata, "createdAt": createdAt})
+	}
+	if err := arows.Err(); err != nil {
+		return err
+	}
+	noStore(w)
+	writeJSON(w, 200, map[string]any{"user": u, "creditsBalance": wallet, "transactions": txs, "transactionsCount": transactionsCount, "activeBatches": activeBatches, "generations": gens, "apiKeys": keys, "auditLogs": auditLogs, "moderationPolicy": moderationPolicy, "mediaLimits": mediaLimits, "generationSummary": map[string]any{"total": gt, "completed": gc, "failed": gf, "creditsConsumed": gcredit}})
 	return nil
 }
 func (b *backend) handleAdminUserCreate(w http.ResponseWriter, r *http.Request) error {
@@ -326,7 +426,7 @@ func (b *backend) handleAdminUserMutate(w http.ResponseWriter, r *http.Request) 
 	// Profile and credential changes are super-admin operations in the shared
 	// UOL contract. Enforce that boundary in Go as well, rather than relying on
 	// the Next action wrapper to be the only guard.
-	for _, field := range []string{"name", "email", "password"} {
+	for _, field := range []string{"name", "email", "image", "password"} {
 		if _, ok := in[field]; ok {
 			super = true
 			break
@@ -342,6 +442,25 @@ func (b *backend) handleAdminUserMutate(w http.ResponseWriter, r *http.Request) 
 	if e != nil {
 		return e
 	}
+	// Distinguish an omitted avatar from an explicit clear. Validate before any
+	// other requested field is written so invalid images cannot partially apply.
+	var image *string
+	imageValue, imageSet := in["image"]
+	if imageSet && imageValue != nil {
+		value, ok := imageValue.(string)
+		if !ok {
+			return invalid("头像地址无效")
+		}
+		value = strings.TrimSpace(value)
+		parsed, err := url.Parse(value)
+		if err != nil || !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || len(value) > 4096 || strings.ContainsAny(value, "\r\n\\") {
+			return invalid("头像地址无效")
+		}
+		image = &value
+	}
+	if userID, ok := in["userId"]; ok && userID != id {
+		return invalid("用户标识不匹配")
+	}
 	if role, ok := in["role"].(string); ok {
 		_, e = b.db.Exec(r.Context(), `UPDATE "user" SET role=$1,updated_at=now() WHERE id=$2`, role, id)
 		b.auditAdmin(r.Context(), s.User.ID, id, "user.role.update", mapString(in, "reason"), nil, map[string]any{"role": role})
@@ -353,11 +472,27 @@ func (b *backend) handleAdminUserMutate(w http.ResponseWriter, r *http.Request) 
 		}
 		b.auditAdmin(r.Context(), s.User.ID, id, map[bool]string{true: "user.ban", false: "user.unban"}[v], mapString(in, "reason"), nil, map[string]any{"banned": v})
 	}
-	if name, ok := in["name"].(string); ok {
-		_, e = b.db.Exec(r.Context(), `UPDATE "user" SET name=$1,updated_at=now() WHERE id=$2`, name, id)
-	}
-	if email, ok := in["email"].(string); ok {
-		_, e = b.db.Exec(r.Context(), `UPDATE "user" SET email=$1,updated_at=now() WHERE id=$2`, strings.ToLower(strings.TrimSpace(email)), id)
+	name, nameSet := in["name"].(string)
+	email, emailSet := in["email"].(string)
+	if nameSet || emailSet || imageSet {
+		tx, err := b.db.Begin(r.Context())
+		if err != nil {
+			return err
+		}
+		defer rollback(tx)
+		var before, after []byte
+		if err = tx.QueryRow(r.Context(), `SELECT json_build_object('name',name,'email',email,'image',image) FROM "user" WHERE id=$1 FOR UPDATE`, id).Scan(&before); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(r.Context(), `UPDATE "user" SET name=CASE WHEN $2 THEN $3 ELSE name END,email=CASE WHEN $4 THEN $5 ELSE email END,image=CASE WHEN $6 THEN $7::text ELSE image END,updated_at=now() WHERE id=$1 RETURNING json_build_object('name',name,'email',email,'image',image)`, id, nameSet, name, emailSet, strings.ToLower(strings.TrimSpace(email)), imageSet, image).Scan(&after); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after) VALUES($1,$2,$3,'user.profile.update',$4,$5,$6)`, newRequestID(), s.User.ID, id, mapString(in, "reason"), before, after); err != nil {
+			return err
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			return err
+		}
 	}
 	if password, ok := in["password"].(string); ok {
 		if len(password) < 8 {
@@ -382,52 +517,130 @@ func (b *backend) handleAdminUserAdjust(w http.ResponseWriter, r *http.Request) 
 	return b.adjustAdminCredits(w, r, false)
 }
 func (b *backend) adjustAdminCredits(w http.ResponseWriter, r *http.Request, grant bool) error {
-	id := r.PathValue("id")
-	s, e := b.adminTarget(r, !grant, id)
-	if e != nil {
-		return e
+	uid := r.PathValue("id")
+	actor, err := b.requireAdmin(r, !grant)
+	if err != nil {
+		return err
 	}
-	var in struct {
-		Amount float64
-		Reason string
+	if actor.User.ID == uid {
+		return &apiError{403, "FORBIDDEN", "不能调整自己的积分"}
 	}
-	if e = decodeBody(r, &in); e != nil {
-		return e
+	var targetRole string
+	if err = b.db.QueryRow(r.Context(), `SELECT role FROM "user" WHERE id=$1`, uid).Scan(&targetRole); err != nil {
+		return err
 	}
-	if in.Amount <= 0 {
-		return invalid("积分数量必须大于0")
+	if actor.User.Role != "super_admin" && targetRole != "user" && targetRole != "observer_admin" {
+		return forbidden()
 	}
-	if grant {
-		_, e = b.db.Exec(r.Context(), `INSERT INTO credits_balance(id,user_id,balance,total_earned) VALUES($1,$2,$3,$3) ON CONFLICT(user_id) DO UPDATE SET balance=credits_balance.balance+$3,total_earned=credits_balance.total_earned+$3`, newRequestID(), id, in.Amount)
-	} else {
-		_, e = b.db.Exec(r.Context(), `UPDATE credits_balance SET balance=balance-$1,total_spent=total_spent+$1 WHERE user_id=$2 AND balance >= $1`, in.Amount, id)
+	var input struct {
+		UserID    string     `json:"userId"`
+		Amount    float64    `json:"amount"`
+		Mode      string     `json:"mode"`
+		Reason    string     `json:"reason"`
+		ExpiresAt *time.Time `json:"expiresAt"`
 	}
-	if e != nil {
-		return e
+	if err = decodeBody(r, &input); err != nil {
+		return err
 	}
-	b.auditAdmin(r.Context(), s.User.ID, id, map[bool]string{true: "credits.grant", false: "credits.deduct"}[grant], in.Reason, nil, map[string]any{"amount": in.Amount})
-	writeJSON(w, 200, map[string]any{"message": "积分操作成功"})
+	if input.UserID != "" && input.UserID != uid {
+		return invalid("用户 ID 不匹配")
+	}
+	if input.Mode == "" {
+		input.Mode = "deduct"
+	}
+	if !grant && input.Mode != "deduct" && input.Mode != "set" {
+		return invalid("积分调整模式无效")
+	}
+	amount, err := validateCreditAmount(input.Amount, !grant && input.Mode == "set")
+	if err != nil {
+		return err
+	}
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	wallet, err := b.lockCreditWallet(r, tx, uid)
+	if err != nil {
+		return err
+	}
+	if wallet.Status != "active" {
+		return &apiError{403, "ACCOUNT_FROZEN", "积分账户已冻结"}
+	}
+	delta := amount
+	if !grant {
+		if input.Mode == "set" {
+			delta = creditRound(amount - wallet.Balance)
+		} else {
+			delta = -amount
+		}
+	}
+	result := creditMutationResult{Balance: wallet.Balance}
+	in := creditMutation{UserID: uid, Amount: delta, SourceType: "bonus", Reason: input.Reason, ExpiresAt: input.ExpiresAt, ServiceName: "admin_deduct", OperationType: "admin_credit_adjustment", Metadata: map[string]any{"adminUserId": actor.User.ID, "reason": input.Reason}}
+	if delta > 0 {
+		result, err = b.grantCreditTx(r, tx, wallet, in)
+	} else if delta < 0 {
+		in.Amount = -delta
+		result, err = b.consumeCreditTx(r, tx, wallet, in)
+	}
+	if err != nil {
+		return err
+	}
+	action := "credits.grant"
+	if !grant {
+		action = "credits.adjust"
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after) VALUES($1,$2,$3,$4,$5,$6,$7)`, newRequestID(), actor.User.ID, uid, action, input.Reason, mustJSON(map[string]any{"balance": wallet.Balance}), mustJSON(map[string]any{"balance": result.Balance, "amount": delta, "mode": input.Mode})); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"message": "积分操作成功", "batchId": result.BatchID, "transactionId": result.TransactionID, "balance": result.Balance, "previousBalance": wallet.Balance, "newBalance": result.Balance})
 	return nil
 }
 func (b *backend) handleAdminUserCreditsStatus(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
-	s, e := b.adminTarget(r, false, id)
-	if e != nil {
-		return e
+	actor, err := b.requireAdmin(r, false)
+	if err != nil {
+		return err
 	}
-	var in struct{ Status, Reason string }
-	if e = decodeBody(r, &in); e != nil {
-		return e
+	if actor.User.ID == id {
+		return &apiError{403, "FORBIDDEN", "不能调整自己的积分账户"}
 	}
-	if in.Status != "active" && in.Status != "frozen" {
+	var role string
+	if err = b.db.QueryRow(r.Context(), `SELECT role FROM "user" WHERE id=$1`, id).Scan(&role); err != nil {
+		return err
+	}
+	if actor.User.Role != "super_admin" && role != "user" && role != "observer_admin" {
+		return forbidden()
+	}
+	var input struct{ Status, Reason string }
+	if err = decodeBody(r, &input); err != nil {
+		return err
+	}
+	if input.Status != "active" && input.Status != "frozen" {
 		return invalid("积分状态无效")
 	}
-	_, e = b.db.Exec(r.Context(), `INSERT INTO credits_balance(id,user_id,status) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET status=$3,updated_at=now()`, newRequestID(), id, in.Status)
-	if e != nil {
-		return e
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
 	}
-	b.auditAdmin(r.Context(), s.User.ID, id, "credits.status", in.Reason, nil, map[string]any{"status": in.Status})
-	writeJSON(w, 200, map[string]any{"success": true, "message": "积分账户状态已更新"})
+	defer rollback(tx)
+	wallet, err := b.lockCreditWallet(r, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE credits_balance SET status=$1,updated_at=now() WHERE user_id=$2`, input.Status, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after) VALUES($1,$2,$3,'credits.status',$4,$5,$6)`, newRequestID(), actor.User.ID, id, input.Reason, mustJSON(map[string]any{"status": wallet.Status}), mustJSON(map[string]any{"status": input.Status})); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"success": true, "message": "积分账户状态已更新", "previousStatus": wallet.Status, "status": input.Status})
 	return nil
 }
 
@@ -470,7 +683,8 @@ func (b *backend) handleAdminUserKeyStatus(w http.ResponseWriter, r *http.Reques
 		return e
 	}
 	var uid string
-	if e = b.db.QueryRow(r.Context(), `SELECT user_id FROM external_api_key WHERE id=$1`, r.PathValue("keyId")).Scan(&uid); e != nil {
+	var previous bool
+	if e = b.db.QueryRow(r.Context(), `SELECT user_id,is_active FROM external_api_key WHERE id=$1`, r.PathValue("keyId")).Scan(&uid, &previous); e != nil {
 		return e
 	}
 	_, e = b.db.Exec(r.Context(), `UPDATE external_api_key SET is_active=$1,updated_at=now() WHERE id=$2`, in.IsActive, r.PathValue("keyId"))
@@ -478,6 +692,6 @@ func (b *backend) handleAdminUserKeyStatus(w http.ResponseWriter, r *http.Reques
 		return e
 	}
 	b.auditAdmin(r.Context(), s.User.ID, uid, "external_api_key.status", in.Reason, nil, map[string]any{"isActive": in.IsActive})
-	writeJSON(w, 200, map[string]string{"message": "API Key 状态已更新"})
+	writeJSON(w, 200, map[string]any{"success": true, "previousStatus": map[bool]string{true: "active", false: "disabled"}[previous], "newStatus": map[bool]string{true: "active", false: "disabled"}[in.IsActive], "updatedAt": time.Now().UTC()})
 	return nil
 }

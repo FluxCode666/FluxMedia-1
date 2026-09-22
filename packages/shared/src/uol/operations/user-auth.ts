@@ -373,10 +373,7 @@ export const bootstrapSelfUseSuperAdmin = defineOperation({
   hasMaintenanceWrite: true,
   execute: async () => {
     // 服务内部从环境变量读取凭据，避免任何调用方传入或记录明文密码。
-    await bootstrapSelfUseSuperAdminService();
-    // 服务不返回 userId（void）；此处返回占位值，
-    // 调用方应通过 user.list 或 DB 查实际创建结果。
-    return { userId: "bootstrapped", success: true };
+    return bootstrapSelfUseSuperAdminService();
   },
 });
 

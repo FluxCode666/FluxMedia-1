@@ -894,3 +894,21 @@ describe("updateModelConfigurationEntryOutputSchema", () => {
     ).toBe(false);
   });
 });
+
+describe("unconfigured video management prices", () => {
+  it("allows zero placeholders only when explicitly unconfigured", () => {
+    const entry = {
+      category: "video", configKey: "veo31", displayName: "Veo 3.1", iconKey: "google",
+      marketplaceApplicable: true, isCustom: false, enabled: true, visible: true,
+      homepageVisible: false, homepagePriority: 5, description: "", coverUrl: null,
+      usesDefaultCover: true, revision: 0, pricingSource: "unconfigured",
+      minimumCredits: 0, billingMode: "per_second", creditsPerSecond: 0,
+      creditsPerSecondByResolution: { "720p": 0 }, creditsPerItemByResolution: { "720p": 0 },
+      supportedResolutions: ["720p"],
+    };
+    const snapshot = { canEdit: true, runtimeCatalogStatus: "ready", entries: [entry] };
+    expect(modelConfigurationSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(modelConfigurationSnapshotSchema.safeParse({ ...snapshot, entries: [{ ...entry, pricingSource: "explicit" }] }).success).toBe(false);
+    expect(modelConfigurationSnapshotSchema.safeParse({ ...snapshot, entries: [{ ...entry, creditsPerItemByResolution: {} }] }).success).toBe(false);
+  });
+});

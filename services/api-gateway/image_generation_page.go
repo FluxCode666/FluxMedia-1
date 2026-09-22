@@ -129,19 +129,6 @@ func (b *backend) settingInt(r *http.Request, key string, fallback, min, max int
 	return value, nil
 }
 
-func defaultImagePricing() map[string]any {
-	base := map[string]any{"base1024Credits": 1.27, "base1kCredits": 1.27, "base2kCredits": 5.07, "base4kCredits": 10.0}
-	byModel := map[string]any{}
-	for _, id := range []string{"gpt-image-2", "gpt-image-1.5", "nano-banana-pro", "nano-banana", "nano-banana-2"} {
-		copy := map[string]any{}
-		for k, v := range base {
-			copy[k] = v
-		}
-		byModel[id] = copy
-	}
-	return map[string]any{"version": 1, "byModel": byModel}
-}
-
 func (b *backend) imageGenerationModelPricing(r *http.Request) (map[string]any, error) {
 	v, err := b.setting(r.Context(), "IMAGE_MODEL_CREDIT_PRICES", nil)
 	if err != nil {
@@ -160,7 +147,7 @@ func (b *backend) imageGenerationModelPricing(r *http.Request) (map[string]any, 
 			}
 		}
 	}
-	return defaultImagePricing(), nil
+	return map[string]any{"version": 1, "byModel": map[string]any{}}, nil
 }
 
 func (b *backend) imageGenerationCatalog(r *http.Request) (map[string]any, *string, error) {
@@ -215,7 +202,6 @@ func (b *backend) imageGenerationCatalog(r *http.Request) (map[string]any, *stri
 		selected = &id
 	}
 	visible := make([]map[string]any, 0)
-	visibleIDs := map[string]bool{}
 	for _, group := range groups {
 		if !boolValue(group["isEnabled"]) || effective == nil {
 			continue
@@ -224,7 +210,6 @@ func (b *backend) imageGenerationCatalog(r *http.Request) (map[string]any, *stri
 			continue
 		}
 		visible = append(visible, group)
-		visibleIDs[stringValue(group["id"])] = true
 	}
 
 	globalMaxRefs := 16
@@ -234,6 +219,10 @@ func (b *backend) imageGenerationCatalog(r *http.Request) (map[string]any, *stri
 	groupsOut := make([]map[string]any, 0, len(visible))
 	for _, group := range visible {
 		groupID := stringValue(group["id"])
+		groupIDs, err := reachableMediaGroupIDs(r.Context(), b.db, groupID)
+		if err != nil {
+			return nil, nil, err
+		}
 		modelMap := map[string]map[string]any{}
 		for _, raw := range members {
 			member, ok := raw.(map[string]any)
@@ -242,7 +231,7 @@ func (b *backend) imageGenerationCatalog(r *http.Request) (map[string]any, *stri
 			}
 			belongs := false
 			for _, gid := range stringSlice(member["groupIds"]) {
-				if gid == groupID && visibleIDs[gid] {
+				if containsString(groupIDs, gid) {
 					belongs = true
 				}
 			}

@@ -34,7 +34,7 @@ describe("credits Go bindings", () => {
         { type: "user", userId: "user-1", role: "user" }
       )
     ).resolves.toMatchObject({ balance: 42, totalNetSpent: 0 });
-    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/credits/balance");
+    expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/credits/balance?registrationBonus=1");
   });
 
   it("rejects non-user principals before contacting Go", async () => {

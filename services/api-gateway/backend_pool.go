@@ -53,6 +53,10 @@ func (b *backend) handleBackendPoolAdmin(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
+		members, err = filterPoolMembers(r, members)
+		if err != nil {
+			return err
+		}
 		page, size := poolPage(r)
 		writeJSON(w, http.StatusOK, poolPageResult(members, page, size))
 		return nil
@@ -146,7 +150,7 @@ func metaOr(m map[string]any, key string, fallback any) any {
 }
 
 func (b *backend) backendPoolMembers(r *http.Request) ([]any, error) {
-	rows, err := b.db.Query(r.Context(), `SELECT m.id,m.name,m.supported_model_ids,m.supported_resolutions_by_model,m.content_safety_enabled,m.is_enabled,m.always_active,m.failure_cooldown_enabled,m.priority,m.concurrency,m.status,m.health_status,m.lease_acquired_count,m.created_at,m.last_acquired_at,m.last_used_at,m.last_error,m.last_error_at,(a.api_key IS NOT NULL),v.id,v.revision,v.created_at,v.configuration,COALESCE((SELECT json_agg(mg.group_id ORDER BY mg.group_id) FROM image_backend_member_group mg WHERE mg.member_id=m.id),'[]'::json) FROM image_backend_member m LEFT JOIN image_backend_member_api_config a ON a.member_id=m.id LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id ORDER BY m.priority ASC,m.id ASC`)
+	rows, err := b.db.Query(r.Context(), `SELECT m.id,m.name,m.supported_model_ids,m.supported_resolutions_by_model,m.content_safety_enabled,m.is_enabled,m.always_active,m.failure_cooldown_enabled,m.priority,m.concurrency,m.status,m.health_status,m.lease_acquired_count,m.created_at,m.last_acquired_at,m.last_used_at,m.last_error,m.last_error_at,(a.api_key IS NOT NULL),v.id,COALESCE(v.revision,0),v.created_at,v.configuration,(SELECT count(*) FROM image_backend_member_lease l WHERE l.member_id=m.id AND l.expires_at>now()),COALESCE((SELECT json_agg(mg.group_id ORDER BY mg.group_id) FROM image_backend_member_group mg WHERE mg.member_id=m.id),'[]'::json) FROM image_backend_member m LEFT JOIN image_backend_member_api_config a ON a.member_id=m.id LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id ORDER BY m.priority ASC,m.id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -156,13 +160,13 @@ func (b *backend) backendPoolMembers(r *http.Request) ([]any, error) {
 		var id, name, status, health string
 		var models, resolutions, config, groups []byte
 		var safety, enabled, always, cooldown, hasKey bool
-		var priority, concurrency, leaseCount, revision int
+		var priority, concurrency, leaseCount, revision, inflight int
 		var created time.Time
 		var acquired, used, errorAt *time.Time
 		var lastError *string
 		var versionID *string
 		var versionCreated *time.Time
-		if err := rows.Scan(&id, &name, &models, &resolutions, &safety, &enabled, &always, &cooldown, &priority, &concurrency, &status, &health, &leaseCount, &created, &acquired, &used, &lastError, &errorAt, &hasKey, &versionID, &revision, &versionCreated, &config, &groups); err != nil {
+		if err := rows.Scan(&id, &name, &models, &resolutions, &safety, &enabled, &always, &cooldown, &priority, &concurrency, &status, &health, &leaseCount, &created, &acquired, &used, &lastError, &errorAt, &hasKey, &versionID, &revision, &versionCreated, &config, &inflight, &groups); err != nil {
 			return nil, err
 		}
 		var mids, gids []any
@@ -183,8 +187,15 @@ func (b *backend) backendPoolMembers(r *http.Request) ([]any, error) {
 		// been written before the Go boundary existed, so sanitize defensively.
 		delete(cfg, "apiKey")
 		delete(cfg, "expectedCurrentVersionId")
+		poolAdapterDefaults(cfg)
+		delete(cfg, "imageSizeConfigId")
+		delete(cfg, "imageSizeConfigIdsByModel")
 		cfg["hasApiKey"] = hasKey
-		out = append(out, map[string]any{"id": id, "name": name, "type": "api", "groupIds": gids, "supportedModelIds": mids, "supportedResolutionsByModel": jsonValue(resolutions, map[string]any{}), "contentSafetyEnabled": safety, "isEnabled": enabled, "alwaysActive": always, "failureCooldownEnabled": cooldown, "priority": priority, "concurrency": concurrency, "status": status, "healthStatus": health, "inflightCount": 0, "leaseAcquiredCount": leaseCount, "createdAt": created.UTC().Format(time.RFC3339Nano), "lastAcquiredAt": timeValue(acquired), "lastUsedAt": timeValue(used), "lastError": lastError, "lastErrorAt": timeValue(errorAt), "credentialHealthStatus": nil, "config": cfg})
+		cfg["currentAdapterVersion"] = nil
+		if versionID != nil && versionCreated != nil {
+			cfg["currentAdapterVersion"] = map[string]any{"id": *versionID, "revision": revision, "createdAt": versionCreated.UTC().Format(time.RFC3339Nano)}
+		}
+		out = append(out, map[string]any{"id": id, "name": name, "type": "api", "groupIds": gids, "supportedModelIds": mids, "supportedResolutionsByModel": jsonValue(resolutions, map[string]any{}), "contentSafetyEnabled": safety, "isEnabled": enabled, "alwaysActive": always, "failureCooldownEnabled": cooldown, "priority": priority, "concurrency": concurrency, "status": status, "healthStatus": health, "inflightCount": inflight, "leaseAcquiredCount": leaseCount, "createdAt": created.UTC().Format(time.RFC3339Nano), "lastAcquiredAt": timeValue(acquired), "lastUsedAt": timeValue(used), "lastError": lastError, "lastErrorAt": timeValue(errorAt), "config": cfg})
 	}
 	return out, rows.Err()
 }
@@ -202,178 +213,6 @@ func timeValue(v *time.Time) any {
 	return v.UTC().Format(time.RFC3339Nano)
 }
 
-func (b *backend) backendPoolSaveGroup(w http.ResponseWriter, r *http.Request) error {
-	var in struct {
-		ID                           *string  `json:"id"`
-		Name                         string   `json:"name"`
-		Description                  *string  `json:"description"`
-		IsEnabled                    bool     `json:"isEnabled"`
-		IsDefault                    bool     `json:"isDefault"`
-		IsUserSelectable             bool     `json:"isUserSelectable"`
-		ContentSafety                string   `json:"contentSafety"`
-		ImageCreditOverrides         any      `json:"imageCreditOverrides"`
-		VideoCreditOverrides         any      `json:"videoCreditOverrides"`
-		VideoCreditsPerItemOverrides any      `json:"videoCreditsPerItemOverrides"`
-		ChildGroupIDs                []string `json:"childGroupIds"`
-		Priority                     int      `json:"priority"`
-	}
-	if err := decodeBody(r, &in); err != nil {
-		return err
-	}
-	if strings.TrimSpace(in.Name) == "" {
-		return invalid("分组名称不能为空")
-	}
-	id := newRequestID()
-	if in.ID != nil && strings.TrimSpace(*in.ID) != "" {
-		id = strings.TrimSpace(*in.ID)
-	}
-	meta, _ := json.Marshal(map[string]any{"imageCreditOverrides": in.ImageCreditOverrides, "videoCreditOverrides": in.VideoCreditOverrides, "videoCreditsPerItemOverrides": in.VideoCreditsPerItemOverrides, "childGroupIds": in.ChildGroupIDs})
-	var safety *bool
-	if in.ContentSafety == "enabled" {
-		v := true
-		safety = &v
-	} else if in.ContentSafety == "disabled" {
-		v := false
-		safety = &v
-	}
-	_, err := b.db.Exec(r.Context(), `INSERT INTO image_backend_group(id,name,description,is_enabled,is_default,is_user_selectable,content_safety_enabled,priority,metadata,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,is_enabled=EXCLUDED.is_enabled,is_default=EXCLUDED.is_default,is_user_selectable=EXCLUDED.is_user_selectable,content_safety_enabled=EXCLUDED.content_safety_enabled,priority=EXCLUDED.priority,metadata=EXCLUDED.metadata,updated_at=now()`, id, in.Name, in.Description, in.IsEnabled, in.IsDefault, in.IsUserSelectable, safety, in.Priority, meta)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id})
-	return nil
-}
-func (b *backend) backendPoolDeleteGroup(w http.ResponseWriter, r *http.Request) error {
-	id := strings.TrimPrefix(r.URL.Path, "/api/admin/image-backend/groups/")
-	if id == "" {
-		return invalid("分组 ID 无效")
-	}
-	var def bool
-	err := b.db.QueryRow(r.Context(), `SELECT is_default FROM image_backend_group WHERE id=$1`, id).Scan(&def)
-	if err == pgx.ErrNoRows {
-		return &apiError{404, "NOT_FOUND", "媒体后端分组不存在"}
-	}
-	if err != nil {
-		return err
-	}
-	if def {
-		return &apiError{409, "CONFLICT", "默认分组不能删除"}
-	}
-	var count int
-	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM image_backend_member_group WHERE group_id=$1`, id).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return &apiError{409, "CONFLICT", "分组仍被成员使用"}
-	}
-	tag, err := b.db.Exec(r.Context(), `DELETE FROM image_backend_group WHERE id=$1`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return &apiError{404, "NOT_FOUND", "媒体后端分组不存在"}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
-	return nil
-}
-func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) error {
-	var raw map[string]json.RawMessage
-	if err := decodeBody(r, &raw); err != nil {
-		return err
-	}
-	getS := func(k string) string { var v string; _ = json.Unmarshal(raw[k], &v); return strings.TrimSpace(v) }
-	getB := func(k string, d bool) bool {
-		var v bool
-		if json.Unmarshal(raw[k], &v) != nil {
-			return d
-		}
-		return v
-	}
-	getI := func(k string, d int) int {
-		var v int
-		if json.Unmarshal(raw[k], &v) != nil {
-			return d
-		}
-		return v
-	}
-	id := getS("id")
-	if id == "" {
-		id = newRequestID()
-	}
-	name := getS("name")
-	if name == "" {
-		return invalid("成员名称不能为空")
-	}
-	var models, resolutions []byte
-	models = raw["supportedModelIds"]
-	resolutions = raw["supportedResolutionsByModel"]
-	if len(models) == 0 {
-		models = []byte(`[]`)
-	}
-	if len(resolutions) == 0 {
-		resolutions = []byte(`{}`)
-	}
-	groups := raw["groupIds"]
-	if len(groups) == 0 {
-		groups = []byte(`[]`)
-	}
-	cfg := raw["config"]
-	var config map[string]any
-	_ = json.Unmarshal(cfg, &config)
-	if config == nil {
-		config = map[string]any{}
-	}
-	apiKey, _ := config["apiKey"].(string)
-	baseURL, _ := config["baseUrl"].(string)
-	credentialScope, _ := config["credentialScope"].(string)
-	if credentialScope == "" {
-		credentialScope = baseURL
-	}
-	if credentialScope == "" {
-		return invalid("API 成员缺少上游地址")
-	}
-	delete(config, "apiKey")
-	delete(config, "expectedCurrentVersionId")
-	configuration, err := json.Marshal(config)
-	if err != nil {
-		return invalid("API 成员配置无效")
-	}
-	tx, err := b.db.Begin(r.Context())
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member(id,type,name,supported_model_ids,supported_resolutions_by_model,content_safety_enabled,is_enabled,always_active,failure_cooldown_enabled,priority,concurrency,updated_at,created_at) VALUES($1,'api',$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,supported_model_ids=EXCLUDED.supported_model_ids,supported_resolutions_by_model=EXCLUDED.supported_resolutions_by_model,content_safety_enabled=EXCLUDED.content_safety_enabled,is_enabled=EXCLUDED.is_enabled,always_active=EXCLUDED.always_active,failure_cooldown_enabled=EXCLUDED.failure_cooldown_enabled,priority=EXCLUDED.priority,concurrency=EXCLUDED.concurrency,updated_at=now()`, id, name, models, resolutions, getB("contentSafetyEnabled", true), getB("isEnabled", true), getB("alwaysActive", false), getB("failureCooldownEnabled", false), getI("priority", 50), getI("concurrency", 10))
-	if err != nil {
-		return err
-	}
-	var previousRevision int
-	_ = tx.QueryRow(r.Context(), `SELECT COALESCE(v.revision,0) FROM image_backend_member_api_config a LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id WHERE a.member_id=$1`, id).Scan(&previousRevision)
-	versionID := newRequestID()
-	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_adapter_version(id,member_id_snapshot,revision,credential_scope,configuration,created_at) VALUES($1,$2,$3,$4,$5,now())`, versionID, id, previousRevision+1, credentialScope, configuration)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_config(member_id,api_key,current_adapter_version_id,credential_scope,created_at,updated_at) VALUES($1,$2,$3,$4,now(),now()) ON CONFLICT(member_id) DO UPDATE SET api_key=COALESCE(NULLIF(EXCLUDED.api_key,''),image_backend_member_api_config.api_key),current_adapter_version_id=EXCLUDED.current_adapter_version_id,credential_scope=EXCLUDED.credential_scope,updated_at=now()`, id, apiKey, versionID, credentialScope)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.Exec(r.Context(), `DELETE FROM image_backend_member_group WHERE member_id=$1`, id); err != nil {
-		return err
-	}
-	var gids []string
-	_ = json.Unmarshal(groups, &gids)
-	for _, gid := range gids {
-		if _, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_group(id,member_id,group_id,created_at) VALUES($1,$2,$3,now()) ON CONFLICT DO NOTHING`, newRequestID(), id, gid); err != nil {
-			return err
-		}
-	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id})
-	return nil
-}
 func (b *backend) backendPoolSetEnabled(w http.ResponseWriter, r *http.Request) error {
 	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/admin/image-backend/members/"), "/enabled")
 	var in struct {
@@ -409,21 +248,35 @@ func (b *backend) backendPoolDeleteMember(w http.ResponseWriter, r *http.Request
 	if id == "" {
 		return invalid("成员 ID 无效")
 	}
-	var n int
-	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM image_backend_member_lease WHERE member_id=$1 AND expires_at>now()`, id).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		return &apiError{409, "CONFLICT", "成员仍有运行中的租约"}
-	}
-	tag, err := b.db.Exec(r.Context(), `DELETE FROM image_backend_member WHERE id=$1`, id)
+	tx, err := b.db.Begin(r.Context())
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return &apiError{404, "NOT_FOUND", "媒体后端成员不存在"}
+	defer rollback(tx)
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock_shared(hashtextextended('pool-groups',0)),pg_advisory_xact_lock(hashtextextended($1,0))`, "pool-member:"+id); err != nil {
+		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	var locked string
+	if err = tx.QueryRow(r.Context(), `SELECT id FROM image_backend_member WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err != nil {
+		if err == pgx.ErrNoRows {
+			return &apiError{404, "NOT_FOUND", "媒体后端成员不存在"}
+		}
+		return err
+	}
+	var used bool
+	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM image_backend_member_lease WHERE member_id=$1 AND expires_at>now() UNION ALL SELECT 1 FROM generation WHERE status='pending' AND (api_adapter_member_id=$1 OR metadata->'billingSnapshot'->>'providerMemberId'=$1) UNION ALL SELECT 1 FROM video_generation WHERE api_adapter_member_id=$1 AND status NOT IN ('completed','failed'))`, id).Scan(&used); err != nil {
+		return err
+	}
+	if used {
+		return &apiError{409, "CONFLICT", "成员仍有未完成任务或运行租约"}
+	}
+	if _, err = tx.Exec(r.Context(), `DELETE FROM image_backend_member WHERE id=$1`, id); err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"success": true})
 	return nil
 }
 
@@ -490,7 +343,7 @@ func (b *backend) handleBackendPoolRead(w http.ResponseWriter, r *http.Request) 
 }
 
 func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.requireAdminViewer(r); err != nil {
+	if _, err := b.requireAdmin(r, false); err != nil {
 		return err
 	}
 	var in struct {
@@ -505,7 +358,7 @@ func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *htt
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	if strings.TrimSpace(in.Name) == "" || len(in.Mappings) == 0 {
+	if strings.TrimSpace(in.Name) == "" || len([]rune(in.Name)) > 120 || len(in.ID) > 128 || len(in.Mappings) == 0 || len(in.Mappings) > 500 {
 		return invalid("name and mappings are required")
 	}
 	id := strings.TrimSpace(in.ID)
@@ -517,6 +370,9 @@ func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *htt
 		return err
 	}
 	defer rollback(tx)
+	if err = lockPoolSizeBindings(r.Context(), tx); err != nil {
+		return err
+	}
 	_, err = tx.Exec(r.Context(), `INSERT INTO image_size_config(id,name,created_at,updated_at) VALUES($1,$2,now(),now()) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,updated_at=now()`, id, strings.TrimSpace(in.Name))
 	if err != nil {
 		return err
@@ -524,13 +380,26 @@ func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *htt
 	if _, err = tx.Exec(r.Context(), `DELETE FROM image_size_config_mapping WHERE config_id=$1`, id); err != nil {
 		return err
 	}
+	seen := map[string]bool{}
 	for _, m := range in.Mappings {
+		key := strings.ToLower(strings.TrimSpace(m.Resolution) + "|" + strings.TrimSpace(m.AspectRatio))
+		if seen[key] || len([]rune(m.Resolution)) > 64 || len([]rune(m.AspectRatio)) > 64 || len([]rune(m.Size)) > 64 {
+			return invalid("尺寸映射重复或超长")
+		}
+		seen[key] = true
 		if strings.TrimSpace(m.Resolution) == "" || strings.TrimSpace(m.AspectRatio) == "" || strings.TrimSpace(m.Size) == "" {
 			return invalid("mapping values are required")
 		}
 		if _, err = tx.Exec(r.Context(), `INSERT INTO image_size_config_mapping(id,config_id,resolution,aspect_ratio,size) VALUES($1,$2,$3,$4,$5)`, newRequestID(), id, strings.TrimSpace(m.Resolution), strings.TrimSpace(m.AspectRatio), strings.TrimSpace(m.Size)); err != nil {
 			return err
 		}
+	}
+	snapshot, err := readPoolSizeSnapshot(r.Context(), tx, id)
+	if err != nil {
+		return err
+	}
+	if err = refreshPoolSizeBindings(r.Context(), tx, id, snapshot); err != nil {
+		return err
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		return err
@@ -540,19 +409,33 @@ func (b *backend) handleBackendPoolSizeConfigWrite(w http.ResponseWriter, r *htt
 }
 
 func (b *backend) handleBackendPoolSizeConfigDelete(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.requireAdminViewer(r); err != nil {
+	if _, err := b.requireAdmin(r, false); err != nil {
 		return err
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		return invalid("id is required")
 	}
-	result, err := b.db.Exec(r.Context(), `DELETE FROM image_size_config WHERE id=$1`, id)
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if err = lockPoolSizeBindings(r.Context(), tx); err != nil {
+		return err
+	}
+	if err = refreshPoolSizeBindings(r.Context(), tx, id, nil); err != nil {
+		return err
+	}
+	result, err := tx.Exec(r.Context(), `DELETE FROM image_size_config WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() == 0 {
 		return &apiError{404, "NOT_FOUND", "尺寸配置不存在"}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 	return nil

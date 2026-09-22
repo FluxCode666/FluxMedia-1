@@ -2,11 +2,12 @@
  * 图片生成 UOL 的强类型 late binding。
  *
  * 职责：按 generate/edit/mask 联合契约取得用户准入、把编辑输入转成 storage-only
- * 清单并唯一委托 `runImageGenerationForUser`，身份只从 Principal 获取。
+ * 清单并委托 Go 持久任务，身份只从 Principal 获取。
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
 
 import type { GalleryListOutput } from "@repo/shared/image-generation/gallery-contract";
+import { randomUUID } from "node:crypto";
 import { galleryListOutputSchema } from "@repo/shared/image-generation/gallery-contract";
 import {
   assertImageMediaInputWithinPolicy,
@@ -15,6 +16,7 @@ import {
 import { logWarn } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
+  bindExecute,
   bindOperationExecute,
   createConcurrencyLimitExceededError,
   getPrincipalUserId,
@@ -29,7 +31,7 @@ import {
   imageMaintainHistoryCountProjection,
 } from "@repo/shared/uol/operations/image-generation";
 
-import type { stageImageInputReferences } from "@/features/image-generation/image-input-storage";
+import type { cleanupStagedImageInputs, stageImageInputReferences } from "@/features/image-generation/image-input-storage";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
 import type {
   RedisImageGenerationAdmissionAcquisition,
@@ -51,28 +53,44 @@ type ImageGenerateOutput = ImageGenerateOperationOutput;
 
 /** 图片 binding 可替换依赖；测试注入桩，生产动态加载真实媒体服务。 */
 export interface ImageGenerationBindingDependencies {
-  stageImageInputReferences: typeof stageImageInputReferences;
+  stageImageInputReferences: (input: Parameters<typeof stageImageInputReferences>[0] & { apiKeyId?: string }) => ReturnType<typeof stageImageInputReferences>;
+  cleanupStagedImageInputs?: (objects: Parameters<typeof cleanupStagedImageInputs>[0], principal?: Principal) => Promise<void>;
   runImageGenerationForUser: typeof runImageGenerationForUser;
-  getMediaLimitsForUser: (userId: string) => Promise<
+  getMediaLimitsForUser: (userId: string, principal?: Principal) => Promise<
     {
       limit: number;
       effectiveSource: "system_default" | "user_override";
     } & MediaInputPolicy
   >;
-  acquireImageGenerationAdmission: (input: {
+  acquireImageGenerationAdmission?: (input: {
     userId: string;
     userConcurrency: number;
   }) => Promise<RedisImageGenerationAdmissionAcquisition>;
-  releaseImageGenerationAdmission: (
+  releaseImageGenerationAdmission?: (
     lease: RedisImageGenerationAdmissionLease
   ) => Promise<void>;
 }
 
 const defaultDependencies: ImageGenerationBindingDependencies = {
   async stageImageInputReferences(input) {
-    return (
-      await import("@/features/image-generation/image-input-storage")
-    ).stageImageInputReferences(input);
+    const { apiKeyId, ...body } = input;
+    const init = { method: "POST", body: JSON.stringify(body) };
+    return apiKeyId
+      ? requestGoJsonForPrincipal<Awaited<ReturnType<typeof stageImageInputReferences>>>(
+          { type: "apiKey", credentialKind: "external", userId: input.userId, apiKeyId },
+          "/api/image-generation/inputs/stage", init
+        )
+      : requestGoJson<Awaited<ReturnType<typeof stageImageInputReferences>>>(
+          "/api/image-generation/inputs/stage", init
+        );
+  },
+  async cleanupStagedImageInputs(objects, principal) {
+    const init = { method: "POST", body: JSON.stringify({ objects }) };
+    if (principal?.type === "apiKey") {
+      await requestGoJsonForPrincipal(principal, "/api/image-generation/inputs/cleanup", init);
+    } else {
+      await requestGoJson("/api/image-generation/inputs/cleanup", init);
+    }
   },
   async runImageGenerationForUser(input, _callbacks) {
     void _callbacks;
@@ -146,26 +164,20 @@ const defaultDependencies: ImageGenerationBindingDependencies = {
       model: typeof status.model === "string" ? status.model : input.model,
       imageUrl: typeof status.imageUrl === "string" ? status.imageUrl : undefined,
       imageOutputs,
-      error: status.status === "failed" ? String((status.error as Record<string, unknown> | undefined)?.message ?? status.error ?? "Image generation failed") : undefined,
+      creditsConsumed: typeof status.creditsConsumed === "number" ? status.creditsConsumed : undefined,
+      size: typeof status.size === "string" ? status.size : undefined,
+      revisedPrompt: typeof status.revisedPrompt === "string" ? status.revisedPrompt : undefined,
+      promptRepairNotice: typeof status.promptRepairNotice === "string" ? status.promptRepairNotice : undefined,
+      error: status.status !== "completed" && status.status !== "failed"
+        ? "图片任务仍在处理中，请稍后在使用记录中查看结果"
+        : status.status === "failed" ? String((status.error as Record<string, unknown> | undefined)?.message ?? status.error ?? "Image generation failed") : undefined,
     } as Awaited<ReturnType<typeof runImageGenerationForUser>>;
   },
-  async getMediaLimitsForUser(userId) {
-    const { mediaLimitService } = await import(
-      "@repo/shared/image-generation/media-limit-service"
-    );
-    return mediaLimitService.getForUser(userId);
-  },
-  async acquireImageGenerationAdmission(input) {
-    const { acquireImageGenerationAdmission } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return acquireImageGenerationAdmission(input);
-  },
-  async releaseImageGenerationAdmission(lease) {
-    const { releaseImageGenerationAdmission } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return releaseImageGenerationAdmission(lease);
+  async getMediaLimitsForUser(userId, principal) {
+    const path = `/api/image-generation/media-limits?userId=${encodeURIComponent(userId)}`;
+    return principal?.type === "apiKey"
+      ? requestGoJsonForPrincipal<Awaited<ReturnType<ImageGenerationBindingDependencies["getMediaLimitsForUser"]>>>(principal, path)
+      : requestGoJson<Awaited<ReturnType<ImageGenerationBindingDependencies["getMediaLimitsForUser"]>>>(path);
   },
 };
 
@@ -175,7 +187,7 @@ async function releaseAdmissionSafely(
   lease: RedisImageGenerationAdmissionLease
 ): Promise<void> {
   try {
-    await dependencies.releaseImageGenerationAdmission(lease);
+    await dependencies.releaseImageGenerationAdmission?.(lease);
   } catch (error) {
     logWarn("图片 UOL binding 释放用户准入槽失败，等待 TTL 自动回收", {
       errorName: error instanceof Error ? error.name : "UnknownError",
@@ -273,7 +285,7 @@ export async function executeImageGenerateBinding(
   const apiKeyId = isExternalApiKeyPrincipal(principal)
     ? principal.apiKeyId
     : undefined;
-  const mediaLimits = await dependencies.getMediaLimitsForUser(userId);
+  const mediaLimits = await dependencies.getMediaLimitsForUser(userId, principal);
   try {
     assertImageMediaInputWithinPolicy(input, mediaLimits);
   } catch (error) {
@@ -281,22 +293,22 @@ export async function executeImageGenerateBinding(
     if (operationError) throw operationError;
     throw error;
   }
-  const admission = await dependencies.acquireImageGenerationAdmission({
+  const admission = await dependencies.acquireImageGenerationAdmission?.({
     userId,
     userConcurrency: mediaLimits.limit,
   });
-  if (admission.status === "blocked") {
+  if (admission?.status === "blocked") {
     throw createConcurrencyLimitExceededError({
       limit: mediaLimits.limit,
       effectiveSource: mediaLimits.effectiveSource,
     });
   }
-  const admissionAuthorization = {
+  const admissionAuthorization = admission ? {
     userId,
     lease: admission.lease,
     limit: mediaLimits.limit,
     effectiveSource: mediaLimits.effectiveSource,
-  };
+  } : undefined;
   const common = {
     userId,
     ...(apiKeyId ? { apiKeyId } : {}),
@@ -322,6 +334,7 @@ export async function executeImageGenerateBinding(
     admissionAuthorization,
   };
   const callbacks = getImageGenerationCallbacks(ctx);
+  let stagedObjects: Parameters<typeof cleanupStagedImageInputs>[0] = [];
   try {
     if (input.operation === "generate") {
       return toImageGenerateOutput(
@@ -335,17 +348,15 @@ export async function executeImageGenerateBinding(
 
     const references =
       input.operation === "mask" ? [...input.images, input.mask] : input.images;
-    // UOL callers already provide durable storage references. Re-hosting them
-    // through the legacy Next storage service would reintroduce a second write
-    // path after generation moved to Go. Data/blob references remain supported
-    // by the injected compatibility dependency for older tests/callers.
-    const staged = references.every((reference) => reference.source === "storage")
-      ? { references, objects: [] }
-      : await dependencies.stageImageInputReferences({
-          userId,
-          generationId: input.generationId,
-          references,
-        });
+    // Go validates ownership, bytes and limits for every reference, including
+    // existing storage objects, before accepting a durable task.
+    const staged = await dependencies.stageImageInputReferences({
+      userId,
+      ...(apiKeyId ? { apiKeyId } : {}),
+      generationId: input.generationId,
+      references,
+    });
+    stagedObjects = staged.objects;
     const imageCount = input.images.length;
     const images = staged.references.slice(0, imageCount);
     const mask =
@@ -368,8 +379,15 @@ export async function executeImageGenerateBinding(
         callbacks
       )
     );
+  } catch (error) {
+    if (stagedObjects.length && dependencies.cleanupStagedImageInputs) {
+      await dependencies.cleanupStagedImageInputs(stagedObjects, principal).catch(() => {
+        logWarn("图片输入清理失败，等待存储回收", { userId });
+      });
+    }
+    throw error;
   } finally {
-    await releaseAdmissionSafely(dependencies, admission.lease);
+    if (admission) await releaseAdmissionSafely(dependencies, admission.lease);
   }
 }
 
@@ -404,4 +422,91 @@ bindOperationExecute(
     );
     return galleryListOutputSchema.parse(output);
   }
+);
+
+// Compatibility operations that predate the unified history contract still
+// remain callable by MCP/internal UOL clients.  They all use the Go-owned
+// first-party read endpoints so invoking the legacy operation name cannot
+// fall through to the shared database stub.
+function requireImagePrincipal(principal: Principal): void {
+  if (principal.type !== "user" && !isExternalApiKeyPrincipal(principal)) {
+    throw new OperationError("unauthenticated", "User identity required");
+  }
+}
+
+async function imageReadRequest<T>(
+  principal: Principal,
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  requireImagePrincipal(principal);
+  return principal.type === "apiKey"
+    ? requestGoJsonForPrincipal(principal, path, init)
+    : requestGoJson(path, init);
+}
+
+bindExecute("image.generateAction", async (input: { prompt: string; model: string; quality?: string; style?: string }, principal, ctx) => {
+  const result = await executeImageGenerateBinding(
+    { operation: "generate", ...input, generationId: randomUUID() } as ImageGenerateInput,
+    principal,
+    ctx
+  );
+  const first = result.images[0];
+  if (!first?.url) throw new OperationError("upstream_error", "Image generation returned no image");
+  return { generationId: result.generationId, imageUrl: first.url, ...(first.revisedPrompt ? { revisedPrompt: first.revisedPrompt } : {}) };
+});
+
+bindExecute("image.getStatus", async (input: { generationId: string }, principal) => {
+  const raw = await imageReadRequest<Record<string, unknown>>(
+    principal,
+    `/api/images/status/${encodeURIComponent(input.generationId)}`
+  );
+  const status = String(raw.status ?? "processing");
+  return {
+    generationId: String(raw.generationId ?? raw.generation_id ?? input.generationId),
+    status: (status === "pending" ? "pending" : status === "completed" ? "completed" : status === "failed" ? "failed" : "processing") as "pending" | "processing" | "completed" | "failed",
+    ...(typeof raw.progress === "number" ? { progress: raw.progress } : {}),
+    ...(typeof raw.error === "string" ? { error: raw.error } : raw.error && typeof raw.error === "object" && typeof (raw.error as Record<string, unknown>).message === "string" ? { error: String((raw.error as Record<string, unknown>).message) } : {}),
+    ...(typeof raw.completedAt === "string" ? { completedAt: raw.completedAt } : typeof raw.completed_at === "string" ? { completedAt: raw.completed_at } : {}),
+  };
+});
+
+bindExecute("image.getUserGenerations", async (input: { userId?: string; page?: number; pageSize?: number; status?: string }, principal) => {
+  const page = Math.max(1, Number(input.page ?? 1));
+  const pageSize = Math.min(100, Math.max(1, Number(input.pageSize ?? 20)));
+  const offset = (page - 1) * pageSize;
+  const query = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+  if (input.status) query.set("status", input.status);
+  const [rows, count] = await Promise.all([
+    imageReadRequest<unknown[]>(principal, `/api/image-generation/list?${query}`),
+    imageReadRequest<{ count: number }>(principal, `/api/image-generation/count${input.status ? `?status=${encodeURIComponent(input.status)}` : ""}`),
+  ]);
+  return { generations: rows, total: Number(count.count ?? rows.length), page, pageSize };
+});
+
+bindExecute("image.getUserGenerationCount", async (_input: { userId?: string }, principal) =>
+  imageReadRequest<{ count: number }>(principal, "/api/image-generation/count")
+);
+
+bindExecute("image.getUserRecentGenerations", async (input: { userId?: string; limit?: number }, principal) => ({
+  generations: await imageReadRequest<unknown[]>(principal, `/api/image-generation/recent?limit=${Math.min(50, Math.max(1, Number(input.limit ?? 12)))}`),
+}));
+
+bindExecute("image.getGenerationById", async (input: { generationId: string }, principal) =>
+  imageReadRequest(principal, `/api/image-generation/${encodeURIComponent(input.generationId)}`)
+);
+
+bindExecute("image.getGenerationStats", async (input: { startDate?: string; endDate?: string; groupBy?: "day" | "week" | "month" }, principal) => {
+  const query = new URLSearchParams();
+  if (input.startDate) query.set("startDate", input.startDate);
+  if (input.endDate) query.set("endDate", input.endDate);
+  if (input.groupBy) query.set("groupBy", input.groupBy);
+  return imageReadRequest(principal, `/api/admin/image-generation/stats?${query}`);
+});
+
+bindExecute("image.getEffectiveConfig", async (input: { userId?: string; model?: string; backendGroupId?: string }, principal) =>
+  imageReadRequest(principal, "/api/image-generation/effective-config", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
 );

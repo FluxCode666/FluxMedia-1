@@ -78,7 +78,8 @@ func authRequest(t *testing.T, b *backend, method, path, body string, cookies ..
 	t.Helper()
 	r := httptest.NewRequest(method, "http://localhost:3000"+path, strings.NewReader(body))
 	// Each test request represents a distinct trusted connection for limiter isolation.
-	r.RemoteAddr = fmt.Sprintf("127.0.0.%d:1234", time.Now().UnixNano()%250+1)
+	requestIP := newRequestID()
+	r.RemoteAddr = fmt.Sprintf("[fd00:%s:%s:%s::1]:1234", requestIP[:4], requestIP[4:8], requestIP[8:12])
 	r.Header.Set("Content-Type", "application/json")
 	for _, cookie := range cookies {
 		r.AddCookie(cookie)

@@ -126,12 +126,22 @@ function runDevelopmentServices() {
     ...process.env,
     GO_SCRIPT_RUNTIME_URL:
       process.env.GO_SCRIPT_RUNTIME_URL || "http://127.0.0.1:8090",
+    SCRIPT_RUNTIME_TOKEN: process.env.GO_SCRIPT_RUNTIME_TOKEN || "",
+    GO_MEDIA_PROCESSING_URL: process.env.GO_MEDIA_PROCESSING_URL || "http://127.0.0.1:8091",
+    MEDIA_PROCESSING_TOKEN: process.env.GO_MEDIA_PROCESSING_TOKEN || "",
   };
   startChild(
     "API 上游脚本运行时",
     "pnpm",
     ["start"],
     resolve(projectRoot, "services/api-upstream-script-runtime"),
+    environment
+  );
+  startChild(
+    "图像后处理运行时",
+    "pnpm",
+    ["start"],
+    resolve(projectRoot, "services/media-processing-runtime"),
     environment
   );
   // The web app now calls first-party APIs on the Go backend directly. Start

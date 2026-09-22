@@ -2,7 +2,7 @@
  * API 类型账号上游适配的站内管理员文档。
  *
  * 使用方：管理员系统文档页。内容覆盖六操作、脚本输入输出、资源限制、
- * 容量估算与图片异步跨重启边界，并与账号池生产契约保持一致。
+ * 容量估算与 Go 持久图片任务恢复，并与账号池生产契约保持一致。
  */
 
 import { Badge } from "@repo/ui/components/badge";
@@ -59,8 +59,8 @@ return {
 };`;
 
 const localLogQuery = `docker compose -f deploy/docker-compose.yml logs \\
-  --no-color --no-log-prefix -f web \\
-  | jq -c 'select(.event == "api_upstream_script_failed")'`;
+  --no-color --no-log-prefix -f backend \\
+  | jq -c 'select(.msg == "backend operation failed")'`;
 
 const localizedContent = {
   zh: {
@@ -85,9 +85,9 @@ const localizedContent = {
       "视频协议模式由管理员按成员显式选择：Gemini 与 Seedance 使用内置适配，custom 保留现有脚本或无脚本内置路径；历史缺失模式的成员按 custom 处理。",
       "首尾帧与参考图对所有模型互斥；媒体令牌只能移动一次，不能删除、复制、伪造或截断。Seedance 参考图默认上限 10，管理员可调整且适配器没有硬上限。",
       "查询路径固定由管理员配置，系统不会采用响应中的 poll_url 或 status_url。",
-      "图片供应商异步任务只在当前 Node 进程内尽力轮询。进程崩溃后不会恢复远端图片任务；供应商不支持幂等键时，客户端重试可能产生孤儿任务、重复生成和额外供应商费用。",
-      "供应商接受异步图片任务时会输出 api_upstream_image_task_orphan_risk 脱敏事件；它用于发布和重启前统计风险窗口，不表示任务已经失败。",
-      "脚本失败只向用户展示 apiu_ 请求标识和联系管理员文案；日志不得包含密钥、脚本、Prompt、媒体或上游正文。",
+      "Go 持久保存图片任务、供应商任务 ID、原账号和适配版本。进程崩溃后，Worker 接管租约并继续查询已接受的任务；不会因重启改用另一个账号重新生成。",
+      "若供应商已接受请求但连接在任务 ID 保存前中断，且供应商没有幂等保证，仍可能出现结果不确定的孤儿任务。应对照持久提交状态排查，避免盲目重提。",
+      "脚本测试由 Go 管理员接口调用私有运行时，失败返回 SCRIPT_EXECUTION_FAILED；生产任务错误可结合任务 ID 排查。日志不得包含密钥、脚本、Prompt、媒体或上游正文。",
     ],
     failureTitle: "响应、轮询与失败处理",
     failureItems: [
@@ -95,17 +95,17 @@ const localizedContent = {
       "pollAfterSeconds 只允许用于非终态，必须是 1-300 的整数，表示平台最早再次查询的提示而非下游硬限制。若 Retry-After 更长则采用较长值；终态携带该字段会被拒绝。",
       "failed.error 必须包含 category 和稳定的小写 code，可选 adminDetails 最多 1,024 字符、retryable 仅用于允许安全重试的生成失败；查询失败禁止 retryable: true。",
       "请求脚本在外呼前失败时可换账号；请求发出后不得换号重提。任务已受理后固定原账号和适配版本，查询适配连续失败 3 次才终止；platform_busy 与 transport_failed 不计入该阈值。",
-      "Worker Pool 饱和返回平台繁忙和至少 1 秒重试提示，不处罚供应商账号健康。",
+      "运行时 HTTP 429、5xx 或连接失败视为平台暂不可用；已接受的任务等待恢复，不计入供应商脚本错误次数。",
     ],
     observabilityTitle: "结构化日志与通用监控",
     observabilityItems: [
-      "api_upstream_script_failed 包含 operation、stage、code、requestSent、retryAction、memberId、groupId、platformModelId、requestId 和 taskSummary；用 requestId 关联用户提供的 apiu_ 标识。",
-      "api_upstream_script_runtime_saturated 包含 reason、state、queuedRequests、queuedResponses 和 activeResponsePermits；持续出现时应告警。",
-      "api_upstream_image_task_orphan_risk 表示异步图片任务已跨过不可安全重投边界，不表示任务失败；发布或重启前应统计活跃风险窗口。",
-      "Pino JSON 从容器标准输出采集，按 event 建规则，再按 operation、stage、code、requestSent 聚合。Datadog、Loki、OpenSearch、Vector 或 Fluent Bit 都可消费同一字段契约。",
-      "日志禁止记录 API Key、认证 Header、脚本、请求或响应正文、Prompt、媒体、完整 URL、堆栈和供应商原始 task ID。",
+      "Go 从容器标准输出写出 JSON 日志。HTTP 错误包含 request_id 和 error_code；按请求 ID、任务 ID 关联管理员使用记录与任务详情。",
+      "脚本测试接口 POST /api/admin/image-backend/script-runtime/test 仅管理员可用；使用样例检查请求与响应适配。",
+      "GET /api/admin/image-backend/script-runtime/diagnostics 返回私有运行时实时快照：lifecycle、workerCount、liveWorkerCount、requestQueueLength、responseQueueLength、responsePermitsInUse、responsePermitCapacity、saturationCount 和 replacementCount。运行时不可达时返回错误，不以全零计数伪装正常状态。",
+      "Datadog、Loki、OpenSearch、Vector 或 Fluent Bit 可采集 backend 与 script-runtime 容器日志；健康检查和持久任务状态应一起监控。",
+      "日志禁止记录 API Key、认证 Header、脚本、请求或响应正文、Prompt、媒体、完整 URL 和供应商原始 task ID。",
     ],
-    localLogQueryTitle: "本地查看脚本失败日志",
+    localLogQueryTitle: "本地查看 Go 请求失败日志",
     capacityTitle: "资源限制与理论容量",
     capacityDescription:
       "每个 Worker 同时只运行一个脚本。50 ms 是执行上限而非平均耗时；若一次 HTTP 同时使用请求和响应脚本，理论周期吞吐约为 Worker 数 × 10 次/秒。实际 QPS 还受脚本耗时、序列化、上游延迟、账号并发和容器内存限制。",
@@ -145,9 +145,9 @@ const localizedContent = {
       "Admins choose the video protocol per member: Gemini and Seedance use built-in adapters, while custom preserves existing scripts or built-in no-script paths. Legacy snapshots without a mode use custom.",
       "First/last frames and reference images are mutually exclusive for every model. Media tokens may only be moved once. Seedance defaults to 10 reference images; admins may change it and the adapter adds no hard cap.",
       "Query paths are fixed by administrators; poll_url and status_url from responses are ignored.",
-      "Async image supplier tasks are polled on a best-effort basis inside the current Node process. A process crash does not recover the remote task; without supplier idempotency, client retries may create orphan tasks, duplicate generations, and extra supplier charges.",
-      "When a supplier accepts an async image task, FluxMedia emits the redacted api_upstream_image_task_orphan_risk event. Use it to assess deployment or restart risk windows; it does not mean the task has failed.",
-      "Script failures expose only an apiu_ request identifier and contact-admin message. Logs never include credentials, scripts, prompts, media, or upstream bodies.",
+      "Go persists image tasks, provider task IDs, original accounts, and adapter versions. After a process crash, a worker acquires the lease and resumes queries for accepted tasks; a restart does not regenerate through another account.",
+      "If a provider accepts a request but the connection fails before its task ID is saved, providers without idempotency guarantees may still leave orphan tasks with uncertain results. Inspect persistent submission state before resubmitting.",
+      "The Go administrator script-test endpoint invokes the private runtime and reports SCRIPT_EXECUTION_FAILED on failure. Correlate production failures with task IDs. Logs must exclude credentials, scripts, prompts, media, and upstream bodies.",
     ],
     failureTitle: "Responses, polling, and failure handling",
     failureItems: [
@@ -155,17 +155,17 @@ const localizedContent = {
       "pollAfterSeconds is valid only for non-terminal states and must be an integer from 1 to 300. It is an earliest-poll hint, not a downstream hard limit. A longer Retry-After wins; terminal results carrying this field are rejected.",
       "failed.error requires category and a stable lowercase code. adminDetails is optional and limited to 1,024 characters; retryable is only for generation failures that are safe to retry. Query failures forbid retryable: true.",
       "A request-script failure before the upstream call may switch accounts; after the request is sent, the generation must not be resubmitted through another account. Accepted tasks stay pinned to the original account and adapter version. Three consecutive query adaptation failures terminate the task; platform_busy and transport_failed do not count toward that threshold.",
-      "Worker Pool saturation returns a platform-busy response with at least a one-second retry hint and does not penalize supplier account health.",
+      "Runtime HTTP 429, 5xx, or connection failures indicate temporary platform unavailability. Accepted tasks wait for recovery without consuming their provider script-failure budget.",
     ],
     observabilityTitle: "Structured logs and vendor-neutral monitoring",
     observabilityItems: [
-      "api_upstream_script_failed includes operation, stage, code, requestSent, retryAction, memberId, groupId, platformModelId, requestId, and taskSummary. Use requestId to correlate an apiu_ identifier reported by a user.",
-      "api_upstream_script_runtime_saturated includes reason, state, queuedRequests, queuedResponses, and activeResponsePermits. Alert when saturation persists.",
-      "api_upstream_image_task_orphan_risk means an async image task crossed the unsafe-resubmit boundary; it does not mean failure. Measure active risk windows before deployments or restarts.",
-      "Collect Pino JSON from container stdout, route by event, and aggregate by operation, stage, code, and requestSent. Datadog, Loki, OpenSearch, Vector, or Fluent Bit can consume the same contract.",
-      "Logs must never include API keys, authentication headers, scripts, request or response bodies, prompts, media, full URLs, stacks, or raw supplier task IDs.",
+      "Go emits JSON logs to container stdout. HTTP errors include request_id and error_code; correlate request and task IDs with administrator usage records and task details.",
+      "POST /api/admin/image-backend/script-runtime/test is administrator-only. Use samples to check request and response adapters.",
+      "GET /api/admin/image-backend/script-runtime/diagnostics returns a live private-runtime snapshot: lifecycle, workerCount, liveWorkerCount, requestQueueLength, responseQueueLength, responsePermitsInUse, responsePermitCapacity, saturationCount, and replacementCount. An unreachable runtime returns an error instead of healthy-looking zero counters.",
+      "Datadog, Loki, OpenSearch, Vector, or Fluent Bit can collect backend and script-runtime container logs. Monitor health checks together with persistent task status.",
+      "Logs must exclude API keys, authentication headers, scripts, request and response bodies, prompts, media, full URLs, and raw provider task IDs.",
     ],
-    localLogQueryTitle: "Inspect script failures locally",
+    localLogQueryTitle: "Inspect Go request failures locally",
     capacityTitle: "Resource limits and theoretical capacity",
     capacityDescription:
       "Each Worker runs one script at a time. The 50 ms limit is a ceiling, not average latency. When an HTTP call uses both request and response scripts, theoretical cycle throughput is about worker count × 10 per second. Actual QPS also depends on script time, serialization, upstream latency, account concurrency, and container memory.",

@@ -32,7 +32,6 @@ const FORBIDDEN_EXTENSION_NAMES = [
   "blockRepair",
   "repair_prompt",
   "repairPrompt",
-  "async",
   "promptOptimization",
   "prompt_optimization",
   "promptRepair",
@@ -408,6 +407,8 @@ describe("API integration docs data", () => {
       output_compression: "未指定（上游决定）",
       background: "未指定（上游决定）",
       stream: "false",
+      async: "false",
+      callback_url: "无",
     };
 
     expect(generationDefaults).toEqual(commonDefaults);
@@ -421,6 +422,27 @@ describe("API integration docs data", () => {
     expect(edit?.parameters.map((parameter) => parameter.name)).not.toContain(
       "n"
     );
+  });
+
+  it.each([
+    "zh",
+    "en",
+  ])("%s documents async image generation and editing", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    for (const endpointId of ["image-generations", "image-edits"] as const) {
+      const endpoint = content.endpoints.find(
+        (candidate) => candidate.id === endpointId
+      );
+      expect(endpoint?.parameters.map((parameter) => parameter.name)).toEqual(
+        expect.arrayContaining(["async", "callback_url"])
+      );
+      expect(endpoint?.requestExample).toMatch(/"async": true|async=true/);
+      const endpointText = JSON.stringify(endpoint);
+      expect(endpointText).toContain("GET /v1/images/{task_id}");
+      expect(endpointText).toContain("processing");
+      expect(endpointText).toContain("completed");
+      expect(endpointText).toContain("failed");
+    }
   });
 
   it("说明 output_compression 的用途与生效范围", () => {

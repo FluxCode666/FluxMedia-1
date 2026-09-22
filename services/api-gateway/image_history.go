@@ -5,6 +5,7 @@ package main
 // session and querying PostgreSQL directly.
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,6 +24,7 @@ import (
 )
 
 func (b *backend) registerImageHistoryRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/image-generation/effective-config", b.endpoint(b.handleImageEffectiveConfig))
 	mux.HandleFunc("GET /api/image-generation/recent", b.endpoint(b.handleRecentGenerations))
 	mux.HandleFunc("GET /api/image-generation/{id}", b.endpoint(b.handleGenerationByID))
 	mux.HandleFunc("GET /api/image-generation/list", b.endpoint(b.handleGenerationList))
@@ -31,9 +33,9 @@ func (b *backend) registerImageHistoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/image-generation/batch-delete", b.endpoint(b.handleGenerationBatchDelete))
 	mux.HandleFunc("POST /api/image-generation/gallery", b.endpoint(b.handleGallery))
 	mux.HandleFunc("GET /api/image-generation/media-limits", b.endpoint(b.handleMediaLimits))
-	mux.HandleFunc("POST /api/image-generation/history", b.endpoint(b.handleHistory))
+	mux.HandleFunc("POST /api/image-generation/history", b.endpoint(b.handleHistoryMigrated))
 	mux.HandleFunc("POST /api/image-generation/video-inputs", b.endpoint(b.handleVideoInputs))
-	mux.HandleFunc("POST /api/admin/image-generation/history", b.endpoint(b.handleAdminHistory))
+	mux.HandleFunc("POST /api/admin/image-generation/history", b.endpoint(b.handleAdminHistoryMigrated))
 	mux.HandleFunc("POST /api/admin/image-generation/request-snapshot", b.endpoint(b.handleAdminRequestSnapshot))
 	mux.HandleFunc("POST /api/admin/image-generation/history-projection", b.endpoint(b.handleHistoryCountProjection))
 	mux.HandleFunc("GET /api/admin/image-generation/stats", b.endpoint(b.handleGenerationStats))
@@ -103,7 +105,7 @@ func generationURL(key, bucket *string) *string {
 	if bucket != nil && *bucket != "" {
 		b = *bucket
 	}
-	u := "/api/storage/" + b + "/" + *key
+	u := "/api/storage/" + urlPathEscape(b) + "/" + urlPathEscape(*key)
 	// Storage routes require HMAC signatures for private buckets. Keep the URL
 	// usable by the browser and thumbnail loader while preserving public bucket
 	// paths when no signing secret is configured in a test process.
@@ -262,6 +264,9 @@ func galleryReferenceImages(value any) []any {
 				copy[key] = item
 			}
 		}
+		if imageURL := galleryImageURL(image); imageURL != nil {
+			copy["imageUrl"] = *imageURL
+		}
 		result = append(result, copy)
 	}
 	return result
@@ -286,15 +291,17 @@ func imageString(image map[string]any, key, fallback string) string {
 }
 
 func galleryImageURL(image map[string]any) *string {
-	if url, ok := image["imageUrl"].(string); ok && strings.TrimSpace(url) != "" {
-		return &url
-	}
 	key, keyOK := image["storageKey"].(string)
 	bucket, bucketOK := image["storageBucket"].(string)
-	if !keyOK || !bucketOK || key == "" || bucket == "" {
-		return nil
+	// Metadata outlives signed read URLs. Reissue the URL from the durable
+	// object identity so both uploads and reference previews remain readable.
+	if keyOK && bucketOK && key != "" && bucket != "" {
+		return generationURL(&key, &bucket)
 	}
-	return generationURL(&key, &bucket)
+	if imageURL, ok := image["imageUrl"].(string); ok && strings.TrimSpace(imageURL) != "" {
+		return &imageURL
+	}
+	return nil
 }
 
 func galleryUploadCursorParts(id string) (string, int) {
@@ -379,11 +386,11 @@ func (b *backend) handleGenerationDelete(w http.ResponseWriter, r *http.Request)
 	if strings.TrimSpace(in.GenerationID) == "" {
 		return invalid("generationId required")
 	}
-	tag, e := b.db.Exec(r.Context(), `UPDATE generation SET storage_key=NULL,file_size=NULL WHERE id=$1 AND user_id=$2`, in.GenerationID, s.User.ID)
+	n, e := b.deleteGenerationMedia(r.Context(), s.User.ID, []string{in.GenerationID})
 	if e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"success": tag.RowsAffected() > 0, "deletedCount": tag.RowsAffected()})
+	writeJSON(w, 200, map[string]any{"success": n > 0, "deletedCount": n})
 	return nil
 }
 func (b *backend) handleGenerationBatchDelete(w http.ResponseWriter, r *http.Request) error {
@@ -400,16 +407,29 @@ func (b *backend) handleGenerationBatchDelete(w http.ResponseWriter, r *http.Req
 	if len(in.GenerationIDs) == 0 || len(in.GenerationIDs) > 100 {
 		return invalid("generationIds must contain 1-100 ids")
 	}
-	var n int64
-	for _, id := range in.GenerationIDs {
-		tag, err := b.db.Exec(r.Context(), `UPDATE generation SET storage_key=NULL,file_size=NULL WHERE id=$1 AND user_id=$2`, id, s.User.ID)
-		if err != nil {
-			return err
-		}
-		n += tag.RowsAffected()
+	n, e := b.deleteGenerationMedia(r.Context(), s.User.ID, in.GenerationIDs)
+	if e != nil {
+		return e
 	}
 	writeJSON(w, 200, map[string]any{"success": true, "deletedCount": n})
 	return nil
+}
+
+// deleteGenerationMedia mirrors the user deletion semantics from the former
+// Next service: hide the owned rows, remove unshared objects, and retain a
+// small tombstone in metadata for retention/audit consumers.
+func (b *backend) deleteGenerationMedia(ctx context.Context, userID string, ids []string) (int64, error) {
+	var count int64
+	for _, id := range ids {
+		_, changed, err := b.purgeGenerationPhotos(ctx, userID, id, "user_deleted", 0, 0, time.Now().UTC())
+		if err != nil {
+			return count, err
+		}
+		if changed {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (b *backend) handleGallery(w http.ResponseWriter, r *http.Request) error {
@@ -550,31 +570,81 @@ func (b *backend) handleGallery(w http.ResponseWriter, r *http.Request) error {
 // handleMediaLimits exposes the user-facing system media policy through the Go
 // session boundary so dashboard pages do not read runtime settings in Next.js.
 func (b *backend) handleMediaLimits(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.requireSession(r); err != nil {
-		return err
+	targetID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	var session *sessionResponse
+	var err error
+	if !b.cronAuthorized(r) {
+		session, err = b.requireSession(r)
+		if err != nil {
+			return err
+		}
+		if targetID == "" {
+			targetID = session.User.ID
+		}
+		if targetID != session.User.ID {
+			if session.User.Role != "observer_admin" && session.User.Role != "admin" && session.User.Role != "super_admin" && session.User.Role != "owner" {
+				return forbidden()
+			}
+		}
+	} else if targetID == "" {
+		return invalid("userId is required")
 	}
-	value, err := b.setting(r.Context(), "IMAGE_EDIT_MAX_REFERENCE_IMAGES", 16)
+	parseSetting := func(key string, fallback, max int) (int, error) {
+		value, e := b.setting(r.Context(), key, fallback)
+		if e != nil {
+			return 0, e
+		}
+		n := fallback
+		switch v := value.(type) {
+		case float64:
+			n = int(v)
+		case int:
+			n = v
+		case string:
+			if parsed, pe := strconv.Atoi(strings.TrimSpace(v)); pe == nil {
+				n = parsed
+			}
+		}
+		if n < 1 {
+			n = fallback
+		}
+		if n > max {
+			n = max
+		}
+		return n, nil
+	}
+	defaultConcurrency, err := parseSetting("IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY", 20, 10000)
 	if err != nil {
 		return err
 	}
-	limit := 16
-	switch n := value.(type) {
-	case float64:
-		limit = int(n)
-	case int:
-		limit = n
-	case string:
-		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(n)); parseErr == nil {
-			limit = parsed
+	maxFile, err := parseSetting("MEDIA_MAX_FILE_SIZE_MB", 5, 200)
+	if err != nil {
+		return err
+	}
+	maxUpload, err := parseSetting("MEDIA_MAX_UPLOAD_SIZE_MB", 75, 512)
+	if err != nil {
+		return err
+	}
+	maxRefs, err := parseSetting("IMAGE_EDIT_MAX_REFERENCE_IMAGES", 16, 256)
+	if err != nil {
+		return err
+	}
+	var override *int
+	if err := b.db.QueryRow(r.Context(), `SELECT image_generation_concurrency_override FROM "user" WHERE id=$1`, targetID).Scan(&override); err != nil {
+		if err == pgx.ErrNoRows {
+			return invalid("用户不存在")
 		}
+		return err
 	}
-	if limit < 1 {
-		limit = 1
+	limit := defaultConcurrency
+	source := "system_default"
+	if override != nil && *override >= 1 && *override <= 10000 {
+		limit = *override
+		source = "user_override"
+	} else {
+		override = nil
 	}
-	if limit > 256 {
-		limit = 256
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"maxEditReferenceImages": limit})
+	writeJSON(w, http.StatusOK, map[string]any{"defaultUserConcurrency": defaultConcurrency, "maxFileSizeMb": maxFile, "maxUploadSizeMb": maxUpload, "maxEditReferenceImages": maxRefs, "maxFileSizeBytes": maxFile * 1024 * 1024, "maxUploadSizeBytes": maxUpload * 1024 * 1024, "limit": limit, "override": override, "effectiveSource": source, "scope": "user"})
 	return nil
 }
 
@@ -583,10 +653,22 @@ func (b *backend) handleHistory(w http.ResponseWriter, r *http.Request) error {
 	if e != nil {
 		return e
 	}
-	q := r.URL.Query()
-	lim := 20
-	if i, _ := strconv.Atoi(q.Get("limit")); i > 0 && i <= 50 {
-		lim = i
+	var in struct {
+		Page     int `json:"page"`
+		PageSize int `json:"pageSize"`
+		Limit    int `json:"limit"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	page := in.Page
+	if page < 1 {
+		page = 1
+	}
+	lim := in.PageSize
+	if lim <= 0 {
+		lim = in.Limit
+	}
+	if lim <= 0 || lim > 50 {
+		lim = 20
 	}
 	rows, err := b.db.Query(r.Context(), `SELECT id,user_id,prompt,revised_prompt,model,size,status,storage_key,storage_bucket,credits_consumed,error,metadata,created_at,completed_at FROM generation WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, s.User.ID, lim)
 	if err != nil {
@@ -638,7 +720,26 @@ func (b *backend) handleHistory(w http.ResponseWriter, r *http.Request) error {
 	if len(out) > lim {
 		out = out[:lim]
 	}
-	writeJSON(w, 200, map[string]any{"records": out, "items": out, "nextCursor": nil, "totalCount": len(out)})
+	modelOptions := make([]string, 0, len(out))
+	seenModels := map[string]struct{}{}
+	for _, item := range out {
+		if row, ok := item.(map[string]any); ok {
+			if model, ok := row["model"].(string); ok && model != "" {
+				if _, exists := seenModels[model]; !exists {
+					seenModels[model] = struct{}{}
+					modelOptions = append(modelOptions, model)
+				}
+			}
+		}
+	}
+	if len(out) > lim {
+		out = out[:lim]
+	}
+	writeJSON(w, 200, map[string]any{
+		"asOf": time.Now().UTC().Format(time.RFC3339Nano), "page": page, "pageSize": lim,
+		"totalCount": len(out), "records": out, "modelOptions": modelOptions,
+		"nextCursor": nil, "previousCursor": nil,
+	})
 	return rows.Err()
 }
 
@@ -922,23 +1023,30 @@ func videoInputSummary(manifest any) map[string]any {
 	m := metadataMap(manifest)
 	count := 0
 	mode := "none"
-	if _, ok := m["firstFrame"]; ok {
+	if m["firstFrame"] != nil {
 		count++
-	}
-	if _, ok := m["lastFrame"]; ok {
-		count++
-	}
-	for _, key := range []string{"referenceImages", "referenceVideos", "referenceAudios"} {
-		if values, ok := m[key].([]any); ok {
-			count += len(values)
-		}
-	}
-	if count == 1 {
 		mode = "first-frame"
-	} else if count == 2 && m["firstFrame"] != nil && m["lastFrame"] != nil {
+	}
+	if m["lastFrame"] != nil {
+		count++
 		mode = "first-last-frames"
-	} else if count > 0 {
-		mode = "mixed"
+	}
+	for key, referenceMode := range map[string]string{"referenceImages": "references", "referenceVideos": "reference-videos", "referenceAudios": "reference-audio"} {
+		n := 0
+		switch values := m[key].(type) {
+		case []any:
+			n = len(values)
+		case []map[string]any:
+			n = len(values)
+		}
+		if n > 0 {
+			if count == 0 {
+				mode = referenceMode
+			} else {
+				mode = "mixed"
+			}
+			count += n
+		}
 	}
 	return map[string]any{"mode": mode, "count": count}
 }
@@ -989,15 +1097,22 @@ func (b *backend) handleVideoInputs(w http.ResponseWriter, r *http.Request) erro
 	if e = decodeBody(r, &in); e != nil {
 		return e
 	}
-	var manifest any
-	err := b.db.QueryRow(r.Context(), `SELECT input_manifest FROM video_generation WHERE id=$1 AND user_id=$2`, in.TaskID, s.User.ID).Scan(&manifest)
+	var manifest map[string]any
+	var userID string
+	admin := s.User.Role == "observer_admin" || s.User.Role == "admin" || s.User.Role == "super_admin"
+	err := b.db.QueryRow(r.Context(), `SELECT user_id,COALESCE(input_manifest,'{}'::json) FROM video_generation WHERE id=$1 AND (user_id=$2 OR $3)`, in.TaskID, s.User.ID, admin).Scan(&userID, &manifest)
 	if err == pgx.ErrNoRows {
 		return &apiError{404, "NOT_FOUND", "视频任务不存在"}
 	}
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"taskId": in.TaskID, "inputs": manifest})
+	out, err := b.videoInputAssets(r, userID, in.TaskID, manifest)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	writeJSON(w, 200, out)
 	return nil
 }
 

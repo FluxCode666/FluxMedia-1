@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -131,6 +130,37 @@ func (b *backend) handleRegistrationCode(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, map[string]bool{"success": true})
 	return nil
 }
+
+// handleVerifyRegistrationCode is the standalone UOL verification probe. It
+// consumes the code transactionally so a code can never be replayed after a
+// successful verification; sign-up uses the same primitive below.
+func (b *backend) handleVerifyRegistrationCode(w http.ResponseWriter, r *http.Request) error {
+	if err := b.checkOrigin(r); err != nil {
+		return err
+	}
+	var in struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		return err
+	}
+	email := normalizeEmail(in.Email)
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	valid, err := consumeRegistrationCode(r.Context(), tx, email, in.Code)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"valid": valid})
+	return nil
+}
 func consumeRegistrationCode(ctx context.Context, tx pgx.Tx, email, code string) (bool, error) {
 	var id, value string
 	var expires time.Time
@@ -167,6 +197,7 @@ func (b *backend) handleSignUp(w http.ResponseWriter, r *http.Request) error {
 		Password         string  `json:"password"`
 		Name             string  `json:"name"`
 		VerificationCode string  `json:"verificationCode"`
+		ReferralCode     string  `json:"referralCode"`
 		Image            *string `json:"image"`
 		CallbackURL      string  `json:"callbackURL"`
 		RememberMe       *bool   `json:"rememberMe"`
@@ -224,16 +255,17 @@ func (b *backend) handleSignUp(w http.ResponseWriter, r *http.Request) error {
 	if _, err := tx.Exec(r.Context(), `INSERT INTO account(id,account_id,provider_id,user_id,password) VALUES($1,$2,'credential',$2,$3)`, newRequestID(), id, password); err != nil {
 		return err
 	}
-	if cookie, err := r.Cookie("fluxmedia_referral_code"); err == nil && len(cookie.Value) <= 100 {
-		config, err := b.setting(r.Context(), "REFERRAL_REWARD_CONFIG", map[string]any{"enabled": false, "inviter": map[string]any{"mode": "percentage", "value": 10}, "invitee": map[string]any{"mode": "percentage", "value": 10}})
-		if err != nil {
-			return err
+	referralCode := strings.ToUpper(strings.TrimSpace(in.ReferralCode))
+	if !referralCodePattern.MatchString(referralCode) {
+		referralCode = ""
+	}
+	if referralCode == "" {
+		if cookie, err := r.Cookie("fluxmedia_referral_code"); err == nil {
+			referralCode = cookie.Value
 		}
-		encoded, err := json.Marshal(config)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(r.Context(), `INSERT INTO referral_relationship(id,inviter_user_id,invitee_user_id,referral_code,reward_config_snapshot) SELECT $1,user_id,$2,code,$3::json FROM referral_profile WHERE code=$4 AND user_id<>$2 ON CONFLICT(invitee_user_id) DO NOTHING`, newRequestID(), id, encoded, cookie.Value); err != nil {
+	}
+	if referralCode != "" {
+		if _, err := createReferralRelationshipInStore(r.Context(), tx, id, referralCode); err != nil {
 			return err
 		}
 	}

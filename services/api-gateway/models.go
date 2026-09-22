@@ -132,18 +132,13 @@ func visibleModelIDs(groups [][]string, config marketplaceModels) []string {
 }
 func (b *backend) handleExternalModels(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
-	var userID, keyID string
-	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" && principal.CredentialKind == "external" {
-		userID, keyID = principal.UserID, principal.APIKeyID
-	} else {
-		p, err := b.authenticateAPI(r)
-		if err != nil {
-			return err
-		}
-		userID, keyID = p.UserID, p.KeyID
+	p, err := b.authenticateAPI(r)
+	if err != nil {
+		return err
 	}
+	userID, keyID := p.UserID, p.KeyID
 	var group *string
-	err := b.db.QueryRow(r.Context(), `SELECT COALESCE(generation_group_id,(SELECT CASE WHEN count(*)=1 THEN min(id) END FROM image_backend_group WHERE is_enabled AND is_default)) FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, userID).Scan(&group)
+	err = b.db.QueryRow(r.Context(), `SELECT COALESCE(generation_group_id,(SELECT CASE WHEN count(*)=1 THEN min(id) END FROM image_backend_group WHERE is_enabled AND is_default)) FROM external_api_key WHERE id=$1 AND user_id=$2`, keyID, userID).Scan(&group)
 	if err != nil {
 		return err
 	}
@@ -163,7 +158,11 @@ func (b *backend) handleExternalModels(w http.ResponseWriter, r *http.Request) e
 		if err != nil {
 			return err
 		}
-		rows, err := b.db.Query(r.Context(), `SELECT m.supported_model_ids FROM image_backend_member m JOIN image_backend_member_group g ON g.member_id=m.id WHERE g.group_id=$1 AND m.is_enabled AND m.status<>'error' ORDER BY m.priority ASC,m.id ASC`, *group)
+		groupIDs, err := reachableMediaGroupIDs(r.Context(), b.db, *group)
+		if err != nil {
+			return err
+		}
+		rows, err := b.db.Query(r.Context(), `SELECT m.supported_model_ids FROM image_backend_member m JOIN image_backend_member_group g ON g.member_id=m.id WHERE g.group_id=ANY($1::text[]) AND m.is_enabled AND m.status<>'error' ORDER BY m.priority ASC,m.id ASC`, groupIDs)
 		if err != nil {
 			return err
 		}
@@ -197,129 +196,75 @@ func (b *backend) handleRuntimeModelCatalog(w http.ResponseWriter, r *http.Reque
 	if _, err := b.requireAdminViewer(r); err != nil {
 		return err
 	}
-	value, err := b.setting(r.Context(), "MODEL_MARKETPLACE_CONFIG", nil)
+	catalog, err := b.loadNativeModelCatalog(r)
 	if err != nil {
-		return err
-	}
-	config, err := parseMarketplaceModels(value)
-	if err != nil {
-		return err
-	}
-	rows, err := b.db.Query(r.Context(), `SELECT m.supported_model_ids FROM image_backend_member m JOIN image_backend_member_group mg ON mg.member_id=m.id JOIN image_backend_group g ON g.id=mg.group_id WHERE m.is_enabled AND m.status<>'error' AND g.is_enabled AND (g.is_default OR g.is_user_selectable) ORDER BY m.priority ASC,m.id ASC`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	groups := make([][]string, 0)
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return err
-		}
-		var ids []string
-		if err := json.Unmarshal(raw, &ids); err != nil {
-			continue
-		}
-		groups = append(groups, ids)
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	images, videos := []string{}, []string{}
-	for _, id := range visibleModelIDs(groups, config) {
-		if isVideoModel(strings.ToLower(strings.TrimSpace(id))) {
-			videos = append(videos, id)
-		} else {
+	for id, category := range catalog.Runtime {
+		if category == "video" {
+			if catalog.Video.Models[id].Enabled {
+				videos = append(videos, id)
+			}
+		} else if boolOrDefault(goMapObject(goMapObject(catalog.Config, "imageByModel"), id)["enabled"], true) {
 			images = append(images, id)
 		}
 	}
+	sort.Strings(images)
+	sort.Strings(videos)
+	noStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{"image": images, "video": videos})
 	return nil
 }
 
-// handlePublicModelMarketplace exposes the read-only catalog consumed by the
-// marketing models page.  The page is intentionally anonymous, while the
-// source of truth remains the same backend member and marketplace settings
-// used by the authenticated model configuration endpoint.
 func (b *backend) handlePublicModelMarketplace(w http.ResponseWriter, r *http.Request) error {
-	snapshot, err := b.modelConfigurationRead(r, false)
+	catalog, err := b.loadNativeModelCatalog(r)
+	if err != nil {
+		return err
+	}
+	snapshot, err := nativeModelConfigurationSnapshot(catalog, false)
 	if err != nil {
 		return err
 	}
 	entries, _ := snapshot["entries"].([]map[string]any)
-	items := make([]map[string]any, 0, len(entries))
+	items := []map[string]any{}
 	for _, entry := range entries {
-		if entry["enabled"] == false || entry["visible"] == false {
+		key, category := stringValue(entry["configKey"]), stringValue(entry["category"])
+		if entry["enabled"] == false || entry["visible"] == false || entry["pricingSource"] == "unconfigured" || catalog.Runtime[key] != category {
 			continue
 		}
-		key := strings.TrimSpace(fmt.Sprint(entry["configKey"]))
-		if key == "" {
-			continue
+		cover := entry["coverUrl"]
+		if cover == nil {
+			cover = "/model-marketplace/default-" + category + ".webp"
 		}
-		category := strings.TrimSpace(fmt.Sprint(entry["category"]))
-		if category != "image" && category != "video" {
-			continue
-		}
-		description := strings.TrimSpace(fmt.Sprint(entry["description"]))
-		if description == "<nil>" {
-			description = ""
-		}
-		item := map[string]any{
-			"configKey":        key,
-			"modelId":          key,
-			"displayName":      fmt.Sprint(entry["displayName"]),
-			"iconKey":          marketplaceIconKey(key),
-			"description":      description,
-			"coverUrl":         fmt.Sprintf("/model-marketplace/default-%s.webp", category),
-			"minimumCredits":   positiveNumber(entry["minimumCredits"], 1),
-			"homepageVisible":  boolOrDefault(entry["homepageVisible"], false),
-			"homepagePriority": intOrDefault(entry["homepagePriority"], 0),
-		}
+		item := map[string]any{"configKey": key, "modelId": key, "category": category, "displayName": entry["displayName"], "iconKey": entry["iconKey"], "description": entry["description"], "coverUrl": cover, "minimumCredits": entry["minimumCredits"], "homepageVisible": entry["homepageVisible"], "homepagePriority": entry["homepagePriority"]}
 		if category == "image" {
-			pricing, ok := entry["pricing"].(map[string]any)
-			if !ok || pricing == nil {
-				// Unpriced models are intentionally hidden from the public catalog.
-				continue
-			}
-			item["category"] = "image"
-			item["priceUnit"] = "per_image"
-			normalizedPricing := normalizedImagePricing(pricing)
-			item["pricing"] = normalizedPricing
-			item["minimumCredits"] = minImagePricing(normalizedPricing)
+			item["priceUnit"], item["pricing"] = "per_image", entry["pricing"]
 			for _, field := range []string{"supportedResolutions", "supportsQuality", "maxReferenceImages"} {
-				if value, exists := entry[field]; exists {
+				if value, ok := entry[field]; ok {
 					item[field] = value
 				}
 			}
 		} else {
-			item["category"] = "video"
-			item["supportedDurations"] = []int{5, 10}
-			item["supportedAspectRatios"] = []string{"1:1", "16:9", "9:16"}
-			resolutions := []string{"720p"}
-			if values, ok := entry["supportedResolutions"].([]string); ok && len(values) > 0 {
-				resolutions = values
-			}
-			item["supportedResolutions"] = resolutions
-			item["input"] = map[string]any{"frames": "none", "referenceImages": map[string]any{"maxCount": 0, "configurable": false}, "framesAndReferencesMutuallyExclusive": true}
-			item["audio"] = map[string]any{"supported": false, "defaultEnabled": false}
+			cfg := catalog.Video.Models[key]
+			cap := cfg.Capability
+			item["supportedDurations"], item["supportedAspectRatios"], item["supportedResolutions"] = cap.Durations, cap.Ratios, cfg.SupportedResolutions
+			item["input"] = map[string]any{"frames": cap.Frames, "referenceImages": map[string]any{"maxCount": cap.RefMax, "configurable": cap.RefConfig}, "framesAndReferencesMutuallyExclusive": true}
+			item["audio"] = map[string]any{"supported": cap.Audio, "defaultEnabled": cap.AudioDefault}
 			item["configuredReachable"] = true
 			item["infrastructureLimits"] = map[string]any{"maxMediaInputCount": 256, "maxMediaInputBytes": 512 * 1024 * 1024}
-			mode := strings.TrimSpace(fmt.Sprint(entry["billingMode"]))
+			mode := entry["billingMode"]
+			item["billingMode"], item["priceUnit"] = mode, mode
 			if mode == "per_item" {
-				item["billingMode"], item["priceUnit"] = "per_item", "per_item"
-				item["creditsPerItem"] = positiveNumber(entry["minimumCredits"], 1)
-				item["creditsPerItemByResolution"] = map[string]any{"720p": positiveNumber(entry["minimumCredits"], 1)}
+				item["creditsPerItem"], item["creditsPerItemByResolution"] = entry["minimumCredits"], entry["creditsPerItemByResolution"]
 			} else {
-				item["billingMode"], item["priceUnit"] = "per_second", "per_second"
-				item["creditsPerSecond"] = positiveNumber(entry["creditsPerSecond"], 1)
-				item["creditsPerSecondByResolution"] = map[string]any{"720p": positiveNumber(entry["creditsPerSecond"], 1)}
+				item["creditsPerSecond"], item["creditsPerSecondByResolution"] = entry["creditsPerSecond"], entry["creditsPerSecondByResolution"]
 			}
 		}
 		items = append(items, item)
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		return fmt.Sprint(items[i]["configKey"]) < fmt.Sprint(items[j]["configKey"])
-	})
+	sort.Slice(items, func(i, j int) bool { return stringValue(items[i]["configKey"]) < stringValue(items[j]["configKey"]) })
+	noStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	return nil
 }

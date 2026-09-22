@@ -65,7 +65,7 @@ require_text \
   'pnpm --dir apps/web operations:epoch:ensure-current'
 
 web_start_line="$(
-  grep -nF 'if ! docker compose up -d --remove-orphans web backend; then' \
+  grep -nF 'if ! docker compose up -d --remove-orphans web backend script-runtime media-processing; then' \
     "${workflow_path}" | cut -d: -f1
 )"
 epoch_gate_line="$(

@@ -129,6 +129,24 @@ const dataReference = {
 };
 
 describe("executeImageGenerateBinding", () => {
+  it("delegates admission to Go when no local admission hooks are provided", async () => {
+    const deps = dependencies();
+    delete deps.value.acquireImageGenerationAdmission;
+    delete deps.value.releaseImageGenerationAdmission;
+    await executeImageGenerateBinding(
+      { operation: "generate", prompt: "test", model: "gpt-image-2", generationId: "go-admission" },
+      userPrincipal,
+      operationContext(),
+      deps.value
+    );
+    expect(deps.acquireAdmission).not.toHaveBeenCalled();
+    expect(deps.releaseAdmission).not.toHaveBeenCalled();
+    expect(deps.run).toHaveBeenCalledWith(
+      expect.objectContaining({ admissionAuthorization: undefined }),
+      undefined
+    );
+  });
+
   it("在准入和媒体转存前应用系统媒体大小策略", async () => {
     const deps = dependencies();
     deps.getLimits.mockResolvedValueOnce({
@@ -349,6 +367,39 @@ describe("executeImageGenerateBinding", () => {
       }),
       undefined
     );
+  });
+
+  it("既有 storage 引用也必须通过 Go 所有权与字节校验", async () => {
+    const deps = dependencies();
+    deps.stage.mockRejectedValueOnce(new Error("Image input owner mismatch"));
+    const reference = {
+      source: "storage" as const, mimeType: "image/png" as const,
+      storageKey: "other-user/image-inputs/private.png", storageBucket: "generations", byteLength: 12,
+    };
+    await expect(executeImageGenerateBinding({
+      operation: "edit", prompt: "edit", model: "gpt-image-2", generationId: "storage-ownership",
+      images: [reference],
+    }, apiKeyPrincipal, operationContext(), deps.value)).rejects.toThrow("Image input owner mismatch");
+    expect(deps.stage).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1", apiKeyId: "key-1", references: [reference],
+    }));
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(deps.releaseAdmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("创建失败通过 Go 清理本次转存对象并保留调用身份", async () => {
+    const deps = dependencies();
+    const cleanup = vi.fn(async () => undefined);
+    deps.value.cleanupStagedImageInputs = cleanup;
+    deps.run.mockRejectedValueOnce(new Error("Missing global price"));
+    await expect(executeImageGenerateBinding({
+      operation: "edit", prompt: "edit", model: "gpt-image-2", generationId: "create-rejected",
+      images: [dataReference],
+    }, apiKeyPrincipal, operationContext(), deps.value)).rejects.toThrow("Missing global price");
+    expect(cleanup).toHaveBeenCalledWith([expect.objectContaining({
+      userId: "user-1", storageKey: "user-1/image-inputs/input-0.png",
+    })], apiKeyPrincipal);
+    expect(deps.releaseAdmission).toHaveBeenCalledTimes(1);
   });
 
   it("MCP Key 不冒充外部 API Key 进入号池绑定分组", async () => {

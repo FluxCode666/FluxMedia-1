@@ -1,123 +1,130 @@
-/**
- * Epay webhook 薄适配路由测试。
- *
- * 使用方：Vitest；验证配置、验签和事件过滤留在传输层，成功履约只经 UOL 调用。
- */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GET, POST } from "./route";
 
-const mocks = vi.hoisted(() => ({
-  isRuntimeEpayConfigured: vi.fn(),
-  parseEpayRequestParams: vi.fn(),
-  verifyRuntimeEpayParams: vi.fn(),
-  invokeOperation: vi.fn(),
-  ensureUolInitialized: vi.fn(),
-  loggerInfo: vi.fn(),
-  loggerWarn: vi.fn(),
-  logError: vi.fn(),
-}));
-
-vi.mock("@repo/shared/api-logger", () => ({
-  withApiLogging: <T>(handler: T): T => handler,
-}));
-vi.mock("@repo/shared/payment/epay", () => ({
-  EPAY_TRADE_SUCCESS: "TRADE_SUCCESS",
-  isRuntimeEpayConfigured: mocks.isRuntimeEpayConfigured,
-  parseEpayRequestParams: mocks.parseEpayRequestParams,
-  verifyRuntimeEpayParams: mocks.verifyRuntimeEpayParams,
-}));
-vi.mock("@repo/shared/uol", () => ({
-  invokeOperation: mocks.invokeOperation,
-}));
-vi.mock("@repo/shared/logger", () => ({
-  logger: { info: mocks.loggerInfo, warn: mocks.loggerWarn },
-  logError: mocks.logError,
-}));
-vi.mock("@/server/uol-init", () => ({
-  ensureUolInitialized: mocks.ensureUolInitialized,
-}));
-
-import { POST } from "./route";
-
-const verifyInfo = {
-  verifyStatus: true,
-  type: "alipay",
-  tradeNo: "gateway-1",
-  outTradeNo: "order-1",
-  name: "credits",
-  money: "20.00",
-  tradeStatus: "TRADE_SUCCESS",
-  param: "signed-metadata",
-  raw: { sign: "secret" },
-};
-
-/** 创建 Epay webhook POST 请求。 */
-function request(): Request {
-  return new Request("https://media.example.test/api/webhooks/epay", {
-    method: "POST",
-    body: "signed-payload",
-  });
-}
-
-describe("POST /api/webhooks/epay", () => {
+describe("Go Epay webhook transport", () => {
+  const fetchMock = vi.fn<typeof fetch>();
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.isRuntimeEpayConfigured.mockResolvedValue(true);
-    mocks.parseEpayRequestParams.mockResolvedValue({ sign: "secret" });
-    mocks.verifyRuntimeEpayParams.mockResolvedValue(verifyInfo);
-    mocks.invokeOperation.mockResolvedValue({
-      metadataType: "credit_purchase",
-    });
+    vi.resetAllMocks();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GO_BACKEND_URL", "http://go.test/");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
-  it("成功通知只把规范化字段交给匹配 provider 的 UOL operation", async () => {
-    const response = await POST(request());
+  const signedForm =
+    "pid=1001&trade_no=pay%2F1&out_trade_no=order%2B1&name=%E7%A7%AF%E5%88%86+%2B+Credits&money=20.00&param=a%252Fb&sign=abc%2Bdef%3D&sign_type=MD5";
 
-    expect(await response.text()).toBe("success");
-    expect(mocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "credits.fulfillEpayTopUp",
-      {
-        type: "alipay",
-        tradeNo: "gateway-1",
-        outTradeNo: "order-1",
-        name: "credits",
-        money: "20.00",
-        tradeStatus: "TRADE_SUCCESS",
-        param: "signed-metadata",
+  it("preserves signed POST form encoding instead of parsing and re-encoding it", async () => {
+    const request = new Request("https://app.test/api/webhooks/epay", {
+      method: "POST",
+      body: signedForm,
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-request-id": "epay-post",
+        "x-forwarded-for": "192.0.2.8",
       },
-      { type: "webhook", provider: "epay" }
-    );
-  });
-
-  it("非法签名和非成功事件不会初始化或调用 UOL", async () => {
-    mocks.verifyRuntimeEpayParams.mockResolvedValueOnce({
-      ...verifyInfo,
-      verifyStatus: false,
     });
-    expect(await (await POST(request())).text()).toBe("fail");
-
-    mocks.verifyRuntimeEpayParams.mockResolvedValueOnce({
-      ...verifyInfo,
-      tradeStatus: "WAIT_BUYER_PAY",
-    });
-    expect(await (await POST(request())).text()).toBe("success");
-
-    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
-    expect(mocks.invokeOperation).not.toHaveBeenCalled();
-  });
-
-  it("UOL 履约失败返回 fail 以便网关重试", async () => {
-    mocks.invokeOperation.mockRejectedValueOnce(new Error("fulfill failed"));
-
-    const response = await POST(request());
-
-    expect(await response.text()).toBe("fail");
-    expect(mocks.logError).toHaveBeenCalledWith(
-      expect.any(Error),
-      expect.objectContaining({
-        source: "epay-webhook",
-        outTradeNo: "order-1",
+    fetchMock.mockResolvedValueOnce(
+      new Response("success", {
+        headers: { "content-type": "text/plain; charset=utf-8" },
       })
     );
+    const response = await POST(request);
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("Go request missing");
+    const [target, init] = call;
+    expect(target).toBe("http://go.test/api/webhooks/epay");
+    expect(init?.method).toBe("POST");
+    expect(init?.signal).toBe(request.signal);
+    if (!(init?.body instanceof ArrayBuffer))
+      throw new Error("raw form body missing");
+    expect(new Uint8Array(init.body)).toEqual(
+      new TextEncoder().encode(signedForm)
+    );
+    const headers = new Headers(init.headers);
+    expect(headers.get("content-type")).toBe(
+      "application/x-www-form-urlencoded; charset=UTF-8"
+    );
+    expect(headers.get("x-request-id")).toBe("epay-post");
+    expect(headers.get("x-forwarded-for")).toBe("192.0.2.8");
+    expect(response.headers.get("content-type")).toBe(
+      "text/plain; charset=utf-8"
+    );
+    await expect(response.text()).resolves.toBe("success");
+  });
+
+  it("preserves GET parameter order, percent encoding and repeated fields", async () => {
+    const query = `${signedForm}&param=second+value`;
+    const request = new Request(`https://app.test/api/webhooks/epay?${query}`);
+    fetchMock.mockResolvedValueOnce(new Response("success"));
+    const response = await GET(request);
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("Go request missing");
+    const [target, init] = call;
+    expect(target).toBe(`http://go.test/api/webhooks/epay?${query}`);
+    expect(init?.method).toBe("GET");
+    expect(init?.body).toBeUndefined();
+    expect(init?.signal).toBe(request.signal);
+    await expect(response.text()).resolves.toBe("success");
+  });
+
+  it.each([
+    { status: 200, body: "fail" },
+    { status: 400, body: "fail" },
+    { status: 500, body: "fail" },
+    { status: 503, body: "unavailable" },
+  ])("preserves the provider acknowledgement $status/$body", async ({
+    status,
+    body,
+  }) => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status, headers: { "retry-after": "20" } })
+    );
+    const response = await POST(
+      new Request("https://app.test/api/webhooks/epay", {
+        method: "POST",
+        body: signedForm,
+      })
+    );
+    expect(response.status).toBe(status);
+    expect(response.headers.get("retry-after")).toBe("20");
+    await expect(response.text()).resolves.toBe(body);
+  });
+
+  it("leaves backend redirects unfollowed and propagates their location", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://app.test/payment/result" },
+      })
+    );
+    const response = await GET(
+      new Request(`https://app.test/api/webhooks/epay?${signedForm}`)
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("manual");
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://app.test/payment/result"
+    );
+  });
+
+  it("propagates cancellation without replacing it with success", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    fetchMock.mockImplementationOnce(async (_target, init) => {
+      expect(init?.signal?.aborted).toBe(true);
+      throw init?.signal?.reason;
+    });
+    await expect(
+      POST(
+        new Request("https://app.test/api/webhooks/epay", {
+          method: "POST",
+          body: signedForm,
+          signal: controller.signal,
+        })
+      )
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 });

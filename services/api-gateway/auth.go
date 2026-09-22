@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -35,6 +37,77 @@ type authUser struct {
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
+
+// handleBootstrapAuth is an internal, idempotent self-use bootstrap hook.
+// Credentials are deployment environment values and are never accepted in
+// the request body.
+func (b *backend) handleBootstrapAuth(w http.ResponseWriter, r *http.Request) error {
+	if !b.cronAuthorized(r) {
+		return &apiError{http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized"}
+	}
+	enabled, err := b.settingBool(r.Context(), "SELF_USE_MODE_ENABLED", true)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "userId": "", "reason": "self_use_disabled"})
+		return nil
+	}
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	// Serialize first-account creation across startup hooks and gateway replicas.
+	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext('fluxmedia:self-use-super-admin'))`); err != nil {
+		return err
+	}
+	var id string
+	err = tx.QueryRow(r.Context(), `SELECT id FROM "user" WHERE role='super_admin' ORDER BY created_at,id LIMIT 1`).Scan(&id)
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "userId": id})
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	email := normalizeEmail(os.Getenv("FLUXMEDIA_SUPER_ADMIN_EMAIL"))
+	password := os.Getenv("FLUXMEDIA_SUPER_ADMIN_PASSWORD")
+	address, emailErr := mail.ParseAddress(email)
+	if emailErr != nil || address.Address != email || strings.TrimSpace(password) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "userId": "", "reason": "credentials_not_configured"})
+		return nil
+	}
+	err = tx.QueryRow(r.Context(), `SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE`, email).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		id = newRequestID()
+		_, err = tx.Exec(r.Context(), `INSERT INTO "user"(id,name,email,email_verified,role) VALUES($1,'FluxMedia Super Admin',$2,true,'super_admin')`, id, email)
+	} else if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE "user" SET role='super_admin',email_verified=true,updated_at=now() WHERE id=$1`, id)
+	}
+	if err != nil {
+		return err
+	}
+	var credentialExists bool
+	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM account WHERE user_id=$1 AND provider_id='credential')`, id).Scan(&credentialExists); err != nil {
+		return err
+	}
+	if !credentialExists {
+		hashed, hashErr := hashPassword(r.Context(), password)
+		if hashErr != nil {
+			return hashErr
+		}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO account(id,account_id,provider_id,user_id,password) VALUES($1,$2,'credential',$2,$3)`, newRequestID(), id, hashed); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "userId": id})
+	return nil
+}
+
 type authSession struct {
 	ID        string    `json:"id"`
 	Token     string    `json:"token"`
@@ -611,6 +684,8 @@ func (b *backend) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/callback/{provider}", b.endpoint(b.handleOAuthCallback))
 	mux.HandleFunc("POST /api/auth/sign-up/email", b.endpoint(b.handleSignUp))
 	mux.HandleFunc("POST /api/auth/registration-verification", b.endpoint(b.handleRegistrationCode))
+	mux.HandleFunc("POST /api/auth/registration-verification/verify", b.endpoint(b.handleVerifyRegistrationCode))
+	mux.HandleFunc("POST /api/internal/auth/bootstrap", b.endpoint(b.handleBootstrapAuth))
 	mux.HandleFunc("POST /api/auth/request-password-reset", b.endpoint(b.handleRequestPasswordReset))
 	mux.HandleFunc("GET /api/auth/reset-password/{token}", b.endpoint(b.handleResetPasswordCallback))
 	mux.HandleFunc("POST /api/auth/reset-password", b.endpoint(b.handleResetPassword))

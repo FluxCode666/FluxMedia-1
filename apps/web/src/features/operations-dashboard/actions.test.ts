@@ -1,8 +1,8 @@
 /**
  * 运营总览 Server Action 薄适配契约测试。
  *
- * 使用方：Vitest。替换 safe-action builder、角色读取和 UOL 网关，验证访问事实结果
- * 收敛以及所有管理员 Action 只转发解析后的输入和真实 Principal。
+ * 使用方：Vitest。替换 safe-action builder、Go 传输，验证访问事实结果
+ * 收敛以及所有管理员 Action 只转发解析后的输入并由 Go 读取会话身份。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,14 +21,8 @@ type ProtectedActionInput = {
 };
 
 const mocks = vi.hoisted(() => ({
-  ensureUolInitialized: vi.fn(),
-  getUserRoleById: vi.fn(),
-  invokeOperation: vi.fn(),
+  requestGoJson: vi.fn(),
   tryRecordDashboardWebVisit: vi.fn(),
-}));
-
-vi.mock("@repo/shared/auth/role-server", () => ({
-  getUserRoleById: mocks.getUserRoleById,
 }));
 
 vi.mock("@repo/shared/safe-action", () => ({
@@ -52,13 +46,12 @@ vi.mock("@repo/shared/safe-action", () => ({
   },
 }));
 
-vi.mock("@repo/shared/uol", () => ({
-  invokeOperation: mocks.invokeOperation,
+vi.mock("@/server/go-backend-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/go-backend-client")>()),
+  requestGoJson: mocks.requestGoJson,
 }));
 
-vi.mock("@/server/uol-init", () => ({
-  ensureUolInitialized: mocks.ensureUolInitialized,
-}));
+import { GoBackendRequestError } from "@/server/go-backend-client";
 
 vi.mock("./dashboard-web-visit", () => ({
   tryRecordDashboardWebVisit: mocks.tryRecordDashboardWebVisit,
@@ -85,7 +78,6 @@ const adminContext: AdminContext = {
 describe("recordDashboardWebVisitAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getUserRoleById.mockResolvedValue("user");
   });
 
   it("使用 session 用户与数据库角色记录服务端自然日", async () => {
@@ -117,34 +109,33 @@ describe("recordDashboardWebVisitAction", () => {
 describe("operations admin actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.ensureUolInitialized.mockResolvedValue(undefined);
   });
 
   it.each([
     [
-      "operations.getDetail",
+      "/api/admin/operations/detail",
       getOperationsDetailAction,
       { query: {}, detail: { module: "growth", detail: "users" } },
     ],
     [
-      "operations.createExport",
+      "/api/admin/operations/exports",
       createOperationsExportAction,
       { query: {}, exportType: "user_growth", clientRequestId: "request-1" },
     ],
-    ["operations.listExports", listOperationsExportsAction, { limit: 20 }],
+
     [
-      "operations.retryExport",
+      "/api/admin/operations/exports/retry",
       retryOperationsExportAction,
       { taskId: "task-1", clientRequestId: "request-2" },
     ],
     [
-      "operations.prepareExportDownload",
+      "/api/admin/operations/exports/prepare-download",
       prepareOperationsExportDownloadAction,
       { taskId: "task-1", mode: "signed_url" },
     ],
-  ] as const)("%s 转发解析输入和管理员 Principal", async (name, action, input) => {
+  ] as const)("%s 只转发解析后的请求正文", async (name, action, input) => {
     const output = { marker: name };
-    mocks.invokeOperation.mockResolvedValue(output);
+    mocks.requestGoJson.mockResolvedValue(output);
 
     await expect(
       (action as unknown as MockAdminAction)({
@@ -152,18 +143,15 @@ describe("operations admin actions", () => {
         parsedInput: input,
       })
     ).resolves.toEqual(output);
-    expect(mocks.ensureUolInitialized).toHaveBeenCalledOnce();
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(name, input, {
-      type: "user",
-      userId: "admin-1",
-      role: "admin",
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(name, {
+      method: "POST", body: JSON.stringify(input),
     });
   });
 
-  it("overview 成功时包装 ready 快照并保留 super_admin Principal", async () => {
+  it("overview 成功时包装 Go 快照为 ready 状态", async () => {
     const snapshot = { marker: "overview" };
     const input = { query: { granularity: "day" } };
-    mocks.invokeOperation.mockResolvedValue(snapshot);
+    mocks.requestGoJson.mockResolvedValue(snapshot);
 
     await expect(
       (getOperationsOverviewAction as unknown as MockAdminAction)({
@@ -171,10 +159,33 @@ describe("operations admin actions", () => {
         parsedInput: input,
       })
     ).resolves.toEqual({ status: "ready", snapshot });
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "operations.getOverview",
-      input,
-      { type: "user", userId: "super-1", role: "super_admin" }
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/operations/overview",
+      { method: "POST", body: JSON.stringify(input) }
     );
+  });
+
+
+  it("导出列表编码游标并使用 GET", async () => {
+    mocks.requestGoJson.mockResolvedValue({ items: [], nextCursor: null });
+    await (listOperationsExportsAction as unknown as MockAdminAction)({
+      ctx: adminContext, parsedInput: { limit: 20, cursor: "signed+/cursor=" },
+    });
+    expect(mocks.requestGoJson).toHaveBeenCalledWith(
+      "/api/admin/operations/exports?limit=20&cursor=signed%2B%2Fcursor%3D"
+    );
+  });
+
+  it.each([
+    [400, "INVALID_INPUT", "validation_error"],
+    [429, "RATE_LIMITED", "rate_limited"],
+    [503, "NOT_READY", "not_ready"],
+    [504, "TIMEOUT", "timeout"],
+    [500, "INTERNAL_ERROR", "unavailable"],
+  ] as const)("overview 保留 Go HTTP %s %s 的安全状态 %s", async (httpStatus, code, status) => {
+    mocks.requestGoJson.mockRejectedValue(new GoBackendRequestError("private details", httpStatus, code));
+    await expect((getOperationsOverviewAction as unknown as MockAdminAction)({
+      ctx: adminContext, parsedInput: { query: {} },
+    })).resolves.toEqual({ status });
   });
 });

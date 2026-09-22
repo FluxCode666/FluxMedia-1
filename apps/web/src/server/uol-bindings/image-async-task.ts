@@ -1,16 +1,13 @@
 /**
  * 图片异步任务 UOL late binding。
  *
- * 职责：从外部 API Principal 构造最小持久身份，幂等创建 PostgreSQL 任务并在提交后
- * 最佳努力投递 BullMQ；查询时同时校验 userId 与 API Key 域，防止同账号 Key 间越权。
- * 使用方：根 uol-bindings 聚合器；Worker 处理 binding 在同模块后续接入。
+ * 生产入口全部转发 Go 持久任务接口；显式注入的依赖仅供原队列契约回归测试。
  */
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   assertImageMediaInputWithinPolicy,
   type MediaInputPolicy,
 } from "@repo/shared/image-generation/media-contract";
-import { logError } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindOperationExecute,
@@ -27,31 +24,26 @@ import {
   imageGetAsyncTask,
   imageProcessAsyncTask,
 } from "@repo/shared/uol/operations/image-generation";
-import { z } from "zod";
 
-import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import {
+  createImageAsyncTaskInputDigest,
   isSiteImageAsyncTaskApiKeyId,
   SITE_IMAGE_ASYNC_API_KEY_ID,
 } from "@/features/image-generation/image-async-task-contract";
-import {
-  createImageAsyncTaskInputDigest,
-  defaultImageAsyncTaskRepository,
-  type ImageAsyncTaskRecord,
-  type ImageAsyncTaskRepository,
+import type {
+  ImageAsyncTaskRecord,
+  ImageAsyncTaskRepository,
 } from "@/features/image-generation/image-async-task-repository";
-import {
-  type RedisImageGenerationAdmissionAcquisition,
-  type RedisImageGenerationAdmissionLease,
-  type RedisImageGenerationExecutionAcquisition,
-  type RedisImageGenerationExecutionLease,
-  restoreImageGenerationAdmissionLease,
+import type {
+  RedisImageGenerationAdmissionAcquisition,
+  RedisImageGenerationAdmissionLease,
+  RedisImageGenerationExecutionAcquisition,
+  RedisImageGenerationExecutionLease,
 } from "@/features/image-generation/redis-image-generation-slots";
+import { restoreImageGenerationAdmissionLease } from "@/features/image-generation/image-admission-lease";
 import type {
   ImageGenerationExecutionFence,
-  ImageQuality,
 } from "@/features/image-generation/types";
-import { enqueueImageTask } from "@/server/media-task-queues";
 import { requestGoJson, requestGoJsonForPrincipal } from "@/server/go-backend-client";
 
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
@@ -70,15 +62,6 @@ const IMAGE_ASYNC_TASK_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 const IMAGE_ASYNC_TASK_GLOBAL_RETRY_DELAY_MS = 1_000;
 // Phase A 旧 NOT NULL 列只维持回滚兼容，不再携带或影响商业套餐语义。
 const LEGACY_IMAGE_ASYNC_TASK_PLAN = "retired";
-
-const imageGenerationReconciliationRowSchema = z
-  .object({
-    userId: z.string().trim().min(1),
-    status: z.enum(["pending", "completed", "failed"]),
-    error: z.string().nullable(),
-    metadata: z.record(z.string(), z.unknown()).nullable(),
-  })
-  .strict();
 
 /** Worker 对账所需的最小 generation 视图。 */
 export interface ImageGenerationReconciliationRecord {
@@ -143,240 +126,6 @@ export interface ImageAsyncTaskBindingDependencies {
   deliverCallback(task: ImageAsyncTaskRecord): Promise<void>;
   reportCallbackFailure(error: unknown, taskId: string): void;
 }
-
-const defaultDependencies: ImageAsyncTaskBindingDependencies = {
-  repository: defaultImageAsyncTaskRepository,
-  validateCallback: validateCallbackUrl,
-  async getMediaLimitsForUser(userId) {
-    const { mediaLimitService } = await import(
-      "@repo/shared/image-generation/media-limit-service"
-    );
-    return mediaLimitService.getForUser(userId);
-  },
-  async resolveGroupSnapshot(input) {
-    const { resolveTrustedGroupSnapshot } = await import(
-      "@/features/image-backend-pool/runtime-service"
-    );
-    const snapshot = await resolveTrustedGroupSnapshot(
-      input.apiKeyId === SITE_IMAGE_ASYNC_API_KEY_ID
-        ? {
-            userId: input.userId,
-            ...(input.requestedGroupId
-              ? { requestedGroupId: input.requestedGroupId }
-              : {}),
-          }
-        : input
-    );
-    return { id: snapshot.id, priority: snapshot.priority };
-  },
-  async acquireAdmission(input) {
-    const { acquireImageGenerationAdmission } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return acquireImageGenerationAdmission(input);
-  },
-  async renewAdmission(lease) {
-    const { renewImageGenerationAdmission } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return renewImageGenerationAdmission(lease);
-  },
-  async releaseAdmission(lease) {
-    const { releaseImageGenerationAdmission } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return releaseImageGenerationAdmission(lease);
-  },
-  async getGlobalConcurrency() {
-    const { getImageGenerationGlobalConcurrency } = await import(
-      "@/features/image-generation/queue"
-    );
-    return getImageGenerationGlobalConcurrency();
-  },
-  async acquireExecution(input) {
-    const { acquireImageGenerationExecution } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return acquireImageGenerationExecution(input);
-  },
-  async renewExecution(lease) {
-    const { renewImageGenerationExecution } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return renewImageGenerationExecution(lease);
-  },
-  async releaseExecution(lease) {
-    const { releaseImageGenerationExecution } = await import(
-      "@/features/image-generation/redis-image-generation-slots"
-    );
-    return releaseImageGenerationExecution(lease);
-  },
-  enqueueTask: enqueueImageTask,
-  reportEnqueueFailure(error, taskId) {
-    logError(error, {
-      source: "image-async-task-mq-enqueue",
-      taskId,
-    });
-  },
-  async isApiKeyActive(input) {
-    const [{ db }, { externalApiKey }, { and, eq }] = await Promise.all([
-      import("@repo/database"),
-      import("@repo/database/schema"),
-      import("drizzle-orm"),
-    ]);
-    const [row] = await db
-      .select({ id: externalApiKey.id })
-      .from(externalApiKey)
-      .where(
-        and(
-          eq(externalApiKey.id, input.apiKeyId),
-          eq(externalApiKey.userId, input.userId),
-          eq(externalApiKey.isActive, true)
-        )
-      )
-      .limit(1);
-    return Boolean(row);
-  },
-  async findGeneration(generationId) {
-    const [{ db }, { generation }, { eq }] = await Promise.all([
-      import("@repo/database"),
-      import("@repo/database/schema"),
-      import("drizzle-orm"),
-    ]);
-    const [rawRow] = await db
-      .select({
-        userId: generation.userId,
-        status: generation.status,
-        error: generation.error,
-        metadata: generation.metadata,
-      })
-      .from(generation)
-      .where(eq(generation.id, generationId))
-      .limit(1);
-    if (!rawRow) return null;
-    const row = imageGenerationReconciliationRowSchema.parse(rawRow);
-    const inputDigest = row.metadata?.uolInputDigest;
-    return {
-      userId: row.userId,
-      status: row.status,
-      error: row.error,
-      inputDigest: typeof inputDigest === "string" ? inputDigest : null,
-    };
-  },
-  async runGeneration({
-    task,
-    admissionLease,
-    executionLease,
-    executionFence,
-  }) {
-    if (
-      task.effectiveUserConcurrency === null ||
-      !task.groupIdSnapshot ||
-      task.groupPrioritySnapshot === null
-    ) {
-      throw new Error("图片异步任务缺少执行策略快照");
-    }
-    const { runImageGenerationForUser } = await import(
-      "@/features/image-generation/operations"
-    );
-    const input = task.generationInput;
-    const common = {
-      userId: task.userId,
-      ...(isSiteImageAsyncTaskApiKeyId(task.apiKeyId)
-        ? {}
-        : { apiKeyId: task.apiKeyId }),
-      prompt: input.prompt,
-      apiPrompt: input.apiPrompt,
-      promptOptimization: input.promptOptimization,
-      model: input.model,
-      aspectRatio: input.aspectRatio ?? input.aspect_ratio,
-      resolution: input.resolution,
-      quality: input.quality as ImageQuality | undefined,
-      thinking: input.thinking,
-      moderation: input.moderation,
-      outputFormat: input.outputFormat,
-      outputCompression: input.outputCompression,
-      background: input.background,
-      transparentMatte: input.transparentMatte,
-      moderationPromptRepair: input.moderationPromptRepair,
-      hdRepair: input.hdRepair,
-      blockRepair: input.blockRepair,
-      repairPrompt: input.repairPrompt,
-      generationId: input.generationId,
-      backendGroupId: input.backendGroupId,
-      inputDigest: task.inputDigest,
-      executionFence,
-      executionAuthorization: { lease: executionLease },
-      admissionAuthorization: {
-        userId: task.userId,
-        lease: admissionLease,
-        limit: task.effectiveUserConcurrency,
-        effectiveSource: "system_default" as const,
-      },
-      groupAuthorization: {
-        groupId: task.groupIdSnapshot,
-        priority: task.groupPrioritySnapshot,
-      },
-    };
-    const result =
-      input.operation === "generate"
-        ? await runImageGenerationForUser({ mode: "generate", ...common })
-        : await runImageGenerationForUser({
-            mode: "edit",
-            ...common,
-            images: [],
-            mediaInputReferences: {
-              images: input.images,
-              ...(input.operation === "mask" ? { mask: input.mask } : {}),
-            },
-          });
-    await executionFence.assertActive();
-    if (result.error) {
-      throw new OperationError(
-        result.errorCode ?? "upstream_error",
-        result.error,
-        result.errorDetails
-      );
-    }
-    if (result.generationId !== task.generationId) {
-      throw new OperationError(
-        "idempotency_conflict",
-        "Image generation result does not match the async task"
-      );
-    }
-    return { generationId: result.generationId };
-  },
-  createClaimToken: () => `image-worker-${randomUUID()}`,
-  now: () => new Date(),
-  reportGenerationFailure(error, taskId) {
-    logError(error, {
-      source: "image-async-task-generation",
-      taskId,
-    });
-  },
-  async deliverCallback(task) {
-    if (!task.callbackUrl) return;
-    const [
-      { buildImageAsyncTaskPublicResponse, createImageAsyncTaskPublicSource },
-      { postPublicAsyncImageCallback },
-    ] = await Promise.all([
-      import("@/features/external-api/image-async-task-response"),
-      import("@/features/external-api/async-image-tasks"),
-    ]);
-    await postPublicAsyncImageCallback(
-      task.callbackUrl,
-      await buildImageAsyncTaskPublicResponse(
-        createImageAsyncTaskPublicSource(task)
-      )
-    );
-  },
-  reportCallbackFailure(error, taskId) {
-    logError(error, {
-      source: "image-async-task-callback",
-      taskId,
-    });
-  },
-};
 
 /** 将数据库任务记录映射为不含身份、提示词和媒体引用的 UOL 输出。 */
 export function toImageAsyncTaskOutput(
@@ -500,9 +249,9 @@ export async function executeImageEnqueueAsyncBinding(
   input: ImageEnqueueAsyncInput,
   principal: Principal,
   context: OperationContext,
-  dependencies: ImageAsyncTaskBindingDependencies = defaultDependencies
+  dependencies?: ImageAsyncTaskBindingDependencies
 ): Promise<ImageAsyncTaskOutput> {
-  if (dependencies === defaultDependencies) {
+  if (!dependencies) {
     const body = JSON.stringify(input);
     const output = isExternalApiKeyPrincipal(principal)
       ? await requestGoJsonForPrincipal<ImageAsyncTaskOutput>(principal, "/api/image-generation/async", { method: "POST", body })
@@ -685,9 +434,9 @@ export async function executeImageGetAsyncTaskBinding(
   input: { taskId: string },
   principal: Principal,
   context: OperationContext,
-  repository: ImageAsyncTaskRepository = defaultImageAsyncTaskRepository
+  repository?: ImageAsyncTaskRepository
 ): Promise<ImageAsyncTaskOutput> {
-  if (repository === defaultImageAsyncTaskRepository) {
+  if (!repository) {
     const output = isExternalApiKeyPrincipal(principal)
       ? await requestGoJsonForPrincipal<ImageAsyncTaskOutput>(principal, `/api/image-generation/async/${encodeURIComponent(input.taskId)}`)
       : await requestGoJson<ImageAsyncTaskOutput>(`/api/image-generation/async/${encodeURIComponent(input.taskId)}`);
@@ -1026,13 +775,18 @@ export async function executeImageProcessAsyncTaskBinding(
   input: { taskId: string },
   principal: Principal,
   _context: OperationContext,
-  dependencies: ImageAsyncTaskBindingDependencies = defaultDependencies
+  dependencies?: ImageAsyncTaskBindingDependencies
 ): Promise<ImageAsyncTaskOutput> {
   if (principal.type !== "system") {
     throw new OperationError(
       "forbidden",
       "System worker authentication required"
     );
+  }
+  if (!dependencies) {
+    return requestGoJson<ImageAsyncTaskOutput>(
+      `/api/image-generation/async/${encodeURIComponent(input.taskId)}/process`,
+      { method: "POST", headers: { authorization: `Bearer ${process.env.CRON_SECRET ?? ""}` } });
   }
   const now = dependencies.now();
   const claimToken = dependencies.createClaimToken();

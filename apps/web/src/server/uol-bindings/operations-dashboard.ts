@@ -1,8 +1,8 @@
 /**
  * 运营总览 UOL late binding。
  *
- * 使用方：uol-bindings 启动桶与运营管理页 Server Action。管理员身份、限流、应用时区
- * 和领域服务错误在此收敛；页面不直接读取数据库。导出 worker 通过独立 cron
+ * 使用方：uol-bindings 启动桶与运营管理页 Server Action。转发管理员请求到 Go，
+ * 由 Go 处理限流、应用时区、业务数据与导出。导出 worker 通过独立 cron
  * Principal 进入同一 UOL 网关，避免调度入口绕过权限和审计。
  */
 
@@ -10,6 +10,7 @@ import { logger } from "@repo/shared/logger";
 import {
   operationsCreateExportOutputSchema,
   operationsListExportsOutputSchema,
+  operationsOpenLocalExportDownloadInputSchema,
   operationsPrepareExportDownloadOutputSchema,
   operationsProcessExportsOutputSchema,
   operationsRetryExportOutputSchema,
@@ -19,45 +20,20 @@ import {
   operationsOpenLocalExportDownloadOutputSchema,
   operationsOverviewOutputSchema,
 } from "@repo/shared/operations-dashboard/output-contracts";
-import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import {
   bindExecute,
   type OperationContext,
   OperationError,
   type Principal,
 } from "@repo/shared/uol";
-import { OperationsCommercialServiceError } from "@/features/operations-dashboard/commercial-service";
-import { OperationsContentServiceError } from "@/features/operations-dashboard/content-service";
 import {
-  loadOperationsDetail,
-  OperationsDetailServiceError,
-} from "@/features/operations-dashboard/detail-service";
-import {
-  createOperationsExport,
-  listOperationsExports,
-  OperationsExportServiceError,
-  openOperationsLocalExportDownload,
-  prepareOperationsExportDownload,
-  retryOperationsExport,
-} from "@/features/operations-dashboard/export-service";
-import {
-  expireDatabaseOperationsExports,
-  processDatabaseOperationsExports,
-} from "@/features/operations-dashboard/export-worker";
-import { OperationsGrowthServiceError } from "@/features/operations-dashboard/growth-service";
-import { OperationsHealthAdapterError } from "@/features/operations-dashboard/health-adapter";
-import { requestGoJson } from "@/server/go-backend-client";
-import {
-  databaseOperationsDashboardService,
-  OperationsDashboardServiceError,
-} from "@/features/operations-dashboard/operations-dashboard-service";
-
-const goOperationsEnabled = () =>
-  Boolean(process.env.GO_BACKEND_URL || process.env.GO_BACKEND_INTERNAL_URL);
+  GoBackendRequestError,
+  requestGoJson,
+  requestGoResponse,
+} from "@/server/go-backend-client";
 
 /**
- * 收窄已由 invokeOperation 授权的人工 Principal，并执行运营页面限流。
+ * 收窄已由 invokeOperation 授权的人工 Principal。
  *
  * WHY：角色策略只由 operation access 声明维护；若授权后仍收到非用户 Principal，
  * 这是网关或 binding 不变量损坏，而不是第二套可对外报告的权限判断。
@@ -71,76 +47,29 @@ async function requireOperationsUser(
       "Authorized operations user principal required"
     );
   }
-  const rateLimit = await checkRateLimit(
-    `operations-dashboard:${principal.userId}`,
-    "global"
-  );
-  if (!rateLimit.success) {
-    throw new OperationError(
-      "rate_limited",
-      "Operations dashboard requests are too frequent"
-    );
-  }
-  return principal;
-}
 
-/** 读取已由 operation input schema 校验的任务标识；失败表示 binding 不变量损坏。 */
-function requireOperationsTaskId(input: unknown): string {
-  if (
-    typeof input === "object" &&
-    input !== null &&
-    "taskId" in input &&
-    typeof input.taskId === "string"
-  ) {
-    return input.taskId;
-  }
-  throw new OperationError(
-    "internal_error",
-    "Validated operations export task ID required"
-  );
+  return principal;
 }
 
 /** 只把运营领域公开的稳定错误映射成 UOL 错误，不泄露 SQL 或任务行。 */
 function throwOperationsDashboardError(error: unknown): never {
-  if (
-    error instanceof OperationsDashboardServiceError ||
-    error instanceof OperationsCommercialServiceError ||
-    error instanceof OperationsContentServiceError ||
-    error instanceof OperationsDetailServiceError ||
-    error instanceof OperationsExportServiceError ||
-    error instanceof OperationsGrowthServiceError ||
-    error instanceof OperationsHealthAdapterError
-  ) {
-    if ("code" in error && error.code === "not_ready") {
-      throw new OperationError("not_ready", error.message, undefined, 503);
-    }
-    if ("code" in error && error.code === "validation_error") {
+  if (error instanceof OperationError) throw error;
+  if (error instanceof GoBackendRequestError) {
+    if (error.status === 400)
       throw new OperationError("validation_error", error.message);
-    }
-    if ("code" in error && error.code === "not_implemented") {
-      throw new OperationError(
-        "not_implemented",
-        error.message,
-        undefined,
-        501
-      );
-    }
-    if ("code" in error && error.code === "not_found") {
+    if (error.status === 401)
+      throw new OperationError("unauthenticated", error.message);
+    if (error.status === 403)
+      throw new OperationError("forbidden", error.message);
+    if (error.status === 404)
       throw new OperationError("not_found", error.message);
-    }
-    if ("code" in error && error.code === "conflict") {
+    if (error.status === 409)
       throw new OperationError("conflict", error.message);
-    }
-    if ("code" in error && error.code === "rate_limited") {
+    if (error.status === 429)
       throw new OperationError("rate_limited", error.message);
-    }
-    if ("code" in error && error.code === "storage_unavailable") {
-      throw new OperationError("not_ready", error.message, undefined, 503);
-    }
-    throw new OperationError(
-      "internal_error",
-      "Operations dashboard is unavailable"
-    );
+    if (error.status === 503)
+      throw new OperationError("not_ready", error.message);
+    throw new OperationError("internal_error", "运营数据暂不可用");
   }
   throw error;
 }
@@ -251,9 +180,10 @@ bindExecute(
         "operations.getOverview",
         context,
         async () => {
-          const snapshot = goOperationsEnabled()
-            ? await requestGoJson("/api/admin/operations/overview", { method: "POST", body: JSON.stringify(input) })
-            : await databaseOperationsDashboardService.getOverview(input, getAppTimeZone());
+          const snapshot = await requestGoJson(
+            "/api/admin/operations/overview",
+            { method: "POST", body: JSON.stringify(input) }
+          );
           return operationsOverviewOutputSchema.parse(snapshot);
         },
         (snapshot) => ({
@@ -279,16 +209,17 @@ bindExecute(
 bindExecute(
   "operations.getDetail",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const adminPrincipal = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.getDetail",
         context,
         async () =>
           operationsDetailOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson("/api/admin/operations/detail", { method: "POST", body: JSON.stringify(input) })
-              : await loadOperationsDetail({ actorUserId: adminPrincipal.userId, timeZone: getAppTimeZone(), input })
+            await requestGoJson("/api/admin/operations/detail", {
+              method: "POST",
+              body: JSON.stringify(input),
+            })
           ),
         (result) => ({
           module: result.selection.module,
@@ -307,16 +238,17 @@ bindExecute(
 bindExecute(
   "operations.createExport",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.createExport",
         context,
         async () =>
           operationsCreateExportOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson("/api/admin/operations/exports", { method: "POST", body: JSON.stringify(input) })
-              : await createOperationsExport({ createdBy: admin.userId, timeZone: getAppTimeZone(), input })
+            await requestGoJson("/api/admin/operations/exports", {
+              method: "POST",
+              body: JSON.stringify(input),
+            })
           ),
         (result) => ({
           module: result.task.exportType,
@@ -334,16 +266,16 @@ bindExecute(
 bindExecute(
   "operations.listExports",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.listExports",
         context,
         async () =>
           operationsListExportsOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson(`/api/admin/operations/exports?limit=${encodeURIComponent(String((input as {limit?:number})?.limit ?? 20))}${(input as {cursor?:string})?.cursor ? `&cursor=${encodeURIComponent((input as {cursor:string}).cursor)}` : ""}`)
-              : await listOperationsExports({ createdBy: admin.userId, input })
+            await requestGoJson(
+              `/api/admin/operations/exports?limit=${encodeURIComponent(String((input as { limit?: number })?.limit ?? 20))}${(input as { cursor?: string })?.cursor ? `&cursor=${encodeURIComponent((input as { cursor: string }).cursor)}` : ""}`
+            )
           ),
         (result) => ({ rowCount: result.tasks.length })
       );
@@ -357,16 +289,17 @@ bindExecute(
 bindExecute(
   "operations.retryExport",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.retryExport",
         context,
         async () =>
           operationsRetryExportOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson("/api/admin/operations/exports/retry", { method: "POST", body: JSON.stringify(input) })
-              : await retryOperationsExport({ createdBy: admin.userId, input })
+            await requestGoJson("/api/admin/operations/exports/retry", {
+              method: "POST",
+              body: JSON.stringify(input),
+            })
           ),
         (result) => ({
           module: result.task.exportType,
@@ -384,24 +317,17 @@ bindExecute(
 bindExecute(
   "operations.prepareExportDownload",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
-      const origin =
-        process.env.NEXT_PUBLIC_APP_URL ??
-        process.env.BETTER_AUTH_URL ??
-        "http://localhost:3000";
       return await runObservedOperationsCall(
         "operations.prepareExportDownload",
         context,
         async () =>
           operationsPrepareExportDownloadOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson("/api/admin/operations/exports/prepare-download", { method: "POST", body: JSON.stringify(input) })
-              : await prepareOperationsExportDownload({
-                  createdBy: admin.userId,
-                  input,
-                  localDownloadUrl: (taskId) => new URL(`/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`, origin).toString(),
-                })
+            await requestGoJson(
+              "/api/admin/operations/exports/prepare-download",
+              { method: "POST", body: JSON.stringify(input) }
+            )
           ),
         (result) => ({ exportTaskId: result.taskId })
       );
@@ -415,17 +341,53 @@ bindExecute(
 bindExecute(
   "operations.openLocalExportDownload",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await requireOperationsUser(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.openLocalExportDownload",
         context,
-        async () =>
-          operationsOpenLocalExportDownloadOutputSchema.parse(
-            goOperationsEnabled()
-              ? await requestGoJson("/api/admin/operations/exports/prepare-download", { method: "POST", body: JSON.stringify(input) })
-              : await openOperationsLocalExportDownload({ createdBy: admin.userId, taskId: requireOperationsTaskId(input) })
-          ),
+        async () => {
+          const { taskId } =
+            operationsOpenLocalExportDownloadInputSchema.parse(input);
+          const response = await requestGoResponse(
+            `/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`,
+            { method: "GET" }
+          );
+          const filename = response.headers
+            .get("content-disposition")
+            ?.match(
+              /filename="(operations-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+\.csv)"/
+            )?.[1];
+          const body = response.body;
+          if (
+            !filename ||
+            response.headers.get("content-type") !==
+              "text/csv; charset=utf-8" ||
+            !body
+          ) {
+            await body?.cancel();
+            throw new OperationError("internal_error", "运营导出下载响应无效");
+          }
+          const stream = (async function* () {
+            const reader = body.getReader();
+            try {
+              while (true) {
+                const chunk = await reader.read();
+                if (chunk.done) return;
+                yield chunk.value;
+              }
+            } finally {
+              await reader.cancel();
+              reader.releaseLock();
+            }
+          })();
+          return operationsOpenLocalExportDownloadOutputSchema.parse({
+            taskId,
+            filename,
+            contentType: "text/csv; charset=utf-8",
+            stream,
+          });
+        },
         (result) => ({ exportTaskId: result.taskId })
       );
     } catch (error) {
@@ -447,7 +409,13 @@ bindExecute(
       context,
       async () =>
         operationsProcessExportsOutputSchema.parse(
-          await processDatabaseOperationsExports(limit)
+          await requestGoJson("/api/jobs/operations/exports/process", {
+            method: "POST",
+            body: JSON.stringify({ limit }),
+            headers: process.env.CRON_SECRET
+              ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+              : undefined,
+          })
         ),
       (result) => ({ rowCount: result.processed })
     );
@@ -467,7 +435,13 @@ bindExecute(
       context,
       async () =>
         operationsProcessExportsOutputSchema.parse(
-          await expireDatabaseOperationsExports(limit)
+          await requestGoJson("/api/jobs/operations/exports/expire", {
+            method: "POST",
+            body: JSON.stringify({ limit }),
+            headers: process.env.CRON_SECRET
+              ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+              : undefined,
+          })
         ),
       (result) => ({ rowCount: result.processed })
     );

@@ -16,6 +16,7 @@ import { logError } from "@repo/shared/logger";
 import { adminAction } from "@repo/shared/safe-action";
 import { OperationError } from "@repo/shared/uol";
 import { requestGoJson } from "@/server/go-backend-client";
+import { toGoOperationError } from "@/server/go-backend-operation-error";
 
 /** 客户端可区分且不携带数据库详情的刷新结果。 */
 export type AdminDataDashboardActionResult =
@@ -56,8 +57,9 @@ export const refreshAdminDataDashboardAction = adminAction
         );
         return { status: "ready", snapshot: snapshot.snapshot };
       } catch (error) {
-        if (error instanceof OperationError) {
-          const result = mapOperationError(error);
+        const operationError = toGoOperationError(error);
+        if (operationError instanceof OperationError) {
+          const result = mapOperationError(operationError);
           if (result.status === "unavailable") {
             logError(error, { source: "admin-data-dashboard-action" });
           }

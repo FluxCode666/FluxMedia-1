@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   process.env.DATABASE_URL ??= "postgresql://unit-test:unit-test@127.0.0.1:5432/unit-test";
-  return { checkRateLimit: vi.fn(), requestGoJson: vi.fn() };
+  return { requestGoJson: vi.fn() };
 });
-vi.mock("@repo/shared/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
-vi.mock("@/server/go-backend-client", () => ({ requestGoJson: mocks.requestGoJson }));
+vi.mock("@/server/go-backend-client", () => ({ requestGoJson: mocks.requestGoJson, GoBackendRequestError: class GoBackendRequestError extends Error { constructor(message:string,readonly status:number,readonly code?:string){super(message)} } }));
+import {GoBackendRequestError} from "@/server/go-backend-client";
 import "./analytics";
 
 const SNAPSHOT = {
@@ -29,7 +29,6 @@ const TRENDS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.checkRateLimit.mockResolvedValue({ success: true });
   mocks.requestGoJson.mockImplementation(async (path: string) => {
     if (path === "/api/analytics/summary") return SUMMARY;
     if (path === "/api/analytics/trends") return TRENDS;
@@ -68,9 +67,9 @@ describe("analytics Go bindings", () => {
     expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/analytics/summary");
     expect(mocks.requestGoJson).toHaveBeenCalledWith("/api/analytics/trends", { method: "POST", body: JSON.stringify({ granularity: "hour", metric: "imageCount", range: "last24Hours" }) });
   });
-  it("enforces rate limiting before the user dashboard request", async () => {
-    mocks.checkRateLimit.mockResolvedValue({ success: false });
+  it("preserves Go rate limit rejection", async () => {
+    mocks.requestGoJson.mockRejectedValue(new GoBackendRequestError("Too frequent",429,"RATE_LIMITED"));
     await expect(invokeOperation("analytics.getMyDataDashboard", {}, { type: "user", userId: "user-1", role: "user" })).rejects.toMatchObject({ code: "rate_limited" });
-    expect(mocks.requestGoJson).not.toHaveBeenCalled();
+    expect(mocks.requestGoJson).toHaveBeenCalledTimes(1);
   });
 });

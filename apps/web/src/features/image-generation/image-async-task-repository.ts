@@ -5,7 +5,6 @@
  * 原子 claim、用 claim token 比较交换收敛终态。Redis 只承担唤醒和租约裁决。
  * 使用方：图片异步 UOL binding、BullMQ Worker 与数据库恢复扫描。
  */
-import { createHash } from "node:crypto";
 import type {
   ImageEnqueueAsyncInput,
   ImageGenerateOperationInput,
@@ -20,6 +19,7 @@ import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { createImageAsyncTaskInputDigest } from "./image-async-task-contract";
 import { extractExecuteRows } from "@/server/database-result";
 
 const identifierSchema = z.string().trim().min(1).max(128);
@@ -309,15 +309,7 @@ export interface ImageAsyncTaskRecord {
   updatedAt: Date;
 }
 
-/** 为新单项 writer 生成带算法前缀的稳定输入摘要。 */
-export function createImageAsyncTaskInputDigest(
-  input: ImageGenerateOperationInput
-): string {
-  const parsed = imageGenerateInputSchema.parse(input);
-  return `sha256:${createHash("sha256")
-    .update(JSON.stringify(parsed))
-    .digest("hex")}`;
-}
+export { createImageAsyncTaskInputDigest } from "./image-async-task-contract";
 
 /** 图片异步任务创建输入；身份只允许来自已验证的 Principal。 */
 export type CreateImageAsyncTaskInput = z.input<
@@ -767,10 +759,26 @@ export function createPostgresImageAsyncTaskRepository(
 export const defaultImageAsyncTaskRepository: ImageAsyncTaskRepository =
   createPostgresImageAsyncTaskRepository({
     async execute(query) {
+      if (
+        process.env.GO_BACKEND_URL ||
+        process.env.GO_BACKEND_INTERNAL_URL
+      ) {
+        throw new Error(
+          "Legacy image async repository is disabled when the Go backend is configured"
+        );
+      }
       const { db } = await import("@repo/database");
       return db.execute(query);
     },
     async transaction(work) {
+      if (
+        process.env.GO_BACKEND_URL ||
+        process.env.GO_BACKEND_INTERNAL_URL
+      ) {
+        throw new Error(
+          "Legacy image async repository is disabled when the Go backend is configured"
+        );
+      }
       const { db } = await import("@repo/database");
       return db.transaction(async (transaction) =>
         work({ execute: (query) => transaction.execute(query) })

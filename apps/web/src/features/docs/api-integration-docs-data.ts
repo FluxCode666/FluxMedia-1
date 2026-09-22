@@ -715,16 +715,17 @@ const zhContent = {
     "quality": "medium",
     "response_format": "url",
     "output_format": "png",
-    "background": "auto"
+    "background": "auto",
+    "async": true
   }'`,
       responseExample: `{
+  "id": "task_...",
+  "object": "image.generation",
+  "model": "gpt-image-2",
+  "status": "processing",
   "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ]
+  "created_at": "2026-05-28T00:00:00.000Z",
+  "generation_id": "..."
 }`,
       parameters: [
         {
@@ -789,8 +790,31 @@ const zhContent = {
           description:
             "设为 true 或请求 Accept: text/event-stream 时返回事件流。",
         },
+        {
+          name: "async",
+          requirement: "可选",
+          defaultValue: "false",
+          description:
+            "设为 true 后立即返回持久图片任务；使用 GET /v1/images/{task_id} 轮询。也可使用查询参数 ?async=true；不能与 stream 同时使用。",
+        },
+        {
+          name: "callback_url",
+          requirement: "可选",
+          defaultValue: "无",
+          description:
+            "异步任务完成或失败后接收任务 JSON 的公网 HTTPS webhook 地址。",
+        },
       ],
       responses: [
+        {
+          name: "id / generation_id",
+          description: "异步图片任务 ID 与生成记录 ID。",
+        },
+        {
+          name: "status",
+          description:
+            "异步创建响应和任务查询返回 processing、completed 或 failed。",
+        },
         { name: "created", description: "Unix 秒时间戳。" },
         {
           name: "data[].b64_json / data[].url",
@@ -808,10 +832,16 @@ const zhContent = {
           name: "SSE image_generation.completed",
           description: "流式模式下表示单张图片已完成。",
         },
+        {
+          name: "error",
+          description: "异步任务失败时返回的错误对象；原因位于 error.message。",
+        },
       ],
       notes: [
         "response_format 控制返回 URL 或 base64，output_format 控制图片文件格式。",
         "不同模型对尺寸、透明背景和输出格式的支持范围可能不同。",
+        "async=true 时接口立即返回 HTTP 200 的 processing 任务，后台继续生成；轮询 GET /v1/images/{task_id} 直到 completed 或 failed。任务状态持久保存，可跨进程重启和多实例查询。",
+        "callback_url 仅适用于异步任务，必须是公网 HTTPS 地址；省略 async 或设为 false 时仍使用同步响应，stream 继续使用 SSE。",
       ],
     },
     {
@@ -831,15 +861,16 @@ const zhContent = {
   -F "aspectRatio=1:1" \\
   -F "resolution=1k" \\
   -F "quality=medium" \\
-  -F "response_format=url"`,
+  -F "response_format=url" \\
+  -F "async=true"`,
       responseExample: `{
+  "id": "task_...",
+  "object": "image.generation",
+  "model": "gpt-image-2",
+  "status": "processing",
   "created": 1713833628,
-  "data": [
-    {
-      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
-      "revised_prompt": "..."
-    }
-  ]
+  "created_at": "2026-05-28T00:00:00.000Z",
+  "generation_id": "..."
 }`,
       parameters: [
         {
@@ -920,8 +951,31 @@ const zhContent = {
           description:
             "设为 true 或请求 Accept: text/event-stream 时返回事件流。",
         },
+        {
+          name: "async",
+          requirement: "可选",
+          defaultValue: "false",
+          description:
+            "设为 true 后立即返回持久图片任务；使用 GET /v1/images/{task_id} 轮询。multipart 使用 async=true；也可使用查询参数 ?async=true，不能与 stream 同时使用。",
+        },
+        {
+          name: "callback_url",
+          requirement: "可选",
+          defaultValue: "无",
+          description:
+            "异步任务完成或失败后接收任务 JSON 的公网 HTTPS webhook 地址。",
+        },
       ],
       responses: [
+        {
+          name: "id / generation_id",
+          description: "异步图片任务 ID 与生成记录 ID。",
+        },
+        {
+          name: "status",
+          description:
+            "异步创建响应和任务查询返回 processing、completed 或 failed。",
+        },
         { name: "created", description: "Unix 秒时间戳。" },
         {
           name: "data[].b64_json / data[].url",
@@ -939,10 +993,16 @@ const zhContent = {
           name: "SSE image_edit.completed",
           description: "流式模式下表示单张图片编辑已完成。",
         },
+        {
+          name: "error",
+          description: "异步任务失败时返回的错误对象；原因位于 error.message。",
+        },
       ],
       notes: [
         "multipart/form-data 适合直接上传文件；JSON 请求使用 images 传入图片引用。",
         "mask 的尺寸与输入图片应保持一致。",
+        "async=true 时接口立即返回 HTTP 200 的 processing 任务，后台继续编辑；轮询 GET /v1/images/{task_id} 直到 completed 或 failed。任务状态持久保存，可跨进程重启和多实例查询。",
+        "callback_url 仅适用于异步任务，必须是公网 HTTPS 地址；省略 async 或设为 false 时仍使用同步响应，stream 继续使用 SSE。",
       ],
     },
     {
@@ -1265,7 +1325,11 @@ const zhContent = {
         { name: "object", description: "任务对象类型。" },
         {
           name: "status",
-          description: "processing、needs_attention、completed 或 failed。",
+          description: "processing、completed 或 failed。",
+        },
+        {
+          name: "generation_id",
+          description: "对应的图片生成记录 ID；与任务 ID 一起用于结果关联。",
         },
         {
           name: "data[].b64_json / data[].url",
@@ -1278,7 +1342,7 @@ const zhContent = {
       ],
       notes: [
         "只能查询当前 API 密钥所属用户创建的任务。",
-        "任务仍在执行时 status 为 processing，失败时 error.message 会给出原因。",
+        "任务仍在执行时 status 为 processing，完成后返回 data，失败时 error.message 会给出原因。任务状态持久保存，可跨进程重启和多实例查询。",
       ],
     },
     {
@@ -1598,8 +1662,31 @@ const enContent = {
           description:
             "Return an event stream when true or when Accept is text/event-stream.",
         },
+        {
+          name: "async",
+          requirement: "Optional",
+          defaultValue: "false",
+          description:
+            "When true, return a persistent image task immediately and poll GET /v1/images/{task_id}. You may also use ?async=true; async cannot be combined with stream.",
+        },
+        {
+          name: "callback_url",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "Public HTTPS webhook that receives the task JSON when an async task completes or fails.",
+        },
       ],
       responses: [
+        {
+          name: "id / generation_id",
+          description: "The async image task ID and generation record ID.",
+        },
+        {
+          name: "status",
+          description:
+            "Async create and task lookup responses use processing, completed, or failed.",
+        },
         { name: "created", description: "Unix timestamp in seconds." },
         {
           name: "data[].b64_json / data[].url",
@@ -1618,10 +1705,17 @@ const enContent = {
           description:
             "Signals that one image has completed in streaming mode.",
         },
+        {
+          name: "error",
+          description:
+            "Error object returned when an async task fails; the reason is in error.message.",
+        },
       ],
       notes: [
         "response_format selects URL or base64 output; output_format selects the image file format.",
         "Supported sizes, transparent backgrounds, and output formats vary by model.",
+        "With async=true, the endpoint immediately returns HTTP 200 with a processing task while generation continues in the background. Poll GET /v1/images/{task_id} until completed or failed; task state is persistent across restarts and instances.",
+        "callback_url is only used for async tasks and must be a public HTTPS URL. Omit async or set it to false for the synchronous response; stream remains the SSE option.",
       ],
     },
     {
@@ -1710,8 +1804,31 @@ const enContent = {
           description:
             "Return an event stream when true or when Accept is text/event-stream.",
         },
+        {
+          name: "async",
+          requirement: "Optional",
+          defaultValue: "false",
+          description:
+            "When true, return a persistent image task immediately and poll GET /v1/images/{task_id}. For multipart requests use async=true; you may also use ?async=true, and async cannot be combined with stream.",
+        },
+        {
+          name: "callback_url",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "Public HTTPS webhook that receives the task JSON when an async task completes or fails.",
+        },
       ],
       responses: [
+        {
+          name: "id / generation_id",
+          description: "The async image task ID and generation record ID.",
+        },
+        {
+          name: "status",
+          description:
+            "Async create and task lookup responses use processing, completed, or failed.",
+        },
         { name: "created", description: "Unix timestamp in seconds." },
         {
           name: "data[].b64_json / data[].url",
@@ -1730,10 +1847,17 @@ const enContent = {
           description:
             "Signals that one image edit has completed in streaming mode.",
         },
+        {
+          name: "error",
+          description:
+            "Error object returned when an async task fails; the reason is in error.message.",
+        },
       ],
       notes: [
         "Use multipart/form-data for direct file uploads; JSON requests pass image references through images.",
         "The mask dimensions should match the input image.",
+        "With async=true, the endpoint immediately returns HTTP 200 with a processing task while editing continues in the background. Poll GET /v1/images/{task_id} until completed or failed; task state is persistent across restarts and instances.",
+        "callback_url is only used for async tasks and must be a public HTTPS URL. Omit async or set it to false for the synchronous response; stream remains the SSE option.",
       ],
     },
     {
@@ -1946,7 +2070,12 @@ const enContent = {
         { name: "object", description: "Task object type." },
         {
           name: "status",
-          description: "processing, needs_attention, completed, or failed.",
+          description: "processing, completed, or failed.",
+        },
+        {
+          name: "generation_id",
+          description:
+            "The related image generation record ID for result correlation.",
         },
         {
           name: "data[].b64_json / data[].url",
@@ -1960,7 +2089,7 @@ const enContent = {
       ],
       notes: [
         "Only tasks created by the user who owns the current API key can be queried.",
-        "A running task has status processing. A failed task includes the reason in error.message.",
+        "A running task has status processing; a completed task includes data, and a failed task includes the reason in error.message. Task state is persistent across restarts and instances.",
       ],
     },
     {

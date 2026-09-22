@@ -12,7 +12,7 @@
  * 约定：
  * - 此文件在 import 时执行所有 bindExecute 调用
  * - 每个绑定块对应一个 operation，注明源 service-fn 位置
- * - 尚未接线的 operation 用 TODO 注释标记
+ * - 所有运行时 operation 都必须在启动桶或其专用 binding 模块中完成接线
  */
 
 // 副作用导入：触发所有操作注册到 registry
@@ -20,7 +20,10 @@ import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
 import "@/server/uol-bindings/credits";
+import "@/server/uol-bindings/credits-go";
+import "@/server/uol-bindings/external-api-go";
 import "@/server/uol-bindings/support";
+import "@/server/uol-bindings/announcements";
 import "@/server/uol-bindings/content";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
@@ -36,6 +39,7 @@ import "@/server/uol-bindings/referrals";
 import "@/server/uol-bindings/video-generation";
 import "@/server/uol-bindings/user-auth";
 import "@/server/site-branding-binding";
+import "@/server/uol-bindings/settings-storage-media-moderation";
 
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import {
@@ -50,18 +54,12 @@ import {
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
-import {
-  type ModerationImageInput,
-  moderateContent,
-} from "@repo/shared/moderation";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
-  isExternalApiKeyPrincipal,
   isMcpApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
-import { getExternalModelsForApiKey } from "@/features/external-api/models";
 import { bindHomepageReliabilityOperation } from "@/server/homepage-reliability-binding";
 import { bindModelMarketplaceOperations } from "@/server/model-marketplace-binding";
 import { requestGoJson } from "@/server/go-backend-client";
@@ -69,50 +67,6 @@ import { requestGoJson } from "@/server/go-backend-client";
 // ---------------------------------------------------------------------------
 // image-generation 域
 // ---------------------------------------------------------------------------
-
-/** moderation.proxyModerate - 将代理请求的 base64 图片转换为领域输入并阻止回环代理。 */
-bindExecute(
-  "moderation.proxyModerate",
-  async (
-    input: {
-      prompt: string;
-      images?: Array<{
-        data?: string;
-        type?: string;
-        name?: string;
-        url?: string;
-      }>;
-      mode?: "text" | "image";
-      userId?: string;
-      effectiveBlockRiskLevel: "low" | "medium" | "high";
-      generationId?: string;
-    },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    const images = input.images
-      ?.map(
-        (image): ModerationImageInput => ({
-          data: image.data
-            ? Buffer.from(image.data, "base64")
-            : Buffer.alloc(0),
-          type: image.type || "image/png",
-          ...(image.name ? { name: image.name } : {}),
-          ...(image.url ? { url: image.url } : {}),
-        })
-      )
-      .filter((image) => image.data.length > 0 || Boolean(image.url));
-    return moderateContent({
-      prompt: input.prompt,
-      ...(images ? { images } : {}),
-      ...(input.mode ? { mode: input.mode } : {}),
-      ...(input.userId ? { userId: input.userId } : {}),
-      effectiveBlockRiskLevel: input.effectiveBlockRiskLevel,
-      ...(input.generationId ? { generationId: input.generationId } : {}),
-      skipProxy: true,
-    });
-  }
-);
 
 /** 绑定本人统一生成历史；站内会话和 User MCP 可读，外部 API Key 继续隔离。 */
 bindExecute(
@@ -175,30 +129,6 @@ bindExecute(
         body: JSON.stringify(input),
       })
     );
-  }
-);
-
-/**
- * externalApi.getModels - 外接 API 模型列表。
- *
- * 源：apps/web/src/features/external-api/models.ts。
- * WHY：供应商模型列表必须经过同一 UOL 网关，避免 HTTP 路由和未来 MCP 传输
- * 在可见模型集合上产生漂移。
- */
-bindExecute(
-  "externalApi.getModels",
-  async (
-    _input: Record<string, never>,
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    if (!isExternalApiKeyPrincipal(principal)) {
-      throw new OperationError(
-        "unauthenticated",
-        "API key authentication required"
-      );
-    }
-    return getExternalModelsForApiKey(principal.userId, principal.apiKeyId);
   }
 );
 
@@ -360,29 +290,9 @@ bindExecute(
   }
 );
 
-// TODO: image.generateAction - 委托 image.generate
-// TODO: image.getStatus - getGenerationStatus 逻辑
-// TODO: image.getUserGenerations - 分页查询逻辑
-// TODO: image.getUserGenerationCount - 计数查询逻辑
-// TODO: image.getUserRecentGenerations - 最近生成查询
-// TODO: image.getGenerationById - 单条查询
-// TODO: image.getGenerationStats - 管理员统计
-// TODO: image.getEffectiveConfig - getEffectiveConfig 逻辑
-
 // ---------------------------------------------------------------------------
 // user-auth 域
 // ---------------------------------------------------------------------------
-
-// TODO: user.getDetail - getUserDetailAction 逻辑
-// TODO: user.updateRole - updateUserRoleAction 逻辑
-// TODO: user.ban - banUserAction 逻辑
-// TODO: user.grantCredits - adminGrantCreditsAction 逻辑
-// TODO: user.adjustCredits - adminAdjustCreditsAction 逻辑
-// TODO: user.setCreditsStatus - setUserCreditsStatusAction 逻辑
-// TODO: user.setExternalApiKeyStatus - setExternalApiKeyStatusAction 逻辑
-// TODO: user.create - createUserAction 逻辑
-// TODO: user.updateProfile - updateUserProfileAction 逻辑
-// TODO: user.setPassword - setUserPasswordAction 逻辑
 
 // ---------------------------------------------------------------------------
 // external-api 域
@@ -528,18 +438,6 @@ bindExecute(
   }
 );
 
-// TODO: externalApi.handleImageGenerations - image-generations handler 逻辑
-// TODO: externalApi.handleImageEdits - image-edits handler 逻辑
-
 // ---------------------------------------------------------------------------
 // support 域
 // ---------------------------------------------------------------------------
-
-// TODO: support.createTicket - createTicketAction 逻辑
-// TODO: support.listTickets - getTicketsAction 逻辑
-// TODO: support.getTicketDetail - getTicketDetailAction 逻辑
-// TODO: support.replyTicket - replyTicketAction 逻辑
-// TODO: support.closeTicket - closeTicketAction 逻辑
-// TODO: support.adminListTickets - adminGetTicketsAction 逻辑
-// TODO: support.adminReplyTicket - adminReplyTicketAction 逻辑
-// TODO: support.adminUpdateTicketStatus - adminUpdateTicketStatusAction 逻辑

@@ -1,15 +1,5 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-
-import { db } from "@repo/database";
-import { systemSetting } from "@repo/database/schema";
-
+import { requestGoBackendInternalJson } from "../http/go-backend";
 import { SETTING_DEFINITION_BY_KEY, type SettingKey } from "./definitions";
-
-const DEFAULT_ENV_FILE_PATHS = [
-  "/root/GPT2Image-Pro/apps/web/.env.local",
-  "/home/user1/GPT2Image-Pro/apps/web/.env.local",
-];
 
 // 托管块的哨兵标记。BEGIN..END 之间的内容由本模块独占管理，
 // 下次同步会被整块替换，因此哨兵字符串绝不能出现在任何托管值里，
@@ -84,44 +74,7 @@ export function applyManagedEnvBlock(current: string, managed: string) {
     : `${current.trimEnd()}\n\n${managed}\n`;
 }
 
-function shouldWriteEnvFile(filePath: string) {
-  return filePath.startsWith("/root/") || filePath.startsWith("/home/");
-}
-
+/** Go applies the managed block using configured deployment paths. */
 export async function syncSystemSettingsToEnvFiles() {
-  const rows = await db
-    .select({
-      key: systemSetting.key,
-      value: systemSetting.value,
-    })
-    .from(systemSetting);
-
-  if (rows.length === 0) {
-    return { files: [] as string[] };
-  }
-
-  const managed = buildManagedEnvBlock(rows);
-
-  const writtenFiles: string[] = [];
-  for (const filePath of DEFAULT_ENV_FILE_PATHS) {
-    if (!shouldWriteEnvFile(filePath)) continue;
-    try {
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      let current = "";
-      try {
-        current = await fs.readFile(filePath, "utf8");
-      } catch {
-        current = "";
-      }
-
-      const next = applyManagedEnvBlock(current, managed);
-
-      await fs.writeFile(filePath, next.trimStart(), { mode: 0o600 });
-      writtenFiles.push(filePath);
-    } catch {
-      // Best effort. The database remains the source of truth.
-    }
-  }
-
-  return { files: writtenFiles };
+  return requestGoBackendInternalJson<{ files: string[] }>("/api/system-settings/sync-env", { method: "POST", body: "{}" });
 }

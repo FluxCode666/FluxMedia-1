@@ -281,6 +281,13 @@ describe("SimpleImageCreatePanel reference drag and drop", () => {
     expect(viewButton?.parentElement?.className).toContain("flex-col");
     expect(viewButton?.className).toContain("w-full");
     expect(referenceButton?.className).toContain("w-full");
+    const thumbnail = container?.querySelector<HTMLImageElement>(
+      'section[aria-labelledby="simple-recent-images-title"] img'
+    );
+    expect(thumbnail?.src).toBe(
+      new URL("/api/storage/generations/w320/user/recent.png", document.baseURI)
+        .href
+    );
 
     act(() => viewButton?.click());
     expect(document.body.textContent).toContain("查看图片");
@@ -288,6 +295,9 @@ describe("SimpleImageCreatePanel reference drag and drop", () => {
       'img[data-recent-image-preview="true"]'
     );
     expect(previewImage).not.toBeNull();
+    expect(previewImage?.src).toBe(
+      new URL(recent[0]?.imageUrl ?? "", document.baseURI).href
+    );
     expect(previewImage?.className).toContain("w-auto");
     expect(previewImage?.className).toContain("max-h-[78vh]");
     expect(previewImage?.className).toContain("max-w-full");

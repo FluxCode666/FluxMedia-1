@@ -22,7 +22,7 @@ bindExecute(
         "User session authentication required"
       );
     }
-    const raw = await requestGoJson<GoBalanceResponse>("/api/credits/balance");
+    const raw = await requestGoJson<GoBalanceResponse>("/api/credits/balance?registrationBonus=1");
     return walletBalanceSnapshotSchema.parse({
       ...raw,
       // Keep the shared contract's non-negative invariant even if historical

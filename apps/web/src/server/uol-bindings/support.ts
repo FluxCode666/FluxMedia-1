@@ -9,6 +9,45 @@ import {
 import { bindExecute, OperationError } from "@repo/shared/uol";
 import { requestGoJson } from "@/server/go-backend-client";
 
+type TicketListItemResponse = Record<string, unknown> & {
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TicketListResponse = {
+  items?: TicketListItemResponse[];
+  records?: TicketListItemResponse[];
+  page: number;
+  pageSize: number;
+  total?: number;
+  totalCount?: number;
+  totalPages?: number;
+};
+
+type TicketMessageResponse = Record<string, unknown> & { createdAt: string };
+type TicketDetailResponse = Record<string, unknown> & {
+  userLastSeenAt: string;
+  lastAdminActivityAt?: string | null;
+  adminLastSeenAt?: string | null;
+  lastUserActivityAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type TicketMessagesPageResponse = {
+  items?: TicketMessageResponse[];
+  records?: TicketMessageResponse[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  totalCount?: number;
+  totalPages?: number;
+};
+type TicketDetailEnvelope = {
+  ticket: TicketDetailResponse;
+  ticketUser?: unknown;
+  messages?: TicketMessagesPageResponse;
+};
+
 const userOnly = (principal: { type: string }) => {
   if (principal.type !== "user") {
     throw new OperationError("unauthenticated", "User session authentication required");
@@ -31,9 +70,11 @@ const listTicketsFromGo = async (input: unknown) => {
     status: parsedInput.status,
     search: parsedInput.search,
   });
-  const raw = await requestGoJson<any>(`/api/support/tickets?${q}`);
+  const raw = await requestGoJson<TicketListResponse>(
+    `/api/support/tickets?${q}`
+  );
   return ticketListOutputSchema.parse({
-    records: (raw.items ?? raw.records ?? []).map((item: any) => ({
+    records: (raw.items ?? raw.records ?? []).map((item) => ({
       ...item,
       createdAt: new Date(item.createdAt),
       updatedAt: new Date(item.updatedAt),
@@ -62,7 +103,7 @@ bindExecute("support.getTicketDetail", async (input, principal) => {
     page: String(parsedInput.page),
     pageSize: String(parsedInput.pageSize),
   });
-  const raw = await requestGoJson<any>(
+  const raw = await requestGoJson<TicketDetailEnvelope>(
     `/api/support/tickets/${encodeURIComponent(parsedInput.ticketId)}/messages?${q}`
   );
   const ticket = raw.ticket;
@@ -85,7 +126,7 @@ bindExecute("support.getTicketDetail", async (input, principal) => {
     },
     ticketUser: raw.ticketUser ?? null,
     messages: {
-      records: (messages.items ?? messages.records ?? []).map((item: any) => ({
+      records: (messages.items ?? messages.records ?? []).map((item) => ({
         ...item,
         createdAt: new Date(item.createdAt),
       })),
@@ -124,7 +165,7 @@ bindExecute("support.getAdminTicketDetail", async (input, principal) => {
     page: String(parsedInput.page),
     pageSize: String(parsedInput.pageSize),
   });
-  const raw = await requestGoJson<any>(
+  const raw = await requestGoJson<TicketDetailEnvelope>(
     `/api/support/tickets/${encodeURIComponent(parsedInput.ticketId)}/messages?${q}`
   );
   const ticket = raw.ticket;
@@ -141,7 +182,7 @@ bindExecute("support.getAdminTicketDetail", async (input, principal) => {
     },
     ticketUser: raw.ticketUser ?? null,
     messages: {
-      records: (messages.items ?? messages.records ?? []).map((item: any) => ({ ...item, createdAt: new Date(item.createdAt) })),
+      records: (messages.items ?? messages.records ?? []).map((item) => ({ ...item, createdAt: new Date(item.createdAt) })),
       page: messages.page ?? parsedInput.page,
       pageSize: messages.pageSize ?? parsedInput.pageSize,
       totalCount: messages.total ?? messages.totalCount ?? 0,

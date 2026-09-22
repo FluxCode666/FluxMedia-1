@@ -18,12 +18,23 @@ type scriptRuntimeClient struct {
 	client  *http.Client
 }
 
+// Capacity and connectivity failures belong to the platform, not to the
+// administrator's adapter. Accepted tasks may wait for recovery without using
+// their bounded script-failure budget.
+type scriptRuntimeUnavailableError struct {
+	retryAfterSeconds int
+}
+
+func (*scriptRuntimeUnavailableError) Error() string { return "script runtime temporarily unavailable" }
+
 type scriptRuntimeRequest struct {
-	Script    string `json:"script"`
-	Operation string `json:"operation"`
-	Stage     string `json:"stage"`
-	Input     any    `json:"input"`
-	Context   any    `json:"context"`
+	ValidateOnly     bool   `json:"validateOnly,omitempty"`
+	ResponsePermitID string `json:"responsePermitId,omitempty"`
+	Script           string `json:"script"`
+	Operation        string `json:"operation"`
+	Stage            string `json:"stage"`
+	Input            any    `json:"input"`
+	Context          any    `json:"context"`
 }
 
 type scriptRuntimeResponse struct {
@@ -40,7 +51,10 @@ func newScriptRuntimeClient(baseURL, token string) *scriptRuntimeClient {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil
 	}
-	return &scriptRuntimeClient{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 2 * time.Second}}
+	return &scriptRuntimeClient{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{
+		Timeout:       8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 func (c *scriptRuntimeClient) execute(ctx context.Context, request scriptRuntimeRequest) (json.RawMessage, error) {
@@ -59,14 +73,20 @@ func (c *scriptRuntimeClient) execute(ctx context.Context, request scriptRuntime
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("script runtime unavailable: %w", err)
+		return nil, &scriptRuntimeUnavailableError{}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		return nil, &scriptRuntimeUnavailableError{retryAfterSeconds: imageProviderRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+	}
 	var payload scriptRuntimeResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
 		return nil, errors.New("script runtime returned invalid JSON")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || (payload.Error != nil && payload.Error.Code == "INVALID_RESPONSE_PERMIT") {
+			return nil, &scriptRuntimeUnavailableError{retryAfterSeconds: 1}
+		}
 		if payload.Error != nil && payload.Error.Message != "" {
 			return nil, fmt.Errorf("script runtime %s: %s", payload.Error.Code, payload.Error.Message)
 		}

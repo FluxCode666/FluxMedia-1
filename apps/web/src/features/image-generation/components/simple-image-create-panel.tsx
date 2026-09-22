@@ -8,6 +8,7 @@
 "use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
+import { StorageThumbnail } from "@repo/shared/storage/storage-thumbnail";
 import { Button } from "@repo/ui/components/button";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/components/dialog";
 import { Label } from "@repo/ui/components/label";
@@ -38,7 +39,6 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
-import { getRecentImageDisplayUrl } from "@/features/image-generation/recent-image-display";
 import {
   DEFAULT_IMAGE_MODEL,
   normalizeImageModelResolutions,
@@ -271,7 +271,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
         : null
       : imagePreview?.image.imageUrl
         ? {
-            src: getRecentImageDisplayUrl(imagePreview.image.imageUrl),
+            src: imagePreview.image.imageUrl,
             alt: imagePreview.image.prompt,
             title: "查看图片",
             recent: true,
@@ -911,8 +911,9 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                   )}
                 >
                   {item.imageUrl ? (
-                    <Image
-                      src={getRecentImageDisplayUrl(item.imageUrl)}
+                    <StorageThumbnail
+                      src={item.imageUrl}
+                      thumbnailWidth={320}
                       alt={item.prompt}
                       fill
                       sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, 160px"

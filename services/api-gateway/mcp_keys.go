@@ -122,8 +122,8 @@ func (b *backend) deleteMCPKey(w http.ResponseWriter, r *http.Request, userID, k
 }
 
 func (b *backend) registerMCPKeyRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/mcp/keys", b.endpoint(b.handleMCPKeys))
-	mux.HandleFunc("POST /api/mcp/keys", b.endpoint(b.handleMCPKeys))
-	mux.HandleFunc("POST /api/mcp/keys/{id}/revoke", b.endpoint(b.handleMCPKeys))
-	mux.HandleFunc("DELETE /api/mcp/keys/{id}", b.endpoint(b.handleMCPKeys))
+	mux.HandleFunc("GET /api/mcp/keys", b.endpoint(b.handleRetiredMCP))
+	mux.HandleFunc("POST /api/mcp/keys", b.endpoint(b.handleRetiredMCP))
+	mux.HandleFunc("POST /api/mcp/keys/{id}/revoke", b.endpoint(b.handleRetiredMCP))
+	mux.HandleFunc("DELETE /api/mcp/keys/{id}", b.endpoint(b.handleRetiredMCP))
 }

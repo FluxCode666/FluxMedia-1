@@ -4,9 +4,8 @@
  * 使用方包括 UOL 调用方、Server Action 和 Dashboard Server Component。这里只识别
  * 稳定错误码与已脱敏异常特征，不返回 SQL、绑定参数或连接配置。
  */
-import { isPostgresTimeoutError } from "@repo/database/pool";
-
 import { OperationError } from "./uol/errors";
+import { isPostgresTimeoutError } from "./postgres-timeout";
 
 /** 判断未知值是否为可安全读取属性的对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {

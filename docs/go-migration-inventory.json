@@ -1,9 +1,11 @@
 {
+  "schemaVersion": 2,
   "routes": [
     {
       "path": "/api/admin/model-configuration",
       "methods": [
         "DELETE",
+        "GET",
         "POST"
       ],
       "source": "apps/web/src/app/api/admin/model-configuration/route.ts"
@@ -1209,6 +1211,21 @@
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
+      "name": "referral.fulfillFirstPayment.alipay",
+      "access": "{\"kind\":\"webhook\",\"provider\":\"alipay\"}",
+      "source": "packages/shared/src/uol/operations/referrals.ts"
+    },
+    {
+      "name": "referral.fulfillFirstPayment.creem",
+      "access": "{\"kind\":\"webhook\",\"provider\":\"creem\"}",
+      "source": "packages/shared/src/uol/operations/referrals.ts"
+    },
+    {
+      "name": "referral.fulfillFirstPayment.epay",
+      "access": "{\"kind\":\"webhook\",\"provider\":\"epay\"}",
+      "source": "packages/shared/src/uol/operations/referrals.ts"
+    },
+    {
       "name": "referral.getMyDashboard",
       "access": "{ kind: \"user\" }",
       "source": "packages/shared/src/uol/operations/referrals.ts"
@@ -1574,33 +1591,46 @@
       "source": "packages/shared/src/uol/operations/video-generation.ts"
     }
   ],
-  "directDatabaseImports": [
+  "directDatabaseImports": [],
+  "legacyDatabaseImports": [
     "apps/web/src/features/dashboard/analytics-service.ts",
     "apps/web/src/features/dashboard/output-usage-read-model.ts",
     "apps/web/src/features/data-dashboard/admin-data-dashboard-user-search.ts",
     "apps/web/src/features/data-dashboard/data-dashboard-service.ts",
     "apps/web/src/features/external-api/key-management-service.ts",
+    "apps/web/src/features/image-backend-pool/group-service.ts",
+    "apps/web/src/features/image-backend-pool/image-size-config-service.ts",
+    "apps/web/src/features/image-backend-pool/member-service.ts",
+    "apps/web/src/features/image-backend-pool/repository.ts",
+    "apps/web/src/features/image-backend-pool/runtime-service.ts",
     "apps/web/src/features/image-generation/admin-history-repository.ts",
     "apps/web/src/features/image-generation/generation-deletion-service.ts",
     "apps/web/src/features/image-generation/history-repository.ts",
+    "apps/web/src/features/image-generation/image-async-task-repository.ts",
     "apps/web/src/features/image-generation/operations.ts",
     "apps/web/src/features/image-generation/sla.ts",
+    "apps/web/src/features/image-generation/video-api-key-quota.ts",
     "apps/web/src/features/image-generation/video-callback-delivery.ts",
-    "apps/web/src/features/image-generation/video-callback-policy.ts",
     "apps/web/src/features/image-generation/video-input-assets.ts",
+    "apps/web/src/features/image-generation/video-input-cleanup-queue.ts",
     "apps/web/src/features/image-generation/video-operations.ts",
+    "apps/web/src/features/image-generation/video-recovery-repository.ts",
+    "apps/web/src/features/image-generation/video-submission-attempt-repository.ts",
+    "apps/web/src/features/image-generation/video-task-admission.ts",
+    "apps/web/src/features/model-configuration/repository.ts",
     "apps/web/src/features/operations-dashboard/commercial-repository.ts",
     "apps/web/src/features/operations-dashboard/content-repository.ts",
     "apps/web/src/features/operations-dashboard/detail-commercial-sql.ts",
     "apps/web/src/features/operations-dashboard/detail-content-sql.ts",
     "apps/web/src/features/operations-dashboard/detail-growth-sql.ts",
+    "apps/web/src/features/operations-dashboard/detail-repository.ts",
     "apps/web/src/features/operations-dashboard/export-task-cleanup-repository.ts",
-    "apps/web/src/features/operations-dashboard/export-task-contracts.ts",
     "apps/web/src/features/operations-dashboard/export-task-create-repository.ts",
     "apps/web/src/features/operations-dashboard/export-task-lease-repository.ts",
     "apps/web/src/features/operations-dashboard/export-task-read-repository.ts",
     "apps/web/src/features/operations-dashboard/growth-repository.ts",
     "apps/web/src/features/operations-dashboard/health-adapter.ts",
+    "apps/web/src/features/operations-dashboard/operations-dashboard-service.ts",
     "apps/web/src/features/operations-dashboard/operations-facts-repository.ts",
     "apps/web/src/features/payment/admin/admin-payment-repository.ts",
     "apps/web/src/features/payment/credit-top-up.ts",
@@ -1611,21 +1641,1518 @@
     "apps/web/src/features/site-branding/service.ts",
     "apps/web/src/features/usage-log/repository.ts",
     "apps/web/src/server/internal-job-scheduler.ts",
-    "packages/shared/src/auth/bootstrap-super-admin.ts",
+    "apps/web/src/server/media-task-recovery-repository.ts",
+    "apps/web/src/server/uol-bindings/video-current-quotes.ts",
     "packages/shared/src/auth/index.ts",
     "packages/shared/src/auth/registration-identity.ts",
     "packages/shared/src/auth/registration-verification-plugin.ts",
-    "packages/shared/src/auth/registration-verification.ts",
-    "packages/shared/src/credits/core.ts",
-    "packages/shared/src/credits/purchase-orders.ts",
-    "packages/shared/src/credits/usage-read-model.ts",
-    "packages/shared/src/database-errors.ts",
-    "packages/shared/src/generation-maintenance.ts",
-    "packages/shared/src/payment/epay.ts",
-    "packages/shared/src/referrals/service.ts",
-    "packages/shared/src/system-settings/bootstrap.ts",
-    "packages/shared/src/system-settings/env-file.ts",
-    "packages/shared/src/system-settings/index.ts",
-    "packages/shared/src/uol/invoke.ts"
+    "packages/shared/src/credits/usage-projection-postgres.ts",
+    "packages/shared/src/moderation/policy-repository.ts"
+  ],
+  "runtimeInfrastructureImports": [],
+  "serverGoRequests": [
+    {
+      "path": "/api/admin/status/errors",
+      "method": "POST",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/page.tsx",
+      "line": 724
+    },
+    {
+      "path": "/api/admin/status/overview",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/page.tsx",
+      "line": 1031
+    },
+    {
+      "path": "/api/image-generation/gallery",
+      "method": "POST",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/gallery/page.tsx",
+      "line": 39
+    },
+    {
+      "path": "/api/user/profile",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/gallery/page.tsx",
+      "line": 43
+    },
+    {
+      "path": "/api/image-generation/media-limits",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/gallery/page.tsx",
+      "line": 46
+    },
+    {
+      "path": "/api/image-generation/page-data",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/generate/page.tsx",
+      "line": 40
+    },
+    {
+      "path": "/api/referrals/dashboard",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/referrals/page.tsx",
+      "line": 25
+    },
+    {
+      "path": "/api/referrals/relationships",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/referrals/page.tsx",
+      "line": 26
+    },
+    {
+      "path": "/api/user/profile",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/referrals/page.tsx",
+      "line": 29
+    },
+    {
+      "path": "/api/user/profile",
+      "method": "GET",
+      "source": "apps/web/src/app/[locale]/(dashboard)/dashboard/settings/page.tsx",
+      "line": 31
+    },
+    {
+      "path": "/api/announcements/unread-count",
+      "method": "GET",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 20
+    },
+    {
+      "path": "/api/announcements/read-all",
+      "method": "POST",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 26
+    },
+    {
+      "path": "/api/announcements/read",
+      "method": "POST",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 37
+    },
+    {
+      "path": "/api/admin/announcements",
+      "method": "POST",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 48
+    },
+    {
+      "path": "/api/admin/announcements/audit-value",
+      "method": "PUT",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 61
+    },
+    {
+      "path": "/api/admin/announcements/audit-value",
+      "method": "DELETE",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 73
+    },
+    {
+      "path": "/api/admin/announcements/audit-value/toggle",
+      "method": "POST",
+      "source": "apps/web/src/features/announcements/actions.ts",
+      "line": 87
+    },
+    {
+      "path": "/api/announcements",
+      "method": "GET",
+      "source": "apps/web/src/features/announcements/announcement-page-data.ts",
+      "line": 27
+    },
+    {
+      "path": "/api/announcements/read-all",
+      "method": "POST",
+      "source": "apps/web/src/features/announcements/announcement-page-data.ts",
+      "line": 49
+    },
+    {
+      "path": "/api/admin/announcements",
+      "method": "GET",
+      "source": "apps/web/src/features/announcements/announcement-page-data.ts",
+      "line": 61
+    },
+    {
+      "path": "/api/content/blog",
+      "method": "GET",
+      "source": "apps/web/src/features/content/content-index-page-data.ts",
+      "line": 21
+    },
+    {
+      "path": "/api/content/pseo",
+      "method": "GET",
+      "source": "apps/web/src/features/content/content-index-page-data.ts",
+      "line": 31
+    },
+    {
+      "path": "/api/image-generation/recent",
+      "method": "GET",
+      "source": "apps/web/src/features/dashboard/dashboard-data.ts",
+      "line": 47
+    },
+    {
+      "path": "/api/analytics/summary",
+      "method": "GET",
+      "source": "apps/web/src/features/dashboard/dashboard-data.ts",
+      "line": 56
+    },
+    {
+      "path": "/api/credits/balance",
+      "method": "GET",
+      "source": "apps/web/src/features/dashboard/dashboard-data.ts",
+      "line": 65
+    },
+    {
+      "path": "/api/support/dashboard-configuration",
+      "method": "GET",
+      "source": "apps/web/src/features/dashboard/dashboard-support-data.ts",
+      "line": 48
+    },
+    {
+      "path": "/api/announcements",
+      "method": "GET",
+      "source": "apps/web/src/features/dashboard/dashboard-support-data.ts",
+      "line": 67
+    },
+    {
+      "path": "/api/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/features/data-dashboard/actions.ts",
+      "line": 56
+    },
+    {
+      "path": "/api/admin/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/features/data-dashboard/admin-actions.ts",
+      "line": 54
+    },
+    {
+      "path": "/api/admin/analytics/users",
+      "method": "GET",
+      "source": "apps/web/src/features/data-dashboard/admin-actions.ts",
+      "line": 86
+    },
+    {
+      "path": "/api/admin/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/features/data-dashboard/admin-data-dashboard-page-data.ts",
+      "line": 49
+    },
+    {
+      "path": "/api/admin/analytics/users",
+      "method": "GET",
+      "source": "apps/web/src/features/data-dashboard/admin-data-dashboard-page-data.ts",
+      "line": 64
+    },
+    {
+      "path": "/api/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/features/data-dashboard/data-dashboard-page-data.ts",
+      "line": 37
+    },
+    {
+      "path": "/api/admin/image-backend/size-configs",
+      "method": "GET",
+      "source": "apps/web/src/features/image-backend-pool/actions.ts",
+      "line": 186
+    },
+    {
+      "path": "/api/image-backend/groups/options",
+      "method": "GET",
+      "source": "apps/web/src/features/image-backend-pool/actions.ts",
+      "line": 349
+    },
+    {
+      "path": "/api/images/generate",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/actions.ts",
+      "line": 41
+    },
+    {
+      "path": "/api/image-generation/delete",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/actions.ts",
+      "line": 71
+    },
+    {
+      "path": "/api/image-generation/batch-delete",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/actions.ts",
+      "line": 92
+    },
+    {
+      "path": "/api/image-generation/gallery",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/actions.ts",
+      "line": 101
+    },
+    {
+      "path": "/api/image-generation/history",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/history-actions.ts",
+      "line": 36
+    },
+    {
+      "path": "/api/admin/image-generation/history",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/history-actions.ts",
+      "line": 45
+    },
+    {
+      "path": "/api/admin/image-generation/request-snapshot",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/history-actions.ts",
+      "line": 56
+    },
+    {
+      "path": "/api/image-generation/video-inputs",
+      "method": "POST",
+      "source": "apps/web/src/features/image-generation/history-actions.ts",
+      "line": 73
+    },
+    {
+      "path": "/api/marketing/sla-visibility",
+      "method": "PUT",
+      "source": "apps/web/src/features/marketing/actions/sla-status.ts",
+      "line": 36
+    },
+    {
+      "path": "/api/model-marketplace/public",
+      "method": "GET",
+      "source": "apps/web/src/features/marketing/homepage/homepage-page-data.ts",
+      "line": 224
+    },
+    {
+      "path": "/api/marketing/sla-visibility",
+      "method": "GET",
+      "source": "apps/web/src/features/marketing/homepage/homepage-page-data.ts",
+      "line": 240
+    },
+    {
+      "path": "/api/marketing/sla-stats",
+      "method": "GET",
+      "source": "apps/web/src/features/marketing/homepage/homepage-page-data.ts",
+      "line": 257
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "GET",
+      "source": "apps/web/src/features/model-configuration/actions.ts",
+      "line": 29
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "GET",
+      "source": "apps/web/src/features/model-configuration/actions.ts",
+      "line": 51
+    },
+    {
+      "path": "/api/model-marketplace/public",
+      "method": "GET",
+      "source": "apps/web/src/features/model-marketplace/page-data.ts",
+      "line": 38
+    },
+    {
+      "path": "/api/admin/operations/overview",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 64
+    },
+    {
+      "path": "/api/admin/operations/detail",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 80
+    },
+    {
+      "path": "/api/admin/operations/exports",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 90
+    },
+    {
+      "path": "/api/admin/operations/exports",
+      "method": "GET",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 102
+    },
+    {
+      "path": "/api/admin/operations/exports/retry",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 110
+    },
+    {
+      "path": "/api/admin/operations/exports/prepare-download",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/actions.ts",
+      "line": 120
+    },
+    {
+      "path": "/api/operations/web-visit",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/dashboard-web-visit.ts",
+      "line": 28
+    },
+    {
+      "path": "/api/admin/operations/overview",
+      "method": "POST",
+      "source": "apps/web/src/features/operations-dashboard/operations-dashboard-page-data.ts",
+      "line": 51
+    },
+    {
+      "path": "/api/admin/operations/exports",
+      "method": "GET",
+      "source": "apps/web/src/features/operations-dashboard/operations-dashboard-page-data.ts",
+      "line": 60
+    },
+    {
+      "path": "/api/admin/payment/overview",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/admin/actions.ts",
+      "line": 26
+    },
+    {
+      "path": "/api/admin/payment/orders",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/admin/actions.ts",
+      "line": 35
+    },
+    {
+      "path": "/api/admin/payment/users/search",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/admin/actions.ts",
+      "line": 45
+    },
+    {
+      "path": "/api/credits/top-up/options",
+      "method": "GET",
+      "source": "apps/web/src/features/payment/credit-top-up-actions.ts",
+      "line": 29
+    },
+    {
+      "path": "/api/credits/top-up/checkout",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/credit-top-up-actions.ts",
+      "line": 47
+    },
+    {
+      "path": "/api/credits/top-up/order-status",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/credit-top-up-actions.ts",
+      "line": 64
+    },
+    {
+      "path": "/api/credits/payment/status",
+      "method": "POST",
+      "source": "apps/web/src/features/payment/credit-top-up-actions.ts",
+      "line": 81
+    },
+    {
+      "path": "/api/referrals/dashboard",
+      "method": "GET",
+      "source": "apps/web/src/features/referrals/actions.ts",
+      "line": 16
+    },
+    {
+      "path": "/api/auth/update-user",
+      "method": "POST",
+      "source": "apps/web/src/features/settings/components/settings-profile-view.tsx",
+      "line": 178
+    },
+    {
+      "path": "/api/user/time-zone",
+      "method": "POST",
+      "source": "apps/web/src/features/settings/components/settings-profile-view.tsx",
+      "line": 204
+    },
+    {
+      "path": "/api/support/tickets",
+      "method": "GET",
+      "source": "apps/web/src/features/support/ticket-actions.ts",
+      "line": 31
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "GET",
+      "source": "apps/web/src/features/support/ticket-actions.ts",
+      "line": 56
+    },
+    {
+      "path": "/api/support/tickets/audit-value/seen",
+      "method": "POST",
+      "source": "apps/web/src/features/support/ticket-actions.ts",
+      "line": 88
+    },
+    {
+      "path": "/api/credits/balance",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 21
+    },
+    {
+      "path": "/api/credits/top-up/options",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 27
+    },
+    {
+      "path": "/api/credits/payment-orders",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 34
+    },
+    {
+      "path": "/api/credits/balance",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 46
+    },
+    {
+      "path": "/api/credits/payment-orders",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 48
+    },
+    {
+      "path": "/api/credits/top-up/options",
+      "method": "GET",
+      "source": "apps/web/src/features/wallet/actions.ts",
+      "line": 50
+    },
+    {
+      "path": "/api/marketing/sla-stats",
+      "method": "GET",
+      "source": "apps/web/src/server/homepage-reliability-binding.ts",
+      "line": 26
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "GET",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 82
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "GET",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 84
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "POST",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 93
+    },
+    {
+      "path": "/api/admin/model-configuration",
+      "method": "DELETE",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 98
+    },
+    {
+      "path": "/api/model-marketplace/public",
+      "method": "GET",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 103
+    },
+    {
+      "path": "/api/videos/capabilities",
+      "method": "GET",
+      "source": "apps/web/src/server/model-marketplace-binding.ts",
+      "line": 107
+    },
+    {
+      "path": "/api/admin/status/errors",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/admin-status.ts",
+      "line": 16
+    },
+    {
+      "path": "/api/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 70
+    },
+    {
+      "path": "/api/admin/analytics/data-dashboard",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 90
+    },
+    {
+      "path": "/api/admin/analytics/users",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 118
+    },
+    {
+      "path": "/api/analytics/summary",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 132
+    },
+    {
+      "path": "/api/analytics/summary",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 133
+    },
+    {
+      "path": "/api/support/dashboard-configuration",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 41
+    },
+    {
+      "path": "/api/announcements",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 49
+    },
+    {
+      "path": "/api/announcements",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 68
+    },
+    {
+      "path": "/api/announcements/unread-count",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 82
+    },
+    {
+      "path": "/api/announcements/read",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 88
+    },
+    {
+      "path": "/api/announcements/read-all",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 97
+    },
+    {
+      "path": "/api/admin/announcements",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 110
+    },
+    {
+      "path": "/api/admin/announcements",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 133
+    },
+    {
+      "path": "/api/admin/announcements",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 150
+    },
+    {
+      "path": "/api/admin/announcements/audit-value",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 161
+    },
+    {
+      "path": "/api/admin/announcements/audit-value",
+      "method": "DELETE",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 171
+    },
+    {
+      "path": "/api/admin/announcements/audit-value/toggle",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/announcements.ts",
+      "line": 178
+    },
+    {
+      "path": "/api/content/blog",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/content.ts",
+      "line": 26
+    },
+    {
+      "path": "/api/content/pseo",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/content.ts",
+      "line": 39
+    },
+    {
+      "path": "/api/credits/purchase-checkout",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/credits-go.ts",
+      "line": 92
+    },
+    {
+      "path": "/api/credits/balance",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/credits.ts",
+      "line": 25
+    },
+    {
+      "path": "/v1/credits",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/external-api-go.ts",
+      "line": 51
+    },
+    {
+      "path": "/v1/images/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/external-api-go.ts",
+      "line": 63
+    },
+    {
+      "path": "/v1/models",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/external-api-go.ts",
+      "line": 69
+    },
+    {
+      "path": "/api/admin/api-keys/audit-value/status",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/external-api-go.ts",
+      "line": 81
+    },
+    {
+      "path": "/api/image-generation/async",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-async-task.ts",
+      "line": 257
+    },
+    {
+      "path": "/api/image-generation/async",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-async-task.ts",
+      "line": 258
+    },
+    {
+      "path": "/api/image-generation/async/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/image-async-task.ts",
+      "line": 441
+    },
+    {
+      "path": "/api/image-generation/async/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/image-async-task.ts",
+      "line": 442
+    },
+    {
+      "path": "/api/image-generation/async/audit-value/process",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-async-task.ts",
+      "line": 787
+    },
+    {
+      "path": "/api/image-generation/delete",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-deletion.ts",
+      "line": 37
+    },
+    {
+      "path": "/api/image-generation/batch-delete",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-deletion.ts",
+      "line": 55
+    },
+    {
+      "path": "/api/images/status/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 144
+    },
+    {
+      "path": "/api/images/status/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 145
+    },
+    {
+      "path": "/api/admin/image-generation/history-projection",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 402
+    },
+    {
+      "path": "/api/image-generation/gallery",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 419
+    },
+    {
+      "path": "/api/operations/web-visit",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard-facts.ts",
+      "line": 8
+    },
+    {
+      "path": "/api/operations/ensure-epoch",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard-facts.ts",
+      "line": 14
+    },
+    {
+      "path": "/api/admin/operations/overview",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 183
+    },
+    {
+      "path": "/api/admin/operations/detail",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 219
+    },
+    {
+      "path": "/api/admin/operations/exports",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 248
+    },
+    {
+      "path": "/api/admin/operations/exports",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 276
+    },
+    {
+      "path": "/api/admin/operations/exports/retry",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 299
+    },
+    {
+      "path": "/api/admin/operations/exports/prepare-download",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 327
+    },
+    {
+      "path": "/api/admin/operations/exports/audit-value/download",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 352
+    },
+    {
+      "path": "/api/jobs/operations/exports/process",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 412
+    },
+    {
+      "path": "/api/jobs/operations/exports/expire",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/operations-dashboard.ts",
+      "line": 438
+    },
+    {
+      "path": "/api/admin/payment/overview",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-admin.ts",
+      "line": 23
+    },
+    {
+      "path": "/api/admin/payment/orders",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-admin.ts",
+      "line": 36
+    },
+    {
+      "path": "/api/admin/payment/users/search",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-admin.ts",
+      "line": 46
+    },
+    {
+      "path": "/api/internal/payment-fulfillment/recover",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-fulfillment.ts",
+      "line": 13
+    },
+    {
+      "path": "/api/credits/payment-orders",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/payment-user.ts",
+      "line": 21
+    },
+    {
+      "path": "/api/internal/payment-fulfillment/epay",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-webhooks.ts",
+      "line": 21
+    },
+    {
+      "path": "/api/internal/payment-fulfillment/creem",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/payment-webhooks.ts",
+      "line": 33
+    },
+    {
+      "path": "/api/referrals/dashboard",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/referrals.ts",
+      "line": 23
+    },
+    {
+      "path": "/api/referrals/relationships",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/referrals.ts",
+      "line": 36
+    },
+    {
+      "path": "/api/marketing/sla-visibility",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 39
+    },
+    {
+      "path": "/api/pagination/config",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 40
+    },
+    {
+      "path": "/api/system-settings/site-branding",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 41
+    },
+    {
+      "path": "/api/marketing/sla-visibility",
+      "method": "PUT",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 44
+    },
+    {
+      "path": "/api/system-settings/site-logo",
+      "method": "PUT",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 48
+    },
+    {
+      "path": "/api/moderation/enabled",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 104
+    },
+    {
+      "path": "/moderate",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 109
+    },
+    {
+      "path": "/api/support/tickets",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 73
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 106
+    },
+    {
+      "path": "/api/support/tickets/audit-value/seen",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 144
+    },
+    {
+      "path": "/api/support/tickets/audit-value/seen",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 154
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 168
+    },
+    {
+      "path": "/api/support/tickets/unread-count",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 196
+    },
+    {
+      "path": "/api/support/tickets/unread-count",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 201
+    },
+    {
+      "path": "/api/support/tickets",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 211
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 227
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 239
+    },
+    {
+      "path": "/api/support/tickets/audit-value/status",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/support.ts",
+      "line": 248
+    },
+    {
+      "path": "/api/admin/users",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 68
+    },
+    {
+      "path": "/api/admin/users/audit-value",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 77
+    },
+    {
+      "path": "/api/admin/users/audit-value",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 83
+    },
+    {
+      "path": "/api/admin/users/audit-value",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 97
+    },
+    {
+      "path": "/api/admin/users/audit-value/credits/status",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 110
+    },
+    {
+      "path": "/api/admin/users/audit-value/external-api-key-status",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 123
+    },
+    {
+      "path": "/api/admin/users",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 135
+    },
+    {
+      "path": "/api/admin/users/audit-value",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 145
+    },
+    {
+      "path": "/api/admin/users/audit-value",
+      "method": "PATCH",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 155
+    },
+    {
+      "path": "/api/session/current",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 163
+    },
+    {
+      "path": "/api/auth/registration-verification",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 170
+    },
+    {
+      "path": "/api/auth/registration-verification/verify",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 180
+    },
+    {
+      "path": "/api/user/profile",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 189
+    },
+    {
+      "path": "/api/user/time-zone",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 208
+    },
+    {
+      "path": "/api/internal/auth/bootstrap",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings/user-auth.ts",
+      "line": 226
+    },
+    {
+      "path": "/api/image-generation/history",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 83
+    },
+    {
+      "path": "/api/admin/image-generation/history",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 105
+    },
+    {
+      "path": "/api/admin/image-generation/request-snapshot",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 127
+    },
+    {
+      "path": "/api/credits/usage-log",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 153
+    },
+    {
+      "path": "/api/credits/usage-log/detail",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 170
+    },
+    {
+      "path": "/api/credits/top-up/options",
+      "method": "GET",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 190
+    },
+    {
+      "path": "/api/credits/top-up/checkout",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 213
+    },
+    {
+      "path": "/api/credits/top-up/order-status",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 235
+    },
+    {
+      "path": "/api/credits/payment/status",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 257
+    },
+    {
+      "path": "/api/internal/payment-fulfillment/alipay",
+      "method": "POST",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 285
+    },
+    {
+      "path": "/api/internal/auth/bootstrap",
+      "method": "POST",
+      "source": "packages/shared/src/auth/bootstrap-super-admin.ts",
+      "line": 5
+    },
+    {
+      "path": "/api/auth/registration-verification",
+      "method": "POST",
+      "source": "packages/shared/src/auth/registration-verification.ts",
+      "line": 4
+    },
+    {
+      "path": "/api/auth/registration-verification/verify",
+      "method": "POST",
+      "source": "packages/shared/src/auth/registration-verification.ts",
+      "line": 10
+    },
+    {
+      "path": "/api/credits/packages",
+      "method": "GET",
+      "source": "packages/shared/src/credits/actions.ts",
+      "line": 34
+    },
+    {
+      "path": "/api/internal/credits/service",
+      "method": "POST",
+      "source": "packages/shared/src/credits/core.ts",
+      "line": 130
+    },
+    {
+      "path": "/api/internal/credits/operation",
+      "method": "POST",
+      "source": "packages/shared/src/credits/core.ts",
+      "line": 152
+    },
+    {
+      "path": "/api/internal/credits/operation",
+      "method": "POST",
+      "source": "packages/shared/src/credits/core.ts",
+      "line": 165
+    },
+    {
+      "path": "/api/admin/users/audit-value/credits/status",
+      "method": "POST",
+      "source": "packages/shared/src/credits/core.ts",
+      "line": 198
+    },
+    {
+      "path": "/api/admin/users/audit-value/credits/status",
+      "method": "POST",
+      "source": "packages/shared/src/credits/core.ts",
+      "line": 201
+    },
+    {
+      "path": "/api/credits/purchase-checkout",
+      "method": "POST",
+      "source": "packages/shared/src/credits/purchase-checkout-runtime.ts",
+      "line": 10
+    },
+    {
+      "path": "/api/jobs/images/expire-pending",
+      "method": "POST",
+      "source": "packages/shared/src/generation-maintenance.ts",
+      "line": 286
+    },
+    {
+      "path": "/api/jobs/images/retention",
+      "method": "POST",
+      "source": "packages/shared/src/generation-maintenance.ts",
+      "line": 293
+    },
+    {
+      "path": "/api/jobs/images/retention",
+      "method": "POST",
+      "source": "packages/shared/src/generation-maintenance.ts",
+      "line": 296
+    },
+    {
+      "path": "/api/image-generation/media-limits",
+      "method": "GET",
+      "source": "packages/shared/src/image-generation/media-limit-service.ts",
+      "line": 327
+    },
+    {
+      "path": "/api/admin/users/audit-value/concurrency",
+      "method": "POST",
+      "source": "packages/shared/src/image-generation/media-limit-service.ts",
+      "line": 333
+    },
+    {
+      "path": "/api/system-settings/moderation-policy",
+      "method": "GET",
+      "source": "packages/shared/src/moderation/policy-service.ts",
+      "line": 540
+    },
+    {
+      "path": "/api/moderation/users/audit-value/policy",
+      "method": "GET",
+      "source": "packages/shared/src/moderation/policy-service.ts",
+      "line": 545
+    },
+    {
+      "path": "/api/moderation/users/audit-value/policy",
+      "method": "GET",
+      "source": "packages/shared/src/moderation/policy-service.ts",
+      "line": 551
+    },
+    {
+      "path": "/api/system-settings/moderation-policy",
+      "method": "PUT",
+      "source": "packages/shared/src/moderation/policy-service.ts",
+      "line": 557
+    },
+    {
+      "path": "/api/moderation/users/audit-value/policy",
+      "method": "POST",
+      "source": "packages/shared/src/moderation/policy-service.ts",
+      "line": 569
+    },
+    {
+      "path": "/api/pagination/config",
+      "method": "GET",
+      "source": "packages/shared/src/pagination/server.ts",
+      "line": 18
+    },
+    {
+      "path": "/api/internal/referrals/profile",
+      "method": "POST",
+      "source": "packages/shared/src/referrals/service.ts",
+      "line": 79
+    },
+    {
+      "path": "/api/internal/referrals/link",
+      "method": "POST",
+      "source": "packages/shared/src/referrals/service.ts",
+      "line": 101
+    },
+    {
+      "path": "/api/internal/referrals/dashboard",
+      "method": "POST",
+      "source": "packages/shared/src/referrals/service.ts",
+      "line": 111
+    },
+    {
+      "path": "/api/internal/referrals/relationships",
+      "method": "POST",
+      "source": "packages/shared/src/referrals/service.ts",
+      "line": 122
+    },
+    {
+      "path": "/api/internal/referrals/fulfill-first-payment",
+      "method": "POST",
+      "source": "packages/shared/src/referrals/service.ts",
+      "line": 134
+    },
+    {
+      "path": "/api/admin/users",
+      "method": "GET",
+      "source": "packages/shared/src/support/admin-user-list-service.ts",
+      "line": 24
+    },
+    {
+      "path": "/api/support/tickets",
+      "method": "GET",
+      "source": "packages/shared/src/support/ticket-list-service.ts",
+      "line": 15
+    },
+    {
+      "path": "/api/support/tickets/audit-value/messages",
+      "method": "GET",
+      "source": "packages/shared/src/support/ticket-list-service.ts",
+      "line": 21
+    },
+    {
+      "path": "/api/support/tickets/audit-value/seen",
+      "method": "POST",
+      "source": "packages/shared/src/support/ticket-list-service.ts",
+      "line": 27
+    },
+    {
+      "path": "/api/system-settings/bootstrap",
+      "method": "GET",
+      "source": "packages/shared/src/system-settings/bootstrap.ts",
+      "line": 7
+    },
+    {
+      "path": "/api/system-settings/sync-env",
+      "method": "POST",
+      "source": "packages/shared/src/system-settings/env-file.ts",
+      "line": 79
+    },
+    {
+      "path": "/api/system-settings/value",
+      "method": "GET",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 226
+    },
+    {
+      "path": "/api/system-settings/site-logo",
+      "method": "PUT",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 230
+    },
+    {
+      "path": "/api/system-settings/import-env",
+      "method": "POST",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 233
+    },
+    {
+      "path": "/api/system-settings/initialize-defaults",
+      "method": "POST",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 237
+    },
+    {
+      "path": "/api/system-settings/bootstrap",
+      "method": "GET",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 241
+    },
+    {
+      "path": "/api/system-settings",
+      "method": "PUT",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 248
+    },
+    {
+      "path": "/api/system-settings",
+      "method": "GET",
+      "source": "packages/shared/src/system-settings/index.ts",
+      "line": 252
+    },
+    {
+      "path": "/api/user/profile",
+      "method": "GET",
+      "source": "packages/shared/src/time-zone/server.ts",
+      "line": 39
+    },
+    {
+      "path": "/api/user/time-zone",
+      "method": "POST",
+      "source": "packages/shared/src/time-zone/server.ts",
+      "line": 95
+    }
+  ],
+  "dynamicGoRequests": [
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/features/image-backend-pool/actions.ts",
+      "line": 101
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/features/settings/actions/external-api-key.ts",
+      "line": 104
+    },
+    {
+      "helper": "requestGoResponse",
+      "source": "apps/web/src/server/go-backend-client.ts",
+      "line": 23
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/go-backend-client.ts",
+      "line": 99
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 40
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 41
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 53
+    },
+    {
+      "helper": "requestAnalyticsGoForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 149
+    },
+    {
+      "helper": "requestAnalyticsGo",
+      "source": "apps/web/src/server/uol-bindings/analytics.ts",
+      "line": 150
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/credits-go.ts",
+      "line": 20
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/credits-go.ts",
+      "line": 20
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-backend-pool.ts",
+      "line": 248
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 79
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 83
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 90
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 92
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 131
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 135
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 179
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 180
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 444
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/image-generation.ts",
+      "line": 445
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 29
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 30
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/settings-storage-media-moderation.ts",
+      "line": 31
+    },
+    {
+      "helper": "requestGoJsonForPrincipal",
+      "source": "apps/web/src/server/uol-bindings/video-generation.ts",
+      "line": 6
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/video-generation.ts",
+      "line": 6
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings.ts",
+      "line": 338
+    },
+    {
+      "helper": "requestGoBackendJson",
+      "source": "packages/shared/src/http/go-backend.ts",
+      "line": 62
+    }
   ]
 }

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type apiError struct {
@@ -25,7 +27,14 @@ func (b *backend) endpoint(fn endpoint) http.HandlerFunc {
 		if err := fn(w, r); err != nil {
 			var known *apiError
 			if !errors.As(err, &known) {
-				b.logger.ErrorContext(r.Context(), "backend operation failed", "request_id", requestID(r))
+				// SQL details and upstream errors may contain user data or secrets.
+				// Keep only the stable database error category for diagnostics.
+				var dbError *pgconn.PgError
+				code := "internal"
+				if errors.As(err, &dbError) {
+					code = dbError.Code
+				}
+				b.logger.ErrorContext(r.Context(), "backend operation failed", "request_id", requestID(r), "error_code", code)
 				known = &apiError{500, "INTERNAL_SERVER_ERROR", "服务器错误，请稍后重试"}
 			}
 			if r.URL.Path == "/api/auth/registration-verification" {

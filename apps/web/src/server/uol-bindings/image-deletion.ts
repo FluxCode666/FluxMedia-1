@@ -7,10 +7,7 @@
 
 import type { OperationContext } from "@repo/shared/uol";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
-import {
-  deleteGenerationMediaForUser,
-  readGenerationOwnerId,
-} from "@/features/image-generation/generation-deletion-service";
+import { requestGoJson, GoBackendRequestError } from "@/server/go-backend-client";
 
 /** 从站内会话 Principal 读取用户 ID，拒绝 API Key 与系统身份调用画廊删除。 */
 function requireSessionUserId(principal: Principal): string {
@@ -31,14 +28,22 @@ bindExecute(
     principal: Principal,
     context: OperationContext
   ) => {
-    const ownerId = await readGenerationOwnerId(input.generationId);
-    if (!ownerId) return { success: true };
-    context.assertOwnership("generation", ownerId);
-    await deleteGenerationMediaForUser({
-      userId: requireSessionUserId(principal),
-      generationIds: [input.generationId],
-    });
-    return { success: true };
+    // The Go history endpoint owns the row lookup, object deletion and
+    // tombstone update. Keep the UOL ownership assertion at the principal
+    // boundary while avoiding a second Next.js database read.
+    requireSessionUserId(principal);
+    void context;
+    try {
+      return await requestGoJson<{ success: boolean }>(
+        "/api/image-generation/delete",
+        { method: "POST", body: JSON.stringify(input) }
+      );
+    } catch (error) {
+      if (error instanceof GoBackendRequestError && error.status === 404) {
+        return { success: true };
+      }
+      throw error;
+    }
   }
 );
 
@@ -46,10 +51,10 @@ bindExecute(
 bindExecute(
   "image.batchDelete",
   async (input: { generationIds: string[] }, principal: Principal) => {
-    const result = await deleteGenerationMediaForUser({
-      userId: requireSessionUserId(principal),
-      generationIds: input.generationIds,
-    });
-    return { success: true, deletedCount: result.deletedCount };
+    requireSessionUserId(principal);
+    return await requestGoJson<{ success: boolean; deletedCount: number }>(
+      "/api/image-generation/batch-delete",
+      { method: "POST", body: JSON.stringify(input) }
+    );
   }
 );

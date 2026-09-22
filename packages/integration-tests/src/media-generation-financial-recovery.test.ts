@@ -6,7 +6,11 @@
  * 使用方：显式 `test:media-generation-financial-recovery` 发布质量门。
  */
 
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:net";
+import { resolve } from "node:path";
 import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import { eq, type SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -47,6 +51,123 @@ let ownerPool: Pool | null = null;
 let loadApiVideoRecoveryConfig: LoadApiVideoRecoveryConfig;
 let refundGenerationCredits: RefundGenerationCredits;
 let refundExternalApiKeyCredits: RefundExternalApiKeyCredits;
+let goBackendProcess: ChildProcess | null = null;
+
+const goBackendSecret = `media-financial-${randomUUID()}`;
+const goBackendAuthSecret = `media-financial-auth-${randomUUID()}`;
+
+/** 分配一个仅供本轮 Go 测试进程监听的本机端口。 */
+async function reserveLocalPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("无法分配 Go 集成测试端口");
+  }
+  await new Promise<void>((resolveClose, reject) =>
+    server.close((error) => (error ? reject(error) : resolveClose()))
+  );
+  return address.port;
+}
+
+/** 启动真实 Go 内部积分接口，并等待其依赖与 readyz 都就绪。 */
+async function startGoBackend(databaseUrl: string): Promise<void> {
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: explicit integration-test input; this test is never Turbo-cached.
+  const redisUrlValue = process.env.GO_BACKEND_TEST_REDIS_URL?.trim();
+  if (!redisUrlValue) {
+    throw new Error("GO_BACKEND_TEST_REDIS_URL 未设置");
+  }
+  const redisUrl = new URL(redisUrlValue);
+  if (
+    redisUrl.protocol !== "redis:" ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(redisUrl.hostname) ||
+    !redisUrl.password
+  ) {
+    throw new Error("GO_BACKEND_TEST_REDIS_URL 必须是带密码的本机 Redis URL");
+  }
+
+  const port = await reserveLocalPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const output: string[] = [];
+  const child = spawn("go", ["run", "."], {
+    cwd: resolve(import.meta.dirname, "../../../services/api-gateway"),
+    env: {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      BETTER_AUTH_SECRET: goBackendAuthSecret,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      CRON_SECRET: goBackendSecret,
+      GO_BACKEND_BIND: `127.0.0.1:${port}`,
+      GO_BACKEND_SKIP_MIGRATION: "true",
+      GO_BACKEND_SCHEDULER_ENABLED: "false",
+      GO_MEDIA_WORKER_ENABLED: "false",
+      REDIS_HOST: redisUrl.hostname,
+      REDIS_PORT: redisUrl.port || "6379",
+      REDIS_PASSWORD: decodeURIComponent(redisUrl.password),
+      REDIS_USERNAME: decodeURIComponent(redisUrl.username),
+      REDIS_DB: redisUrl.pathname.replace(/^\//u, "") || "14",
+      REDIS_TLS: "false",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  goBackendProcess = child;
+  const rememberOutput = (chunk: Buffer) => {
+    output.push(chunk.toString());
+    if (output.length > 40) output.shift();
+  };
+  child.stdout?.on("data", rememberOutput);
+  child.stderr?.on("data", rememberOutput);
+
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(
+        `Go 集成测试后端提前退出 (${child.exitCode}): ${output.join("").slice(-4000)}`
+      );
+    }
+    try {
+      const response = await fetch(`${baseUrl}/readyz`);
+      if (response.ok) {
+        process.env.GO_BACKEND_URL = baseUrl;
+        process.env.CRON_SECRET = goBackendSecret;
+        process.env.BETTER_AUTH_SECRET = goBackendAuthSecret;
+        return;
+      }
+    } catch {
+      // 编译和启动期间连接暂不可用，继续轮询到明确超时。
+    }
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error(
+    `Go 集成测试后端未在时限内就绪: ${output.join("").slice(-4000)}`
+  );
+}
+
+/** 优雅停止 Go 测试进程，超时后再强制终止以免 Vitest 残留句柄。 */
+async function stopGoBackend(): Promise<void> {
+  const child = goBackendProcess;
+  goBackendProcess = null;
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      once(child, "exit"),
+      new Promise<void>((resolveTimeout) => {
+        forceKillTimer = setTimeout(() => {
+          child.kill("SIGKILL");
+          resolveTimeout();
+        }, 5_000);
+      }),
+    ]);
+  } finally {
+    if (forceKillTimer) clearTimeout(forceKillTimer);
+  }
+}
 
 /** 创建测试进程唯一 schema，包含生产财务函数和恢复仓储实际访问的最小表。 */
 async function createFixtureSchema(client: PoolClient): Promise<string> {
@@ -195,8 +316,11 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
 /** 为数据库单例追加本轮 schema search_path，不改变专用数据库主机或库名。 */
 function createSchemaDatabaseUrl(databaseUrl: string, schemaName: string) {
   const url = new URL(databaseUrl);
-  url.searchParams.set("options", `-c search_path=${schemaName},public`);
-  return url.toString();
+  url.searchParams.delete("options");
+  url.searchParams.delete("search_path");
+  const separator = url.search ? "&" : "?";
+  // pg and pgx both honor options; pgx requires the command-space as %20, not +.
+  return `${url.toString()}${separator}options=-c%20search_path%3D${encodeURIComponent(schemaName)}%2Cpublic`;
 }
 
 /** 把 Drizzle SQL 编译后交给指定 pg 连接执行。 */
@@ -357,10 +481,12 @@ beforeAll(async () => {
     client.release();
   }
 
-  process.env.DATABASE_URL = createSchemaDatabaseUrl(
+  const schemaDatabaseUrl = createSchemaDatabaseUrl(
     baseDatabaseUrl,
     fixtureSchemaName
   );
+  process.env.DATABASE_URL = schemaDatabaseUrl;
+  await startGoBackend(schemaDatabaseUrl);
   ({ loadApiVideoRecoveryConfig } = await import(
     "../../../apps/web/src/features/image-backend-pool/runtime-service"
   ));
@@ -373,11 +499,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await closeApplicationDatabasePool();
-  if (ownerPool && fixtureSchemaName) {
-    await ownerPool.query(`drop schema "${fixtureSchemaName}" cascade`);
+  try {
+    await stopGoBackend();
+    await closeApplicationDatabasePool();
+    if (ownerPool && fixtureSchemaName) {
+      await ownerPool.query(`drop schema "${fixtureSchemaName}" cascade`);
+    }
+  } finally {
+    await ownerPool?.end();
   }
-  await ownerPool?.end();
 });
 
 describe("media generation financial recovery", () => {

@@ -648,15 +648,16 @@ const videoConfigurationEntrySchema = z
   .object({
     ...managementMarketplaceShape,
     category: z.literal("video"),
-    minimumCredits: z.number().finite().positive(),
+    pricingSource: z.enum(["explicit", "unconfigured"]).optional(),
+    minimumCredits: z.number().finite().nonnegative(),
     billingMode: videoBillingModeSchema,
     creditsPerSecond: z
       .number()
       .finite()
-      .positive()
+      .nonnegative()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
-    creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
-    creditsPerItemByResolution: videoModelCreditPricesSchema,
+    creditsPerSecondByResolution: z.record(modelMarketplaceSupportedResolutionSchema, z.number().finite().nonnegative().max(MAX_VIDEO_CREDITS_PER_SECOND)),
+    creditsPerItemByResolution: z.record(modelMarketplaceSupportedResolutionSchema, z.number().finite().nonnegative().max(MAX_VIDEO_CREDITS_PER_SECOND)),
     supportedResolutions: z
       .array(modelMarketplaceSupportedResolutionSchema)
       .min(1)
@@ -664,7 +665,13 @@ const videoConfigurationEntrySchema = z
     maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
-  .superRefine(addVideoResolutionPricingIssues);
+  .superRefine(addVideoResolutionPricingIssues)
+  .superRefine((value, context) => {
+    if (value.pricingSource === "unconfigured") return;
+    if ([value.minimumCredits, value.creditsPerSecond, ...Object.values(value.creditsPerSecondByResolution), ...Object.values(value.creditsPerItemByResolution)].some((price) => price <= 0)) {
+      context.addIssue({ code: "custom", message: "已配置视频模型必须有完整的正数价格" });
+    }
+  });
 
 /** 管理列表中的单条模型配置 DTO，不包含 bucket 或对象 key。 */
 export const modelConfigurationEntrySchema = z.union([

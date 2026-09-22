@@ -8,7 +8,7 @@ GO_BIND ?= :8080
 # or auth secret here: exported defaults override dotenv and hide existing data.
 DEV_ENV := node scripts/with-root-env.mjs --exec
 
-.PHONY: help dev-infra-up dev-migrate dev-frontend dev-backend dev-script-runtime dev test-go test-go-integration test
+.PHONY: help dev-infra-up dev-migrate dev-frontend dev-backend dev-script-runtime dev-media-processing-runtime dev test-go test-go-integration test
 
 help:
 	@printf '%s\n' \
@@ -17,7 +17,8 @@ help:
 		'make dev-frontend       启动 Next.js 页面开发服务（3000）' \
 		'make dev-backend        启动 Go backend（8080）' \
 		'make dev-script-runtime 启动私有 QuickJS 脚本运行时（8090）' \
-		'make dev                同时启动前端、Go backend 和脚本运行时' \
+		'make dev-media-processing-runtime 启动私有图像计算运行时（8091）' \
+		'make dev                同时启动前端、Go backend 和两个私有运行时' \
 		'make test               运行 Go 单元测试和全仓 TypeScript 测试'
 
 dev-infra-up:
@@ -35,13 +36,17 @@ dev-backend: dev-infra-up
 	GO_BACKEND_BIND='$(GO_BIND)' $(DEV_ENV) go -C $(GO_SERVICE) run .
 
 dev-script-runtime:
-	$(DEV_ENV) node services/api-upstream-script-runtime/server.mjs
+	$(DEV_ENV) sh -c 'SCRIPT_RUNTIME_TOKEN="$$GO_SCRIPT_RUNTIME_TOKEN" exec node services/api-upstream-script-runtime/server.mjs'
+
+dev-media-processing-runtime:
+	$(DEV_ENV) sh -c 'MEDIA_PROCESSING_TOKEN="$$GO_MEDIA_PROCESSING_TOKEN" exec node services/media-processing-runtime/server.mjs'
 
 dev: dev-migrate
 	@trap 'kill 0' INT TERM EXIT; \
 		$(MAKE) dev-frontend & \
 		$(MAKE) dev-backend & \
 		$(MAKE) dev-script-runtime & \
+		$(MAKE) dev-media-processing-runtime & \
 		wait
 
 test-go:

@@ -3,19 +3,14 @@
  *
  * 职责：读取系统媒体参数、解析用户并发覆盖，并为管理员提供带角色护栏和审计的
  * 原子写入。所有入口只依赖本服务返回的生效策略，不直接读取套餐或用户表字段。
- * 关键依赖：system-settings、user 表、admin_audit_log；默认仓储采用参数化 SQL。
+ * 生产读写由 Go 执行；注入式服务保留策略与权限语义回归测试。
  */
 
-import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
-import { z } from "zod";
 
 import {
-  APP_USER_ROLES,
   type AppUserRole,
   canActOnTargetRole,
 } from "../auth/roles";
-import { logWarn } from "../logger";
 import {
   type EffectiveUserConcurrency,
   MEDIA_LIMIT_DEFAULTS,
@@ -117,13 +112,6 @@ export interface MediaLimitServiceDependencies {
 }
 
 const ACTION = "mediaLimits.setUserConcurrencyOverride";
-const userConcurrencyRowSchema = z.object({
-  id: z.string().min(1),
-  role: z.enum(APP_USER_ROLES),
-  override: z.unknown().nullable(),
-  updatedAt: z.coerce.date(),
-});
-
 /** 校验并规范管理员必填的变更原因。 */
 function parseReason(value: unknown): string {
   if (typeof value !== "string") {
@@ -174,112 +162,6 @@ function toNullableNumber(value: unknown): number | null {
     : typeof value === "number"
       ? value
       : Number(value);
-}
-
-/** 确认锁内写操作确实命中目标行，防止静默丢失更新或审计。 */
-function assertMutationReturnedRow(result: unknown, resource: string): void {
-  if (Array.isArray(result) && result.length > 0) return;
-  if (
-    result &&
-    typeof result === "object" &&
-    "rows" in result &&
-    Array.isArray((result as { rows: unknown }).rows) &&
-    (result as { rows: unknown[] }).rows.length > 0
-  ) {
-    return;
-  }
-  throw new MediaLimitServiceError(
-    "invariant_error",
-    `${resource} disappeared during the locked transaction`
-  );
-}
-
-/** 兼容 Drizzle 不同驱动的数组或 rows 返回形态。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
-
-/** 在使用数据库结果前通过 Zod 校验角色、日期和身份字段。 */
-function parseUserConcurrencyRow(value: unknown): LockedUserConcurrency {
-  const parsed = userConcurrencyRowSchema.parse(value);
-  return {
-    id: parsed.id,
-    role: parsed.role,
-    override: parsed.override,
-    updatedAt: parsed.updatedAt,
-  };
-}
-
-/** 创建默认 PostgreSQL 仓储；用户更新和审计始终处于同一事务。 */
-function createDefaultRepository(): MediaLimitRepository {
-  return {
-    async readUserConcurrency(userId) {
-      const { db } = await import("@repo/database");
-      const result = await db.execute(sql`
-        select id, role::text as role,
-               image_generation_concurrency_override as override,
-               updated_at as "updatedAt"
-        from "user"
-        where id = ${userId}
-        limit 1
-      `);
-      const row = extractRows(result)[0];
-      if (!row || typeof row !== "object") return null;
-      return parseUserConcurrencyRow(row);
-    },
-    async transaction(work) {
-      const { db } = await import("@repo/database");
-      return db.transaction(async (tx) =>
-        work({
-          async lockUserConcurrency(userId) {
-            const result = await tx.execute(sql`
-              select id, role::text as role,
-                     image_generation_concurrency_override as override,
-                     updated_at as "updatedAt"
-              from "user"
-              where id = ${userId}
-              for update
-            `);
-            const row = extractRows(result)[0];
-            if (!row || typeof row !== "object") return null;
-            return parseUserConcurrencyRow(row);
-          },
-          async updateUserConcurrency(input) {
-            const result = await tx.execute(sql`
-              update "user"
-              set image_generation_concurrency_override = ${input.override},
-                  updated_at = ${input.updatedAt}
-              where id = ${input.userId}
-              returning id
-            `);
-            assertMutationReturnedRow(result, "user concurrency override");
-          },
-          async insertAuditLog(input) {
-            const result = await tx.execute(sql`
-              insert into admin_audit_log (
-                id, admin_user_id, target_user_id, action, reason,
-                before, after, metadata, created_at
-              ) values (
-                ${input.id}, ${input.adminUserId}, ${input.targetUserId},
-                ${input.action}, ${input.reason},
-                ${JSON.stringify(input.before)}::json,
-                ${JSON.stringify(input.after)}::json,
-                ${JSON.stringify(input.metadata)}::json,
-                ${input.createdAt}
-              )
-              returning id
-            `);
-            assertMutationReturnedRow(result, "media limit audit log");
-          },
-        })
-      );
-    },
-  };
 }
 
 /** 读取并安全解析四项系统媒体限制，单项脏值回退固定默认值。 */
@@ -438,13 +320,23 @@ export function createMediaLimitService(
   return { getForUser, setUserConcurrencyOverride };
 }
 
-export const mediaLimitService = createMediaLimitService({
-  repository: createDefaultRepository(),
-  readPolicy: readDefaultPolicy,
-  now: () => new Date(),
-  createAuditId: randomUUID,
-  warn: (message, data) => logWarn(message, data),
-});
+/** Production reads and atomic audited writes execute in Go. */
+export const mediaLimitService: ReturnType<typeof createMediaLimitService> = {
+  async getForUser(userId) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    return requestGoBackendJson<MediaLimitsForUser>(
+      `/api/image-generation/media-limits?userId=${encodeURIComponent(userId)}`
+    );
+  },
+  async setUserConcurrencyOverride(input) {
+    const { requestGoBackendJson } = await import("../http/go-backend");
+    const raw = await requestGoBackendJson<Omit<SetUserConcurrencyResult, "updatedAt"> & { updatedAt: string }>(
+      `/api/admin/users/${encodeURIComponent(input.userId)}/concurrency`,
+      { method: "POST", headers: { "X-Request-ID": input.requestId }, body: JSON.stringify({ userId: input.userId, override: input.override, reason: input.reason }) }
+    );
+    return { ...raw, updatedAt: new Date(raw.updatedAt) };
+  },
+};
 
 export { readDefaultPolicy as getMediaLimitPolicy };
 export const MEDIA_LIMIT_USER_CONCURRENCY_OPERATION =

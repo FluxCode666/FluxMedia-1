@@ -8,7 +8,6 @@
  */
 import { randomBytes } from "node:crypto";
 
-import type { externalApiKey as externalApiKeyTable } from "@repo/database/schema";
 import { logError } from "@repo/shared/logger";
 import type {
   ExternalApiKeyListItem,
@@ -510,7 +509,7 @@ export function createExternalApiKeyManagementService(
  * @remarks 排除 userId、密钥哈希和废弃治理列；密文仅进入服务层并由 DTO 显式裁剪。
  */
 function selectExternalApiKeyFields(
-  externalApiKey: typeof externalApiKeyTable
+  externalApiKey: typeof import("@repo/database/schema").externalApiKey
 ) {
   return {
     id: externalApiKey.id,

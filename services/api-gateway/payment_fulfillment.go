@@ -228,7 +228,7 @@ func (b *backend) grantPaymentCredits(ctx context.Context, item *paymentFulfillm
 	err = tx.QueryRow(ctx, `SELECT id,user_id,amount FROM credits_batch WHERE source_type='purchase' AND source_ref=$1`, item.CreditSourceRef).Scan(&batchID, &batchUser, &batchAmount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		batchID = newRequestID()
-		result, insertErr := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref,expires_at,updated_at) VALUES($1,$2,$3,$3,'purchase',$4,$5,now()) ON CONFLICT(source_type,source_ref) DO NOTHING`, batchID, item.UserID, item.CreditsAmount, item.CreditSourceRef, item.CreditsExpiresAt)
+		result, insertErr := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref,expires_at,updated_at) VALUES($1,$2,$3,$3,'purchase',$4,$5,now()) ON CONFLICT(source_type,source_ref) WHERE source_ref IS NOT NULL DO NOTHING`, batchID, item.UserID, item.CreditsAmount, item.CreditSourceRef, item.CreditsExpiresAt)
 		if insertErr != nil {
 			return "", insertErr
 		}
@@ -399,72 +399,7 @@ func (b *backend) recordExpiredPaymentEvents(ctx context.Context) error {
 }
 
 func (b *backend) fulfillReferralFirstPayment(ctx context.Context, item *paymentFulfillmentItem) error {
-	var relationshipID, inviterID, status string
-	var inviteeID string
-	var firstOrder *string
-	var snapshotRaw []byte
-	err := b.db.QueryRow(ctx, `SELECT id,inviter_user_id,invitee_user_id,status,first_payment_order_id,reward_config_snapshot FROM referral_relationship WHERE invitee_user_id=$1`, item.UserID).Scan(&relationshipID, &inviterID, &inviteeID, &status, &firstOrder, &snapshotRaw)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if firstOrder != nil && *firstOrder != item.PaymentOrderID {
-		return nil
-	}
-	config := map[string]any{"enabled": false, "inviter": map[string]any{"mode": "percentage", "value": 10.0}, "invitee": map[string]any{"mode": "percentage", "value": 10.0}}
-	if firstOrder != nil && len(snapshotRaw) > 0 {
-		_ = json.Unmarshal(snapshotRaw, &config)
-	} else if value, loadErr := b.setting(ctx, "REFERRAL_REWARD_CONFIG", config); loadErr == nil {
-		if candidate, ok := value.(map[string]any); ok {
-			config = candidate
-		}
-	}
-	if enabled, _ := config["enabled"].(bool); !enabled {
-		_, err = b.db.Exec(ctx, `UPDATE referral_relationship SET first_payment_order_id=$2,status='skipped',reward_config_snapshot=$3,updated_at=now() WHERE id=$1 AND first_payment_order_id IS NULL`, relationshipID, item.PaymentOrderID, paymentMustJSON(config))
-		return err
-	}
-	if firstOrder == nil {
-		result, claimErr := b.db.Exec(ctx, `UPDATE referral_relationship SET first_payment_order_id=$2,reward_config_snapshot=$3,updated_at=now() WHERE id=$1 AND first_payment_order_id IS NULL`, relationshipID, item.PaymentOrderID, paymentMustJSON(config))
-		if claimErr != nil {
-			return claimErr
-		}
-		if result.RowsAffected() == 0 {
-			return nil
-		}
-	}
-	inviterReward := referralRewardAmount(config["inviter"], item.CreditsAmount)
-	inviteeReward := referralRewardAmount(config["invitee"], item.CreditsAmount)
-	for _, reward := range []struct {
-		user, role string
-		amount     float64
-	}{{inviterID, "inviter", inviterReward}, {inviteeID, "invitee", inviteeReward}} {
-		if reward.amount <= 0 {
-			continue
-		}
-		source := "referral:first_payment:" + item.PaymentOrderID + ":" + reward.role
-		tx, txErr := b.db.Begin(ctx)
-		if txErr != nil {
-			return txErr
-		}
-		result, txErr := tx.Exec(ctx, `INSERT INTO credits_batch(id,user_id,amount,remaining,source_type,source_ref,updated_at) VALUES($1,$2,$3,$3,'referral',$4,now()) ON CONFLICT(source_type,source_ref) DO NOTHING`, newRequestID(), reward.user, reward.amount, source)
-		if txErr == nil && result.RowsAffected() > 0 {
-			meta := paymentMustJSON(map[string]any{"role": reward.role, "orderId": item.PaymentOrderID, "provider": paymentProviderName(item.Provider)})
-			_, txErr = tx.Exec(ctx, `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,source_ref,metadata) VALUES($1,$2,'referral_reward',$3,'SYSTEM:referral_reward','WALLET:'||$2,$4,$5,$6) ON CONFLICT DO NOTHING`, newRequestID(), reward.user, reward.amount, "推广首充奖励（"+reward.role+"）", source, meta)
-		}
-		if txErr == nil && result.RowsAffected() > 0 {
-			_, txErr = tx.Exec(ctx, `INSERT INTO credits_balance(id,user_id,balance,total_earned) VALUES($1,$2,$3,$3) ON CONFLICT(user_id) DO UPDATE SET balance=credits_balance.balance+EXCLUDED.balance,total_earned=credits_balance.total_earned+EXCLUDED.total_earned,updated_at=now()`, newRequestID(), reward.user, reward.amount)
-		}
-		if txErr == nil {
-			txErr = tx.Commit(ctx)
-		}
-		if txErr != nil {
-			rollback(tx)
-			return txErr
-		}
-	}
-	_, err = b.db.Exec(ctx, `UPDATE referral_relationship SET status='rewarded',inviter_reward_credits=$2,invitee_reward_credits=$3,rewarded_at=COALESCE(rewarded_at,now()),updated_at=now() WHERE id=$1 AND first_payment_order_id=$4`, relationshipID, inviterReward, inviteeReward, item.PaymentOrderID)
+	_, err := b.fulfillReferralReward(ctx, item)
 	return err
 }
 
@@ -503,7 +438,7 @@ func referralRewardAmount(side any, credits float64) float64 {
 	obj, _ := side.(map[string]any)
 	mode, _ := obj["mode"].(string)
 	value, _ := obj["value"].(float64)
-	if value <= 0 || !isFinitePaymentNumber(value) || credits <= 0 {
+	if value <= 0 || !isFinitePaymentNumber(value) || credits <= 0 || !isFinitePaymentNumber(credits) {
 		return 0
 	}
 	amount := value
@@ -652,10 +587,13 @@ func (b *backend) handleInternalPaymentAlipay(w http.ResponseWriter, r *http.Req
 	if input.OutTradeNo == "" || input.TradeNo == "" || input.TotalAmount == "" {
 		return invalid("支付宝支付通知字段不完整")
 	}
+	if err := b.validateAlipayMerchant(r.Context(), input.AppID, input.SellerID); err != nil {
+		return err
+	}
 	var userID string
 	var expected int64
-	var provider string
-	if err := b.db.QueryRow(r.Context(), `SELECT user_id,amount_minor,provider FROM payment_order WHERE id=$1`, input.OutTradeNo).Scan(&userID, &expected, &provider); err != nil || provider != "alipay_f2f" {
+	var provider, currency, purpose string
+	if err := b.db.QueryRow(r.Context(), `SELECT user_id,amount_minor,provider,currency,purpose FROM payment_order WHERE id=$1`, input.OutTradeNo).Scan(&userID, &expected, &provider, &currency, &purpose); err != nil || provider != "alipay_f2f" || currency != "CNY" || purpose != "credit_top_up" {
 		return &apiError{404, "NOT_FOUND", "支付订单不存在"}
 	}
 	if paid := parseMinor(input.TotalAmount); paid < 0 || paid != expected {

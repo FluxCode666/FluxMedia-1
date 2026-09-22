@@ -48,6 +48,8 @@ type config struct {
 	databaseURL             string
 	authSecret              string
 	authURL                 string
+	publicAppURL            string
+	production              bool
 	trustedOrigins          []string
 	redisOptions            *redis.Options
 	maxBodyBytes            int64
@@ -64,14 +66,17 @@ type config struct {
 }
 
 type backend struct {
-	mailDelivery    func(context.Context, outgoingMail) error
-	oauthHTTPClient *http.Client
-	config          config
-	db              *pgxpool.Pool
-	redis           *redis.Client
-	logger          *slog.Logger
-	mediaWorker     *mediaWorker
-	maintenance     *maintenanceScheduler
+	rateLimits       backendRateLimitState
+	mailDelivery     func(context.Context, outgoingMail) error
+	oauthHTTPClient  *http.Client
+	alipayHTTPClient *http.Client
+	creemHTTPClient  *http.Client
+	config           config
+	db               *pgxpool.Pool
+	redis            *redis.Client
+	logger           *slog.Logger
+	mediaWorker      *mediaWorker
+	maintenance      *maintenanceScheduler
 }
 
 func main() {
@@ -121,6 +126,14 @@ func main() {
 	}
 	if os.Getenv("GO_BACKEND_MIGRATE_ONLY") == "true" || (len(os.Args) > 1 && os.Args[1] == "--migrate") {
 		return
+	}
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(ctx, time.Minute)
+	_, bootstrapErr := server.bootstrapSettings(bootstrapCtx)
+	bootstrapCancel()
+	if bootstrapErr != nil {
+		server.logger.Error("system settings initialization failed; backend will not start")
+		server.close()
+		os.Exit(1)
 	}
 	server.mediaWorker = server.startMediaWorker(ctx)
 	server.maintenance = server.startMaintenanceScheduler(ctx)
@@ -286,6 +299,8 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 
 	return config{
 		authSecret: authSecret, authURL: strings.TrimRight(authURL, "/"),
+		publicAppURL:   strings.TrimRight(getString(getenv, "NEXT_PUBLIC_APP_URL", ""), "/"),
+		production:     getString(getenv, "NODE_ENV", "") == "production",
 		trustedOrigins: strings.FieldsFunc(requiredString(getenv, "BETTER_AUTH_TRUSTED_ORIGINS"), func(r rune) bool { return r == ',' || r == ' ' }),
 		bind:           getString(getenv, "GO_BACKEND_BIND", defaultBind), databaseURL: databaseURL,
 		redisOptions: &redis.Options{
@@ -318,11 +333,12 @@ func tlsConfig(enabled bool) *tls.Config {
 }
 
 func (b *backend) handler() http.Handler {
-	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, b.router()))
+	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, b.withBackendRateLimit(b.router())))
 }
 
 func (b *backend) router() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/internal/rate-limit", b.endpoint(b.handleInternalRateLimit))
 	b.registerAuth(mux)
 	b.registerExternalAPI(mux)
 	b.registerAccountRoutes(mux)
@@ -330,6 +346,7 @@ func (b *backend) router() *http.ServeMux {
 	b.registerMigratedRoutes(mux)
 	b.registerVideoUOLRoutes(mux)
 	b.registerSystemSettingsRoutes(mux)
+	b.registerModerationRoutes(mux)
 	b.registerMarketingSLARoutes(mux)
 	b.registerNewsletterRoutes(mux)
 	b.registerSupportDashboardRoutes(mux)
@@ -343,6 +360,10 @@ func (b *backend) router() *http.ServeMux {
 	b.registerContentRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)
+	// Keep the conventional short probes as aliases for deployments whose
+	// ingress still checks /health or /ready.
+	mux.HandleFunc("GET /health", b.handleHealth)
+	mux.HandleFunc("GET /ready", b.handleReady)
 	mux.HandleFunc("/", b.handleNotMigrated)
 	return mux
 }
@@ -437,11 +458,19 @@ func withRequestID(logger *slog.Logger, next http.Handler) http.Handler {
 
 func withBodyLimit(maxBytes int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxBytes {
+		limit := maxBytes
+		if maxBytes == defaultMaxBodyBytes && r.Method == http.MethodPost &&
+			(r.URL.Path == "/api/admin/model-configuration" || r.URL.Path == "/api/admin/model-configurations") &&
+			strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+			// The existing model cover contract permits a 100 MiB image/video.
+			// Allow multipart headers too; the handler validates the file size.
+			limit = 101 << 20
+		}
+		if r.ContentLength > limit {
 			writeJSONError(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "The request body is too large.")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r)
 	})
 }

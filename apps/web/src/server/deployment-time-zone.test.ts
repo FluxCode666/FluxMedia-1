@@ -23,10 +23,6 @@ const deployEnvExample = readFileSync(
   resolve(repositoryRoot, "deploy/.env.example"),
   "utf8"
 );
-const uolBindingsSource = readFileSync(
-  resolve(repositoryRoot, "apps/web/src/server/uol-bindings.ts"),
-  "utf8"
-);
 const adminHistoryPageSource = readFileSync(
   resolve(
     repositoryRoot,
@@ -97,8 +93,7 @@ describe("deployment time-zone contract", () => {
     );
   });
 
-  it("管理员全局历史和状态筛选固定使用部署展示时区", () => {
-    expect(uolBindingsSource).toContain("timeZone: getAppTimeZone()");
+  it("管理员全局历史和状态页面固定使用部署展示时区；后端日期范围由 Go 集成测试覆盖", () => {
     expect(adminHistoryPageSource).toContain(
       "const timeZone = getAppTimeZone()"
     );

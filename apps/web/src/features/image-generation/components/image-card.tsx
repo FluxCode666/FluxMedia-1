@@ -1,12 +1,11 @@
 "use client";
 
 import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
-import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
+import { StorageThumbnail } from "@repo/shared/storage/storage-thumbnail";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Card } from "@repo/ui/components/card";
 import { Check, Clock, Download, ImageIcon } from "lucide-react";
-import Image from "next/image";
 import { useLocale } from "next-intl";
 import { generateDownloadFilename } from "@/lib/download-filename";
 
@@ -69,11 +68,6 @@ export function ImageCard({
   const locale = useLocale();
   const copy = (en: string, zh: string) => (locale === "zh" ? zh : en);
   const clickable = Boolean(onClick) || Boolean(selectable);
-  // 列表缩略图:对同源存储图(/api/storage)请求按需缩放后的小图(w=640),把全分辨率
-  // 大图(平均 2.4MB)降到缩略图尺寸,大幅降低列表的下载/解码/内存占用。宽度走"路径段"
-  // (而非 ?w= 查询参数),以绕过 Cloudflare 忽略 query 的边缘缓存键——否则会命中并下回
-  // 整张原图、挤占 HTTP/2 连接带宽、饿死导航请求。非存储图(外链回退)保持原样。
-  const thumbnailUrl = buildStorageThumbnailUrl(imageUrl, 640);
   const displayModel = formatModelIdForDisplay(model);
 
   // 多选模式下点击整张卡片触发选中切换,并传递鼠标事件以支持 Shift 范围选;
@@ -96,9 +90,10 @@ export function ImageCard({
       } ${selected ? "ring-2 ring-primary" : ""}`}
     >
       <div className="relative aspect-square w-full overflow-hidden bg-muted">
-        {thumbnailUrl && status === "completed" ? (
-          <Image
-            src={thumbnailUrl}
+        {imageUrl && status === "completed" ? (
+          <StorageThumbnail
+            src={imageUrl}
+            thumbnailWidth={640}
             alt={prompt}
             fill
             sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"

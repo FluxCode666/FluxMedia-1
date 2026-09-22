@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
+	"time"
 )
 
 var apiUpstreamOperations = map[string]bool{
@@ -117,32 +116,20 @@ func (b *backend) handleApiUpstreamScriptDiagnostics(w http.ResponseWriter, r *h
 	if _, err := b.requireAdmin(r, false); err != nil {
 		return err
 	}
-	diagnostics := map[string]any{
-		"lifecycle": "unavailable", "workerCount": 0, "liveWorkerCount": 0,
-		"requestQueueLength": 0, "responseQueueLength": 0, "responsePermitsInUse": 0,
-		"responsePermitCapacity": 0, "saturationCount": 0, "replacementCount": 0,
-	}
 	client := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken)
 	if client == nil {
-		writeJSON(w, http.StatusOK, diagnostics)
-		return nil
+		return &apiError{http.StatusServiceUnavailable, "SCRIPT_RUNTIME_UNAVAILABLE", "API 上游脚本运行时不可用"}
 	}
-	workers := 1
-	if raw := strings.TrimSpace(os.Getenv("API_UPSTREAM_SCRIPT_WORKER_COUNT")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 8 {
-			workers = parsed
-		}
+	timeout := b.config.readyTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), b.config.readyTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	if err := client.ready(ctx); err != nil {
-		writeJSON(w, http.StatusOK, diagnostics)
-		return nil
+	diagnostics, err := client.diagnostics(ctx)
+	if err != nil {
+		return &apiError{http.StatusServiceUnavailable, "SCRIPT_RUNTIME_UNAVAILABLE", "API 上游脚本运行时不可用"}
 	}
-	diagnostics["lifecycle"] = "ready"
-	diagnostics["workerCount"] = workers
-	diagnostics["liveWorkerCount"] = workers
-	diagnostics["responsePermitCapacity"] = workers * 16
 	writeJSON(w, http.StatusOK, diagnostics)
 	return nil
 }

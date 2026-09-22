@@ -1,4 +1,3 @@
-
 /**
  * Forward the public OpenAI/Gemini compatible API to the Go gateway.
  *
@@ -22,15 +21,22 @@ export async function proxyExternalApi(
   headers.delete("host");
   headers.delete("content-length");
 
-  const hasBody = request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS";
+  const hasBody =
+    request.method !== "GET" &&
+    request.method !== "HEAD" &&
+    request.method !== "OPTIONS";
   const body = hasBody ? await request.arrayBuffer() : undefined;
-  const upstream = await fetch(`${base}${incoming.pathname}${incoming.search}`, {
-    method: request.method,
-    headers,
-    body,
-    cache: "no-store",
-    redirect: "manual",
-  });
+  const upstream = await fetch(
+    `${base}${incoming.pathname}${incoming.search}`,
+    {
+      method: request.method,
+      headers,
+      body,
+      cache: "no-store",
+      redirect: "manual",
+      signal: request.signal,
+    }
+  );
 
   return new Response(upstream.body, {
     status: upstream.status,

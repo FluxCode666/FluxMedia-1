@@ -66,10 +66,45 @@ type KeyOperationOutputs = {
 
 type KeyOperationName = keyof KeyOperationOutputs;
 
-async function invokeApiKeyOperation<N extends KeyOperationName>(name: N, input: any): Promise<KeyOperationOutputs[N]> {
-  const paths: Record<KeyOperationName,string> = {"externalApi.listKeys":"/api/external-api/keys","externalApi.createKey":"/api/external-api/keys","externalApi.revokeKey":"/api/external-api/keys/" + input.keyId,"externalApi.deleteKey":"/api/external-api/keys/" + input.keyId + "?hard=1","externalApi.updateKeyGroup":"/api/external-api/keys/" + input.keyId,"externalApi.updateKeyQuota":"/api/external-api/keys/" + input.keyId};
-  const method = name.endsWith("listKeys") ? "GET" : name.endsWith("createKey") ? "POST" : name.endsWith("deleteKey") || name.endsWith("revokeKey") ? "DELETE" : "PATCH";
-  return requestGoJson<KeyOperationOutputs[N]>(paths[name], { method, ...(method === "GET" ? {} : { body: JSON.stringify(input) }) });
+type KeyOperationInputs = {
+  "externalApi.listKeys": z.output<typeof listKeySchema>;
+  "externalApi.createKey": z.output<typeof createKeySchema>;
+  "externalApi.revokeKey": { keyId: string };
+  "externalApi.deleteKey": { keyId: string };
+  "externalApi.updateKeyGroup": {
+    keyId: string;
+    generationGroupId: string | null;
+  };
+  "externalApi.updateKeyQuota": {
+    keyId: string;
+    creditLimit: number | null;
+  };
+};
+
+async function invokeApiKeyOperation<N extends KeyOperationName>(
+  name: N,
+  input: KeyOperationInputs[N]
+): Promise<KeyOperationOutputs[N]> {
+  const keyId = "keyId" in input ? encodeURIComponent(input.keyId) : "";
+  const paths: Record<KeyOperationName, string> = {
+    "externalApi.listKeys": "/api/external-api/keys",
+    "externalApi.createKey": "/api/external-api/keys",
+    "externalApi.revokeKey": `/api/external-api/keys/${keyId}`,
+    "externalApi.deleteKey": `/api/external-api/keys/${keyId}?hard=1`,
+    "externalApi.updateKeyGroup": `/api/external-api/keys/${keyId}`,
+    "externalApi.updateKeyQuota": `/api/external-api/keys/${keyId}`,
+  };
+  const method = name.endsWith("listKeys")
+    ? "GET"
+    : name.endsWith("createKey")
+      ? "POST"
+      : name.endsWith("deleteKey") || name.endsWith("revokeKey")
+        ? "DELETE"
+        : "PATCH";
+  return requestGoJson<KeyOperationOutputs[N]>(paths[name], {
+    method,
+    ...(method === "GET" ? {} : { body: JSON.stringify(input) }),
+  });
 }
 
 /** 读取本人 API 密钥摘要与当前可编辑分组。 */

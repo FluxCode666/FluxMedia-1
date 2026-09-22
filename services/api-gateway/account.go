@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,64 +67,36 @@ func (b *backend) handleProfile(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (b *backend) handleCreditsBalance(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	uid, err := b.requireCreditsUser(r)
 	if err != nil {
 		return err
 	}
-	var balance, earned, spent float64
-	var status string
-	_, err = b.db.Exec(r.Context(), `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), s.User.ID)
+	if r.URL.Query().Get("registrationBonus") == "1" {
+		session, e := b.requireSession(r)
+		if e != nil {
+			return e
+		}
+		if _, e = b.grantRegistrationBonus(r, session.User.ID); e != nil {
+			return e
+		}
+	}
+	result, err := b.creditWalletSnapshot(r, uid)
 	if err != nil {
 		return err
 	}
-	err = b.db.QueryRow(r.Context(), `SELECT balance,total_earned,total_spent,status FROM credits_balance WHERE user_id=$1`, s.User.ID).Scan(&balance, &earned, &spent, &status)
-	if err != nil {
-		return err
-	}
-	var refunded float64
-	_ = b.db.QueryRow(r.Context(), `SELECT COALESCE(sum(amount),0) FROM credits_transaction WHERE user_id=$1 AND type='refund'`, s.User.ID).Scan(&refunded)
-	writeJSON(w, http.StatusOK, map[string]any{"balance": balance, "totalEarned": earned, "totalSpent": spent, "totalRefunded": refunded, "totalNetSpent": spent - refunded, "status": status, "asOf": time.Now().UTC()})
+	writeJSON(w, http.StatusOK, result)
 	return nil
 }
-
 func (b *backend) handleCreditsTransactions(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	uid, err := b.requireCreditsUser(r)
 	if err != nil {
 		return err
 	}
-	limit, offset := 50, 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, e := strconv.Atoi(v); e == nil && n > 0 && n <= 100 {
-			limit = n
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, e := strconv.Atoi(v); e == nil && n >= 0 {
-			offset = n
-		}
-	}
-	rows, err := b.db.Query(r.Context(), `SELECT id,type,amount,debit_account,credit_account,description,metadata,created_at FROM credits_transaction WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, s.User.ID, limit, offset)
+	result, err := b.creditsTransactionsForUser(r, uid)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	items := []any{}
-	for rows.Next() {
-		var id, typ, debit, credit string
-		var amount int
-		var desc *string
-		var metadata any
-		var created time.Time
-		if err := rows.Scan(&id, &typ, &amount, &debit, &credit, &desc, &metadata, &created); err != nil {
-			return err
-		}
-		items = append(items, map[string]any{"id": id, "type": typ, "amount": amount, "debitAccount": debit, "creditAccount": credit, "description": desc, "metadata": metadata, "createdAt": created})
-	}
-	var total int
-	if err := b.db.QueryRow(r.Context(), `SELECT count(*) FROM credits_transaction WHERE user_id=$1`, s.User.ID).Scan(&total); err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"transactions": items, "totalCount": total})
+	writeJSON(w, http.StatusOK, result)
 	return nil
 }
 
@@ -133,7 +104,7 @@ func (b *backend) handleTopUpOptions(w http.ResponseWriter, r *http.Request) err
 	if _, err := b.requireSession(r); err != nil {
 		return err
 	}
-	value, err := b.setting(r.Context(), "CREDIT_TOP_UP_CONFIG", map[string]any{"enabled": false, "defaultCurrency": "CNY", "currencies": []any{}})
+	value, err := b.topUpOptions(r.Context())
 	if err != nil {
 		return err
 	}
@@ -142,93 +113,56 @@ func (b *backend) handleTopUpOptions(w http.ResponseWriter, r *http.Request) err
 }
 
 func (b *backend) handleCreditsResource(w http.ResponseWriter, r *http.Request) error {
-	s, err := b.requireSession(r)
+	uid, err := b.requireCreditsUser(r)
 	if err != nil {
 		return err
 	}
-	switch r.URL.Path {
-	case "/api/credits/active-batches":
-		rows, err := b.db.Query(r.Context(), `SELECT id,amount,remaining,issued_at,expires_at,source_type FROM credits_batch WHERE user_id=$1 AND status='active' AND remaining>0 ORDER BY issued_at`, s.User.ID)
+	if r.URL.Path == "/api/credits/active-batches" {
+		batches, err := b.creditsBatchesForUser(r, uid)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		out := []any{}
-		for rows.Next() {
-			var id, src string
-			var amount, rem float64
-			var issued time.Time
-			var exp *time.Time
-			if err := rows.Scan(&id, &amount, &rem, &issued, &exp, &src); err != nil {
-				return err
-			}
-			out = append(out, map[string]any{"id": id, "amount": amount, "remaining": rem, "issuedAt": issued, "expiresAt": exp, "sourceType": src})
-		}
-		writeJSON(w, 200, out)
+		writeJSON(w, 200, batches)
 		return nil
-	case "/api/credits/check":
-		var in struct {
-			Amount float64 `json:"amount"`
-		}
-		if err := decodeBody(r, &in); err != nil {
-			return err
-		}
-		var bal float64
-		var status string
-		if err := b.db.QueryRow(r.Context(), `SELECT balance,status FROM credits_balance WHERE user_id=$1`, s.User.ID).Scan(&bal, &status); err != nil {
-			return err
-		}
-		writeJSON(w, 200, map[string]any{"available": in.Amount > 0 && bal >= in.Amount && status == "active", "currentBalance": bal, "required": in.Amount, "status": status})
-		return nil
-	case "/api/credits/use":
-		var in struct {
-			Amount      float64        `json:"amount"`
-			ServiceName string         `json:"serviceName"`
-			Description string         `json:"description"`
-			Metadata    map[string]any `json:"metadata"`
-		}
-		if err := decodeBody(r, &in); err != nil {
-			return err
-		}
-		if in.Amount <= 0 || strings.TrimSpace(in.ServiceName) == "" {
-			return invalid("积分数量和服务名不能为空")
-		}
-		tx, err := b.db.Begin(r.Context())
-		if err != nil {
-			return err
-		}
-		defer rollback(tx)
-		if _, err = tx.Exec(r.Context(), `INSERT INTO credits_balance(id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING`, newRequestID(), s.User.ID); err != nil {
-			return err
-		}
-		var bal float64
-		var st string
-		if err = tx.QueryRow(r.Context(), `SELECT balance,status FROM credits_balance WHERE user_id=$1 FOR UPDATE`, s.User.ID).Scan(&bal, &st); err != nil {
-			return err
-		}
-		if st != "active" {
-			writeJSON(w, 200, map[string]any{"success": false, "error": "account_frozen", "message": "积分账户已冻结"})
-			return nil
-		}
-		if bal < in.Amount {
-			writeJSON(w, 200, map[string]any{"success": false, "error": "insufficient_credits", "message": "积分不足", "required": in.Amount, "available": bal})
-			return nil
-		}
-		if _, err = tx.Exec(r.Context(), `UPDATE credits_balance SET balance=balance-$2,total_spent=total_spent+$2,updated_at=now() WHERE user_id=$1`, s.User.ID, in.Amount); err != nil {
-			return err
-		}
-		raw, _ := json.Marshal(in.Metadata)
-		id := newRequestID()
-		if _, err = tx.Exec(r.Context(), `INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,metadata) VALUES($1,$2,'consumption',$3,$4,$5,$6,$7)`, id, s.User.ID, in.Amount, "WALLET:"+s.User.ID, "SERVICE:"+in.ServiceName, in.Description, raw); err != nil {
-			return err
-		}
+	}
+	var in struct {
+		Amount      float64        `json:"amount"`
+		ServiceName string         `json:"serviceName"`
+		Description string         `json:"description"`
+		Metadata    map[string]any `json:"metadata"`
+	}
+	if err = decodeBody(r, &in); err != nil {
+		return err
+	}
+	amount, err := validateCreditAmount(in.Amount, false)
+	if err != nil {
+		return err
+	}
+	tx, err := b.db.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	wallet, err := b.lockCreditWallet(r, tx, uid)
+	if err != nil {
+		return err
+	}
+	if r.URL.Path == "/api/credits/check" {
 		if err = tx.Commit(r.Context()); err != nil {
 			return err
 		}
-		writeJSON(w, 200, map[string]any{"success": true, "consumedAmount": in.Amount, "remainingBalance": bal - in.Amount, "transactionId": id})
+		writeJSON(w, 200, map[string]any{"available": wallet.Status == "active" && wallet.Balance >= amount, "currentBalance": wallet.Balance, "balance": wallet.Balance, "required": amount, "status": wallet.Status})
 		return nil
 	}
-	return invalid("unknown credits resource")
+	result, err := b.consumeCreditTx(r, tx, wallet, creditMutation{UserID: uid, Amount: amount, ServiceName: in.ServiceName, Reason: in.Description, Metadata: in.Metadata, OperationType: "manual_consumption"})
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"success": true, "consumedAmount": amount, "remainingBalance": result.Balance, "transactionId": result.TransactionID})
+	return nil
 }
 
 func randomAPIKey() (string, error) {
@@ -666,10 +600,14 @@ func (b *backend) handleAPIKeys(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (b *backend) registerAccountRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/internal/credits/service", b.endpoint(b.handleInternalCreditService))
+	mux.HandleFunc("GET /api/internal/payments/epay/orders/{orderId}", b.endpoint(b.handleInternalEpayOrder))
+	mux.HandleFunc("POST /api/internal/credits/operation", b.endpoint(b.handleInternalCreditsOperation))
 	mux.HandleFunc("POST /api/internal/external-api/quota", b.endpoint(b.handleInternalExternalQuota))
 	mux.HandleFunc("GET /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("PATCH /api/user/profile", b.endpoint(b.handleProfile))
 	mux.HandleFunc("GET /api/credits/balance", b.endpoint(b.handleCreditsBalance))
+	mux.HandleFunc("POST /api/credits/registration-bonus", b.endpoint(b.handleRegistrationBonus))
 	mux.HandleFunc("GET /api/credits/transactions", b.endpoint(b.handleCreditsTransactions))
 	mux.HandleFunc("GET /api/credits/top-up/options", b.endpoint(b.handleTopUpOptions))
 	mux.HandleFunc("POST /api/credits/use", b.endpoint(b.handleCreditsResource))

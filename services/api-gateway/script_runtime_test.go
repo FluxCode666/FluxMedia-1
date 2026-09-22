@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,5 +54,19 @@ func TestScriptRuntimeClientReady(t *testing.T) {
 	defer server.Close()
 	if err := newScriptRuntimeClient(server.URL, "").ready(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestScriptRuntimeCapacityDoesNotBecomeAdapterFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("runtime overloaded"))
+	}))
+	defer server.Close()
+	_, err := newScriptRuntimeClient(server.URL, "").execute(context.Background(), scriptRuntimeRequest{})
+	var unavailable *scriptRuntimeUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.retryAfterSeconds != 17 {
+		t.Fatalf("runtime overload counted as script failure: %v", err)
 	}
 }

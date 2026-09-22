@@ -10,6 +10,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,24 +61,40 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("OPTIONS "+prefix+"/images/{taskId}", b.externalEndpoint(b.handleImageStatus))
 		mux.HandleFunc("GET "+prefix+"/videos/{taskId}", b.externalEndpoint(b.handleVideoStatus))
 		mux.HandleFunc("OPTIONS "+prefix+"/videos/{taskId}", b.externalEndpoint(b.handleVideoStatus))
+		for _, path := range []string{"/chat/completions", "/responses", "/agents/images"} {
+			mux.HandleFunc("POST "+prefix+path, b.externalEndpoint(b.handleRetiredConversation))
+			mux.HandleFunc("OPTIONS "+prefix+path, b.externalEndpoint(b.handleRetiredConversation))
+		}
+		mux.HandleFunc("POST "+prefix+"/ppts", b.externalEndpoint(b.handleRetiredEditableFile))
+		mux.HandleFunc("OPTIONS "+prefix+"/ppts", b.externalEndpoint(b.handleRetiredEditableFile))
+		mux.HandleFunc("POST "+prefix+"/psds", b.externalEndpoint(b.handleRetiredEditableFile))
+		mux.HandleFunc("OPTIONS "+prefix+"/psds", b.externalEndpoint(b.handleRetiredEditableFile))
+		mux.HandleFunc("GET "+prefix+"/editable-file-tasks/{taskId}", b.externalEndpoint(b.handleRetiredEditableFile))
+		mux.HandleFunc("OPTIONS "+prefix+"/editable-file-tasks/{taskId}", b.externalEndpoint(b.handleRetiredEditableFile))
 	}
 	for _, prefix := range []string{"/api/v1beta", "/v1beta"} {
-		mux.HandleFunc("POST "+prefix+"/models/{model}/predictLongRunning", b.externalEndpoint(b.handleGeminiCreate))
-		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}/predictLongRunning", b.externalEndpoint(b.handleGeminiCreate))
+		mux.HandleFunc("POST "+prefix+"/models/{model}/predictLongRunning", b.geminiEndpoint(b.handleGeminiCreate))
+		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}/predictLongRunning", b.geminiEndpoint(b.handleGeminiCreate))
 		// ServeMux treats a colon as part of a wildcard segment, so the
 		// compact Gemini spelling is registered as the model segment and
 		// validated by the handler.
-		mux.HandleFunc("POST "+prefix+"/models/{model}", b.externalEndpoint(b.handleGeminiCreate))
-		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}", b.externalEndpoint(b.handleGeminiCreate))
-		mux.HandleFunc("GET "+prefix+"/models/{model}/operations/{operationId}", b.externalEndpoint(b.handleGeminiStatus))
-		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}/operations/{operationId}", b.externalEndpoint(b.handleGeminiStatus))
+		mux.HandleFunc("POST "+prefix+"/models/{model}", b.geminiEndpoint(b.handleGeminiCreate))
+		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}", b.geminiEndpoint(b.handleGeminiCreate))
+		mux.HandleFunc("GET "+prefix+"/models/{model}/operations/{operationId}", b.geminiEndpoint(b.handleGeminiStatus))
+		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}/operations/{operationId}", b.geminiEndpoint(b.handleGeminiStatus))
 	}
 	// First-party routes use the Better Auth cookie. They share the same task
 	// persistence, so browser and API clients observe one state machine.
 	mux.HandleFunc("POST /api/images/generate", b.endpoint(b.handleImageCreateSession))
 	mux.HandleFunc("POST /api/images/edit", b.endpoint(b.handleImageEditSession))
+	mux.HandleFunc("POST /api/images/chat", b.endpoint(b.handleRetiredConversation))
+	mux.HandleFunc("POST /api/images/chat/web-select", b.endpoint(b.handleRetiredConversation))
+	mux.HandleFunc("POST /api/editable-file/generate", b.endpoint(b.handleRetiredEditableFile))
 	mux.HandleFunc("GET /api/images/status/{id}", b.endpoint(b.handleImageStatusSession))
 	mux.HandleFunc("POST /api/image-generation/async", b.endpoint(b.handleImageAsyncCreate))
+	mux.HandleFunc("POST /api/image-generation/async/{taskId}/process", b.endpoint(b.handleImageAsyncProcess))
+	mux.HandleFunc("POST /api/image-generation/inputs/stage", b.endpoint(b.handleImageInputsStage))
+	mux.HandleFunc("POST /api/image-generation/inputs/cleanup", b.endpoint(b.handleImageInputsCleanup))
 	mux.HandleFunc("GET /api/image-generation/async/{taskId}", b.endpoint(b.handleImageAsyncStatus))
 	mux.HandleFunc("GET /api/image-generation/page-data", b.endpoint(b.handleImageGenerationPageData))
 	mux.HandleFunc("GET /api/model-marketplace/public", b.endpoint(b.handlePublicModelMarketplace))
@@ -103,10 +121,15 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/storage/{bucket}/{key...}", b.endpoint(b.handleStoragePut))
 	mux.HandleFunc("DELETE /api/storage/{bucket}/{key...}", b.endpoint(b.handleStorageDeletePath))
 	mux.HandleFunc("POST /api/storage/delete", b.endpoint(b.handleStorageDelete))
+	mux.HandleFunc("POST /api/storage/object", b.endpoint(b.handleStorageObjectRead))
+	mux.HandleFunc("PUT /api/storage/object", b.endpoint(b.handleStorageObjectPut))
+	mux.HandleFunc("DELETE /api/storage/object", b.endpoint(b.handleStorageObjectDelete))
+	mux.HandleFunc("POST /api/storage/signed-read-url", b.endpoint(b.handleStorageSignedReadURL))
 	mux.HandleFunc("GET /api/jobs/credits/expire", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("GET /api/jobs/images/expire-pending", b.endpoint(b.handleJobHealth))
 	mux.HandleFunc("POST /api/jobs/credits/expire", b.endpoint(b.handleCreditsExpireJob))
 	mux.HandleFunc("POST /api/jobs/images/expire-pending", b.endpoint(b.handleImagesExpireJob))
+	mux.HandleFunc("POST /api/jobs/images/retention", b.endpoint(b.handleImageRetention))
 	mux.HandleFunc("POST /api/jobs/media/recover", b.endpoint(b.handleMediaRecoveryJob))
 
 	// Remaining application endpoints now terminate in Go.  They return a
@@ -117,14 +140,20 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	} {
 		mux.HandleFunc(spec.method+" "+spec.path, b.endpoint(b.handleReferral))
 	}
+	mux.HandleFunc("POST /api/credits/purchase-checkout", b.endpoint(b.handleCreditPackageCheckout))
+	mux.HandleFunc("GET /api/credits/purchase-checkout", b.endpoint(b.handleCreditPackageCheckoutMethod))
+	mux.HandleFunc("GET /api/credits/packages", b.endpoint(b.handleCreditPackages))
+	// Referral links are read-only. Make unsupported methods explicit so they
+	// never produce the generic route_not_migrated envelope.
+	mux.HandleFunc("POST /r/{code}", b.endpoint(b.handleUnsupportedReferralMethod))
 	mux.HandleFunc("GET /api/payments/epay/return", b.endpoint(b.handleEpayReturn))
 	mux.HandleFunc("POST /api/payments/epay/return", b.endpoint(b.handleEpayReturn))
 	mux.HandleFunc("POST /api/webhooks/alipay", b.endpoint(b.handleAlipayWebhook))
 	mux.HandleFunc("POST /api/webhooks/creem", b.endpoint(b.handleCreemWebhook))
 	mux.HandleFunc("GET /api/webhooks/epay", b.endpoint(b.handleEpayWebhook))
 	mux.HandleFunc("POST /api/webhooks/epay", b.endpoint(b.handleEpayWebhook))
-	mux.HandleFunc("POST /api/mcp/user", b.endpoint(b.handleMCPUser))
-	mux.HandleFunc("POST /api/mcp/admin", b.endpoint(b.handleMCPAdmin))
+	mux.HandleFunc("POST /api/mcp/user", b.endpoint(b.handleRetiredMCP))
+	mux.HandleFunc("POST /api/mcp/admin", b.endpoint(b.handleRetiredMCP))
 	mux.HandleFunc("POST /moderate", b.endpoint(b.handleModerate))
 	mux.HandleFunc("GET /api/search", b.endpoint(b.handleAdminSearch))
 	mux.HandleFunc("POST /api/admin/site-branding/logo", b.endpoint(b.handleAdminLogoUpload))
@@ -133,6 +162,11 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("POST /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("DELETE /api/admin/model-configuration", b.endpoint(b.handleModelConfiguration))
+	// Older dashboard bundles used the plural resource spelling. Keep it on
+	// the same Go handler so stale clients never fall through to the 501 guard.
+	mux.HandleFunc("GET /api/admin/model-configurations", b.endpoint(b.handleModelConfiguration))
+	mux.HandleFunc("POST /api/admin/model-configurations", b.endpoint(b.handleModelConfiguration))
+	mux.HandleFunc("DELETE /api/admin/model-configurations", b.endpoint(b.handleModelConfiguration))
 	mux.HandleFunc("GET /api/admin/operations/exports/{taskId}/download", b.endpoint(b.handleExportDownload))
 }
 
@@ -189,72 +223,97 @@ func taskResponse(id, model, status string, created time.Time, extra map[string]
 	return response
 }
 
-func (b *backend) createImageTask(r *http.Request, p *apiPrincipal, body map[string]json.RawMessage, operation string) (map[string]any, error) {
-	prompt := rawString(body, "prompt")
-	model := rawString(body, "model")
+func (b *backend) createImageTask(r *http.Request, p *apiPrincipal, rawBody map[string]json.RawMessage, operation string) (map[string]any, error) {
+	body, requestDigest, err := normalizeImageTaskInput(rawBody, operation)
+	if err != nil {
+		return nil, err
+	}
+	prompt, model := rawString(body, "prompt"), rawString(body, "model")
 	if prompt == "" || model == "" {
 		return nil, invalid("prompt and model are required")
 	}
 	if len([]rune(prompt)) > 32000 {
 		return nil, invalid("prompt is too long")
 	}
-	// Persist the canonical operation in the input snapshot so the Go worker
-	// and async-task constraints can reconcile the same envelope on retries.
-	if _, ok := body["operation"]; !ok {
-		body["operation"] = json.RawMessage(`"` + operation + `"`)
+	generationID, id := rawString(body, "generationId"), rawString(body, "taskId")
+	if existing, err := existingImageTask(r.Context(), b.db, p, body, requestDigest); err != nil || existing != nil {
+		return existing, err
 	}
-	generationID := rawString(body, "generationId", "generation_id")
-	if generationID == "" {
-		generationID = newRequestID()
-	}
-	if _, ok := body["generationId"]; !ok {
-		encodedGenerationID, _ := json.Marshal(generationID)
-		body["generationId"] = encodedGenerationID
-	}
-	// A generation id is the UOL idempotency key. Replays return the existing
-	// durable task instead of creating a second billable generation.
-	var existingID, existingModel, existingStatus string
-	var existingCreated time.Time
-	if err := b.db.QueryRow(r.Context(), `SELECT t.id,g.model,t.status,t.created_at FROM image_async_task t LEFT JOIN generation g ON g.id=t.generation_id WHERE t.generation_id=$1 AND t.user_id=$2 LIMIT 1`, generationID, p.UserID).Scan(&existingID, &existingModel, &existingStatus, &existingCreated); err == nil {
-		return taskResponse(existingID, existingModel, existingStatus, existingCreated, map[string]any{"generation_id": generationID, "generationId": generationID}), nil
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	quote, err := b.resolveImageBillingQuote(r.Context(), p, model, rawString(body, "resolution"), operation, body)
+	if err != nil {
 		return nil, err
 	}
-	var generationOwner string
-	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM generation WHERE id=$1`, generationID).Scan(&generationOwner); err == nil && generationOwner != p.UserID {
-		return nil, &apiError{409, "IDEMPOTENCY_CONFLICT", "generationId was already used by another user"}
-	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	staged, err := b.stageImageRequest(r, p, body, operation)
+	if err != nil {
 		return nil, err
 	}
-	id := rawString(body, "taskId", "task_id")
-	if id == "" {
-		id = "task_" + generationID
+	adopted := false
+	defer func() {
+		if !adopted {
+			for _, object := range staged.Objects {
+				_ = b.deleteStorageObject(r.Context(), object.Bucket, object.Key)
+			}
+		}
+	}()
+	inputs, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
 	}
-	inputs, _ := json.Marshal(body)
 	digest := sha256.Sum256(inputs)
 	inputDigest := "sha256:" + hex.EncodeToString(digest[:])
-	created := time.Now().UTC()
 	tx, err := b.db.Begin(r.Context())
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(tx)
-	if _, err = tx.Exec(r.Context(), `INSERT INTO generation(id,user_id,prompt,model,status,metadata) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT (id) DO NOTHING`, generationID, p.UserID, prompt, model, string(inputs)); err != nil {
+	// Both natural keys are serialized. The second lookup sees a concurrent
+	// winner and compares the full original input before any wallet mutation.
+	for _, key := range []string{"image-generation:" + generationID, "image-task:" + id} {
+		if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, key); err != nil {
+			return nil, err
+		}
+	}
+	if existing, err := existingImageTask(r.Context(), tx, p, body, requestDigest); err != nil || existing != nil {
+		return existing, err
+	}
+	var generationExists bool
+	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM generation WHERE id=$1)`, generationID).Scan(&generationExists); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO image_async_task(id,user_id,api_key_id,plan,operation,generation_inputs,generation_ids,generation_input,input_digest,generation_id,response_format,status) VALUES($1,$2,$3,'default',$4,$5,$6,$5,$7,$8,'url','queued')`, id, p.UserID, p.KeyID, operation, string(inputs), "[\""+generationID+"\"]", inputDigest, generationID); err != nil {
+	if generationExists {
+		return nil, imageTaskConflict()
+	}
+	userConcurrency, err := b.admitImageTask(r.Context(), tx, p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	metadataDoc := map[string]any{"input": json.RawMessage(inputs), "requestDigest": requestDigest, "billingSnapshot": quote.Snapshot}
+	if len(staged.References) > 0 {
+		metadataDoc["inputImages"] = map[string]any{"images": staged.References}
+	}
+	if p.KeyID != "" {
+		metadataDoc["externalApiKeyId"] = p.KeyID
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO generation(id,user_id,prompt,model,status,metadata,usage_log_visible,credits_consumed) VALUES($1,$2,$3,$4,'pending',$5,$6,$7)`, generationID, p.UserID, prompt, model, mustJSON(metadataDoc), p.KeyID != "", quote.Amount); err != nil {
+		return nil, err
+	}
+	if err = b.chargeImageGenerationTx(r.Context(), tx, p.UserID, generationID, p.KeyID, quote, map[string]any{"operation": operation}); err != nil {
+		return nil, err
+	}
+	var created time.Time
+	if err = tx.QueryRow(r.Context(), `INSERT INTO image_async_task(id,user_id,api_key_id,plan,operation,generation_inputs,generation_ids,generation_input,input_digest,generation_id,response_format,callback_url,status,effective_user_concurrency,group_id_snapshot,group_priority_snapshot) VALUES($1,$2,$3,'default',$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),'queued',$12,$13,$14) RETURNING created_at`, id, p.UserID, imageTaskKeyID(p), operation, mustJSON([]any{json.RawMessage(inputs)}), mustJSON([]string{generationID}), inputs, inputDigest, generationID, rawString(body, "responseFormat"), rawString(body, "callbackUrl"), userConcurrency, quote.Snapshot["group"].(imageGroupSnapshot).ID, quote.Snapshot["group"].(imageGroupSnapshot).Priority).Scan(&created); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		return nil, err
 	}
-	// Redis is only a wake-up hint; PostgreSQL remains the durable queue and
-	// the Go worker's periodic scan recovers lost publications.
+	adopted = true
 	if b.redis != nil {
 		_ = b.redis.Publish(r.Context(), "fluxmedia:media:wakeup", id).Err()
 	}
 	return taskResponse(id, model, "processing", created, map[string]any{"generation_id": generationID, "generationId": generationID}), nil
 }
+
 func (b *backend) handleImageCreate(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
 	if err != nil {
@@ -264,12 +323,7 @@ func (b *backend) handleImageCreate(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	response, err := b.createImageTask(r, p, body, "generate")
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusAccepted, response)
-	return nil
+	return b.servePublicImage(w, r, p, body, "generate")
 }
 func (b *backend) handleImageEdit(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
@@ -280,12 +334,7 @@ func (b *backend) handleImageEdit(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	response, err := b.createImageTask(r, p, body, "edit")
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusAccepted, response)
-	return nil
+	return b.servePublicImage(w, r, p, body, "edit")
 }
 func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessage, error) {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
@@ -294,8 +343,9 @@ func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessa
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		return nil, invalid("Invalid multipart body")
 	}
+	defer r.MultipartForm.RemoveAll()
 	body := map[string]json.RawMessage{}
-	for _, key := range []string{"prompt", "model", "aspect_ratio", "aspectRatio", "resolution", "quality", "background", "moderation", "thinking", "output_format", "outputFormat", "output_compression", "outputCompression", "transparentMatte", "transparent_matte", "hdRepair", "hd_repair", "blockRepair", "block_repair", "repairPrompt", "repair_prompt", "generationId", "generation_id", "backendGroupId", "backend_group_id", "apiPrompt", "promptOptimization"} {
+	for _, key := range []string{"prompt", "model", "aspect_ratio", "aspectRatio", "resolution", "quality", "background", "moderation", "thinking", "output_format", "outputFormat", "output_compression", "outputCompression", "transparentMatte", "transparent_matte", "hdRepair", "hd_repair", "blockRepair", "block_repair", "repairPrompt", "repair_prompt", "generationId", "generation_id", "backendGroupId", "backend_group_id", "apiPrompt", "promptOptimization", "prompt_optimization", "stream", "async", "responseFormat", "response_format", "callbackUrl", "callback_url"} {
 		if value := r.FormValue(key); value != "" {
 			encoded, _ := json.Marshal(value)
 			body[key] = encoded
@@ -304,18 +354,10 @@ func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessa
 	if rawString(body, "prompt") == "" || rawString(body, "model") == "" {
 		return nil, invalid("prompt and model are required")
 	}
-	session, err := b.requireSession(r)
-	if err != nil {
-		return nil, err
-	}
-	_, bucket, err := b.storageBuckets(r.Context())
-	if err != nil {
-		return nil, err
-	}
 	refs := make([]map[string]any, 0, 4)
 	for _, field := range []string{"image", "image[]", "image_1", "image_2", "image_3", "image_4"} {
 		for _, fileHeaders := range r.MultipartForm.File[field] {
-			ref, putErr := b.stageMultipartImage(r, session.User.ID, bucket, fileHeaders)
+			ref, putErr := b.multipartImageReference(r, fileHeaders)
 			if putErr != nil {
 				return nil, putErr
 			}
@@ -328,7 +370,7 @@ func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessa
 	encoded, _ := json.Marshal(refs)
 	body["images"] = encoded
 	if maskHeaders := r.MultipartForm.File["mask"]; len(maskHeaders) > 0 {
-		ref, putErr := b.stageMultipartImage(r, session.User.ID, bucket, maskHeaders[0])
+		ref, putErr := b.multipartImageReference(r, maskHeaders[0])
 		if putErr != nil {
 			return nil, putErr
 		}
@@ -338,7 +380,7 @@ func (b *backend) decodeImageEditBody(r *http.Request) (map[string]json.RawMessa
 	return body, nil
 }
 
-func (b *backend) stageMultipartImage(r *http.Request, userID, bucket string, header *multipart.FileHeader) (map[string]any, error) {
+func (b *backend) multipartImageReference(r *http.Request, header *multipart.FileHeader) (map[string]any, error) {
 	if header == nil || header.Size <= 0 || header.Size > b.config.maxBodyBytes {
 		return nil, invalid("image file is empty or too large")
 	}
@@ -354,21 +396,13 @@ func (b *backend) stageMultipartImage(r *http.Request, userID, bucket string, he
 	if int64(len(data)) > b.config.maxBodyBytes {
 		return nil, &apiError{413, "REQUEST_BODY_TOO_LARGE", "请求体过大"}
 	}
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-		return nil, invalid("source files must be images")
+	contentType := http.DetectContentType(data)
+	if contentType != "image/png" && contentType != "image/jpeg" && contentType != "image/webp" {
+		return nil, invalid("source files must be PNG, JPEG, or WebP images")
 	}
-	ext := ".png"
-	if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
-		ext = ".jpg"
-	} else if strings.Contains(contentType, "webp") {
-		ext = ".webp"
-	}
-	key := fmt.Sprintf("%s/image-inputs/%s/%s%s", userID, newRequestID(), newRequestID(), ext)
-	if err := b.putStorageObject(r.Context(), bucket, key, data, contentType); err != nil {
-		return nil, err
-	}
-	return map[string]any{"source": "storage", "mimeType": contentType, "storageKey": key, "storageBucket": bucket, "byteLength": len(data)}, nil
+	// Staging is part of task creation after authentication/quote validation.
+	// Parsing a multipart body must not leave orphaned storage objects.
+	return map[string]any{"source": "data", "mimeType": contentType, "base64": base64.StdEncoding.EncodeToString(data), "byteLength": len(data)}, nil
 }
 
 func (b *backend) putStorageObject(ctx context.Context, bucket, key string, data []byte, contentType string) error {
@@ -443,7 +477,9 @@ func (b *backend) imageStatus(r *http.Request, id string, userID string) (map[st
 	var generationCreated time.Time
 	var generationCompleted *time.Time
 	var generationError *string
-	if err := b.db.QueryRow(r.Context(), `SELECT prompt,COALESCE(size,''),COALESCE(revised_prompt,''),COALESCE(storage_key,''),COALESCE(storage_bucket,'generations'),metadata,created_at,completed_at,error FROM generation WHERE id=$1 AND user_id=$2`, generationID, userID).Scan(&promptValue, &sizeValue, &revisedPrompt, &storageKey, &storageBucket, &metadataRaw, &generationCreated, &generationCompleted, &generationError); err == nil {
+	var creditsConsumed float64
+	if err := b.db.QueryRow(r.Context(), `SELECT prompt,COALESCE(size,''),COALESCE(revised_prompt,''),COALESCE(storage_key,''),COALESCE(storage_bucket,'generations'),metadata,created_at,completed_at,error,credits_consumed FROM generation WHERE id=$1 AND user_id=$2`, generationID, userID).Scan(&promptValue, &sizeValue, &revisedPrompt, &storageKey, &storageBucket, &metadataRaw, &generationCreated, &generationCompleted, &generationError, &creditsConsumed); err == nil {
+		extra["creditsConsumed"] = creditsConsumed
 		if promptValue != "" {
 			extra["prompt"] = promptValue
 		}
@@ -499,7 +535,10 @@ func (b *backend) handleImageStatus(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	response, err := b.imageStatus(r, r.PathValue("taskId"), p.UserID)
+	if err := b.assertImageStatusScope(r, p, r.PathValue("taskId")); err != nil {
+		return err
+	}
+	response, err := b.publicImageTask(r.Context(), p, r.PathValue("taskId"))
 	if err != nil {
 		return err
 	}
@@ -507,15 +546,9 @@ func (b *backend) handleImageStatus(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 func (b *backend) handleImageCreateSession(w http.ResponseWriter, r *http.Request) error {
-	var p *apiPrincipal
-	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
-		p = &apiPrincipal{UserID: principal.UserID, KeyID: principal.APIKeyID}
-	} else {
-		s, err := b.requireSession(r)
-		if err != nil {
-			return err
-		}
-		p = &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
+	p, err := b.imageUOLPrincipal(r)
+	if err != nil {
+		return err
 	}
 	body, err := decodeObject(r)
 	if err != nil {
@@ -529,15 +562,9 @@ func (b *backend) handleImageCreateSession(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 func (b *backend) handleImageEditSession(w http.ResponseWriter, r *http.Request) error {
-	var p *apiPrincipal
-	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
-		p = &apiPrincipal{UserID: principal.UserID, KeyID: principal.APIKeyID}
-	} else {
-		s, err := b.requireSession(r)
-		if err != nil {
-			return err
-		}
-		p = &apiPrincipal{UserID: s.User.ID, KeyID: "session"}
+	p, err := b.imageUOLPrincipal(r)
+	if err != nil {
+		return err
 	}
 	body, err := b.decodeImageEditBody(r)
 	if err != nil {
@@ -551,17 +578,14 @@ func (b *backend) handleImageEditSession(w http.ResponseWriter, r *http.Request)
 	return nil
 }
 func (b *backend) handleImageStatusSession(w http.ResponseWriter, r *http.Request) error {
-	userID := ""
-	if principal, ok := b.signedInternalPrincipal(r); ok && principal.Type == "apiKey" {
-		userID = principal.UserID
-	} else {
-		s, err := b.requireSession(r)
-		if err != nil {
-			return err
-		}
-		userID = s.User.ID
+	p, err := b.imageUOLPrincipal(r)
+	if err != nil {
+		return err
 	}
-	response, err := b.imageStatus(r, r.PathValue("id"), userID)
+	if err := b.assertImageStatusScope(r, p, r.PathValue("id")); err != nil {
+		return err
+	}
+	response, err := b.imageStatus(r, r.PathValue("id"), p.UserID)
 	if err != nil {
 		return err
 	}
@@ -570,25 +594,29 @@ func (b *backend) handleImageStatusSession(w http.ResponseWriter, r *http.Reques
 }
 
 func (b *backend) createVideoTask(r *http.Request, p *apiPrincipal, body map[string]json.RawMessage) (map[string]any, error) {
-	prompt := rawString(body, "prompt")
-	model := rawString(body, "model")
-	ratio := rawString(body, "aspectRatio", "aspect_ratio")
-	resolution := rawString(body, "resolution")
-	duration := rawInt(body, "duration", "duration_seconds", "seconds")
-	if prompt == "" || model == "" || ratio == "" || resolution == "" || duration <= 0 {
-		return nil, invalid("prompt, model, duration, aspectRatio and resolution are required")
+	key, scope := p.KeyID, "external:"+p.UserID+":"+p.KeyID
+	if key == "" || key == "session" {
+		key = ""
+		scope = "user:" + p.UserID
 	}
-	id := "video_" + newRequestID()
-	created := time.Now().UTC()
-	input, _ := json.Marshal(body)
-	_, err := b.db.Exec(r.Context(), `INSERT INTO video_generation(id,user_id,api_key_id,principal_scope,model,prompt,duration_seconds,aspect_ratio,resolution,output_width,output_height,status,stage,input_manifest,metadata) VALUES($1,$2,NULLIF($3,'session'),$4,$5,$6,$7,$8,$9,1024,1024,'pending','created',$10,$10)`, id, p.UserID, p.KeyID, p.UserID, model, prompt, duration, ratio, resolution, input)
-	if err != nil {
-		return nil, err
+	return b.createNativeVideoTask(r, p.UserID, key, scope, body)
+}
+func externalVideoTask(task map[string]any) map[string]any {
+	result := map[string]any{}
+	for key, value := range task {
+		result[key] = value
 	}
-	if b.redis != nil {
-		_ = b.redis.Publish(r.Context(), "fluxmedia:media:wakeup", id).Err()
+	result["object"] = "video.task"
+	result["id"] = task["taskId"]
+	result["task_id"] = task["taskId"]
+	result["generation_id"] = task["taskId"]
+	result["duration_seconds"] = task["duration"]
+	result["aspect_ratio"] = task["aspectRatio"]
+	result["generate_audio"] = task["generateAudio"]
+	if message, ok := task["error"].(string); ok {
+		result["error"] = map[string]any{"message": message}
 	}
-	return taskResponse(id, model, "processing", created, map[string]any{"duration": duration, "duration_seconds": duration, "aspect_ratio": ratio, "aspectRatio": ratio, "resolution": resolution}), nil
+	return result
 }
 func (b *backend) handleVideoCreate(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
@@ -599,12 +627,15 @@ func (b *backend) handleVideoCreate(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	v, err := b.createVideoTask(r, p, body)
+	if rawString(body, "geminiModel", "gemini_model", "geminiOperationId", "gemini_operation_id") != "" {
+		return invalid("Gemini identity fields are not accepted by this endpoint")
+	}
+	task, err := b.createVideoTask(r, p, body)
 	if err != nil {
 		return err
 	}
-	v["object"] = "video.generation"
-	writeJSON(w, 202, v)
+	noStore(w)
+	writeJSON(w, 202, externalVideoTask(task))
 	return nil
 }
 func (b *backend) handleVideoCreateSession(w http.ResponseWriter, r *http.Request) error {
@@ -616,66 +647,28 @@ func (b *backend) handleVideoCreateSession(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
-	v, err := b.createVideoTask(r, &apiPrincipal{UserID: s.User.ID, KeyID: "session"}, body)
+	task, err := b.createNativeVideoTask(r, s.User.ID, "", "user:"+s.User.ID, body)
 	if err != nil {
 		return err
 	}
-	v["object"] = "video.generation"
-	// Match the first-party video task DTO consumed by VideoCreatePanel.
-	if taskID, ok := v["id"].(string); ok {
-		v["taskId"] = taskID
-		v["status"] = "queued"
-	}
-	duration := rawInt(body, "duration", "duration_seconds", "seconds")
-	unitPrice := 1.0
-	v["billing"] = map[string]any{"kind": "snapshot", "mode": "per_item", "unit": "item", "unitPrice": unitPrice, "durationSeconds": duration, "quotedCredits": unitPrice, "actualCredits": 0}
-	if ratio := rawString(body, "aspectRatio", "aspect_ratio"); ratio != "" {
-		v["aspectRatio"] = ratio
-	}
-	writeJSON(w, 202, v)
+	noStore(w)
+	writeJSON(w, 202, videoGenerateResult(task))
 	return nil
 }
 func (b *backend) videoStatus(r *http.Request, id, userID string) (map[string]any, error) {
-	var model, status, ratio, resolution, prompt string
-	var duration int
-	var created, updated time.Time
-	var taskErr *string
-	err := b.db.QueryRow(r.Context(), `SELECT model,status,aspect_ratio,resolution,prompt,duration_seconds,created_at,updated_at,error FROM video_generation WHERE id=$1 AND user_id=$2`, id, userID).Scan(&model, &status, &ratio, &resolution, &prompt, &duration, &created, &updated, &taskErr)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, &apiError{404, "NOT_FOUND", "任务不存在"}
-	}
-	if err != nil {
-		return nil, err
-	}
-	public := status
-	if public != "completed" && public != "failed" {
-		public = "processing"
-	}
-	extra := map[string]any{"duration": duration, "duration_seconds": duration, "aspect_ratio": ratio, "aspectRatio": ratio, "resolution": resolution}
-	extra["billing"] = map[string]any{"kind": "snapshot", "mode": "per_item", "unit": "item", "unitPrice": 1.0, "durationSeconds": duration, "quotedCredits": 1.0, "actualCredits": 0}
-	if taskErr != nil {
-		extra["error"] = map[string]any{"message": *taskErr}
-	}
-	if status == "completed" {
-		extra["completed_at"] = updated.UTC().Format(time.RFC3339Nano)
-	}
-	v := taskResponse(id, model, public, created, extra)
-	v["taskId"] = id
-	v["task_id"] = id
-	v["createdAt"] = created.UTC().Format(time.RFC3339Nano)
-	v["object"] = "video.generation"
-	return v, nil
+	return b.readNativeVideoStatus(r, id, userID, "", "user:"+userID)
 }
 func (b *backend) handleVideoStatus(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
 	if err != nil {
 		return err
 	}
-	v, err := b.videoStatus(r, r.PathValue("taskId"), p.UserID)
+	task, err := b.readNativeVideoStatus(r, r.PathValue("taskId"), p.UserID, p.KeyID, "external:"+p.UserID+":"+p.KeyID)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, v)
+	noStore(w)
+	writeJSON(w, 200, externalVideoTask(task))
 	return nil
 }
 func (b *backend) handleVideoStatusSession(w http.ResponseWriter, r *http.Request) error {
@@ -692,39 +685,18 @@ func (b *backend) handleVideoStatusSession(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 func (b *backend) handleVideoCapabilities(w http.ResponseWriter, r *http.Request) error {
-	noStore(w)
-	// Keep the first-party capability DTO in Go. The web panel validates this
-	// shape strictly and uses it to populate model, duration and billing controls.
-	items := make([]map[string]any, 0, len(videoModelIDs))
-	for _, model := range videoModelIDs {
-		items = append(items, map[string]any{
-			"model":        model,
-			"displayName":  model,
-			"durations":    []int{4, 8},
-			"aspectRatios": []string{"16:9", "9:16"},
-			"resolutions":  []string{"720p"},
-			"input": map[string]any{
-				"frames":                               "none",
-				"referenceImages":                      map[string]any{"maxCount": 0, "configurable": false},
-				"framesAndReferencesMutuallyExclusive": true,
-			},
-			"audio":               map[string]any{"supported": false, "defaultEnabled": false},
-			"configuredReachable": true,
-			"billing": []map[string]any{{
-				"kind": "current_quote", "resolution": "720p", "mode": "per_item", "unit": "item", "unitPrice": 1, "quoteToken": "go-" + model + "-720p",
-			}},
-		})
+	p, err := b.authenticateAPI(r)
+	if err != nil {
+		return err
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "limits": map[string]any{"maxMediaInputCount": 256, "maxMediaInputBytes": 512 * 1024 * 1024}})
-	return nil
+	return b.writeGoVideoCapabilities(w, r, p.UserID, p.KeyID, "external:"+p.UserID+":"+p.KeyID)
 }
 func (b *backend) handleVideoCapabilitiesSession(w http.ResponseWriter, r *http.Request) error {
 	s, err := b.requireSession(r)
 	if err != nil {
 		return err
 	}
-	_ = s
-	return b.handleVideoCapabilities(w, r)
+	return b.writeGoVideoCapabilities(w, r, s.User.ID, "", "user:"+s.User.ID)
 }
 func (b *backend) handleGeminiCreate(w http.ResponseWriter, r *http.Request) error {
 	p, err := b.authenticateAPI(r)
@@ -735,39 +707,16 @@ func (b *backend) handleGeminiCreate(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return err
 	}
-	// Gemini transports the prompt under instances rather than the OpenAI
-	// video fields. Normalize its minimal request shape into the shared task
-	// contract before persistence.
-	if rawString(body, "prompt") == "" {
-		body["prompt"] = json.RawMessage(`"gemini request"`)
-	}
-	if rawString(body, "model") == "" {
-		model := strings.TrimSuffix(r.PathValue("model"), ":predictLongRunning")
-		if model == "" {
-			model = "veo31"
-		}
-		encoded, _ := json.Marshal(model)
-		body["model"] = encoded
-	}
-	if rawInt(body, "duration", "duration_seconds", "seconds") == 0 {
-		body["duration"] = json.RawMessage(`8`)
-	}
-	if rawString(body, "aspectRatio", "aspect_ratio") == "" {
-		body["aspectRatio"] = json.RawMessage(`"16:9"`)
-	}
-	if rawString(body, "resolution") == "" {
-		body["resolution"] = json.RawMessage(`"720p"`)
-	}
-	v, err := b.createVideoTask(r, p, body)
+	body, err = parseGeminiNativeVideoRequest(r, "external:"+p.UserID+":"+p.KeyID, body)
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256([]byte(v["id"].(string)))
-	op := hex.EncodeToString(digest[:])[:24]
-	if _, err := b.db.Exec(r.Context(), `UPDATE video_generation SET public_operation_id=$1,updated_at=now() WHERE id=$2 AND user_id=$3`, op, v["id"], p.UserID); err != nil {
+	task, err := b.createVideoTask(r, p, body)
+	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"name": "operations/" + op, "done": false})
+	noStore(w)
+	writeJSON(w, 200, geminiNativeOperation(rawString(body, "geminiModel"), rawString(body, "geminiOperationId"), task))
 	return nil
 }
 func (b *backend) handleGeminiStatus(w http.ResponseWriter, r *http.Request) error {
@@ -775,27 +724,11 @@ func (b *backend) handleGeminiStatus(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return err
 	}
-	var status string
-	var videoURL, taskErr *string
-	operationID := r.PathValue("operationId")
-	err = b.db.QueryRow(r.Context(), `SELECT status,video_url,error FROM video_generation WHERE public_operation_id=$1 AND user_id=$2`, operationID, p.UserID).Scan(&status, &videoURL, &taskErr)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return &apiError{404, "NOT_FOUND", "operation not found"}
-	}
+	response, err := b.readNativeGeminiOperation(r, p.UserID, p.KeyID, "external:"+p.UserID+":"+p.KeyID, r.PathValue("model"), r.PathValue("operationId"))
 	if err != nil {
 		return err
 	}
-	response := map[string]any{"name": "operations/" + operationID, "done": status == "completed" || status == "failed"}
-	if status == "completed" {
-		response["response"] = map[string]any{"generatedVideos": []any{map[string]any{"video": map[string]any{"uri": videoURL}}}}
-	}
-	if status == "failed" {
-		message := "video generation failed"
-		if taskErr != nil && *taskErr != "" {
-			message = *taskErr
-		}
-		response["error"] = map[string]any{"code": 13, "message": message}
-	}
+	noStore(w)
 	writeJSON(w, 200, response)
 	return nil
 }
@@ -820,30 +753,16 @@ func (b *backend) handleCreditsExpireJob(w http.ResponseWriter, r *http.Request)
 	if !b.cronAuthorized(r) {
 		return &apiError{401, "UNAUTHORIZED", "Unauthorized"}
 	}
-	tx, err := b.db.Begin(r.Context())
+	usersProcessed, batchesExpired, err := b.processExpiredCredits(r.Context())
 	if err != nil {
 		return err
 	}
-	defer rollback(tx)
-	if _, err = tx.Exec(r.Context(), `WITH expired AS (UPDATE credits_batch SET status='expired',updated_at=now() WHERE status='active' AND expires_at<now() AND remaining>0 RETURNING id,user_id,remaining), ledger AS (INSERT INTO credits_transaction(id,user_id,type,amount,debit_account,credit_account,description,metadata) SELECT $1||id,user_id,'expiration',remaining,'WALLET:'||user_id,'SYSTEM:expired','credit batch expired',json_build_object('batchId',id,'expiredAmount',remaining) FROM expired RETURNING user_id,amount) UPDATE credits_balance b SET balance=GREATEST(0,b.balance-COALESCE((SELECT sum(amount) FROM ledger l WHERE l.user_id=b.user_id),0)),updated_at=now() WHERE EXISTS(SELECT 1 FROM ledger l WHERE l.user_id=b.user_id)`, newRequestID()); err != nil {
-		return err
-	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return err
-	}
-	writeJSON(w, 200, map[string]any{"success": true})
+	writeJSON(w, 200, map[string]any{"success": true, "usersProcessed": usersProcessed, "batchesExpired": batchesExpired})
 	return nil
 }
+
 func (b *backend) handleImagesExpireJob(w http.ResponseWriter, r *http.Request) error {
-	if !b.cronAuthorized(r) {
-		return &apiError{401, "UNAUTHORIZED", "Unauthorized"}
-	}
-	expired, err := b.expireStaleImages(r.Context())
-	if err != nil {
-		return err
-	}
-	writeJSON(w, 200, map[string]any{"success": true, "expired": expired})
-	return nil
+	return b.handleImagePendingExpiry(w, r)
 }
 
 // handleMediaRecoveryJob exposes the same bounded recovery pass used by the
@@ -898,29 +817,107 @@ func (b *backend) handleUploadPresigned(w http.ResponseWriter, r *http.Request) 
 	filename := rawString(body, "filename")
 	requestedKey := rawString(body, "key")
 	contentType := rawString(body, "contentType", "content_type")
-	if filename == "" && requestedKey == "" || contentType == "" {
-		return invalid("filename and contentType are required")
+	if filename == "" && requestedKey == "" {
+		return invalid("filename or key is required")
 	}
 	if len(filename) > 255 || strings.ContainsAny(filename, "/\\\x00") {
 		return invalid("invalid filename")
 	}
-	if !strings.HasPrefix(contentType, "image/") && !strings.HasPrefix(contentType, "video/") {
-		return invalid("unsupported content type")
-	}
-	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+	systemBucket, generationsBucket, bucketErr := b.storageBuckets(r.Context())
 	if bucketErr != nil {
 		return bucketErr
 	}
-	fileKey := requestedKey
-	if fileKey != "" {
-		if filepath.IsAbs(fileKey) || filepath.Clean(fileKey) != fileKey || strings.Contains(fileKey, "..") || !strings.HasPrefix(fileKey, "uploads/"+session.User.ID+"/") {
-			return forbidden()
+	uploadBucket, err := b.settingString(r.Context(), "STORAGE_BUCKET_NAME", "gpt2image-uploads")
+	if err != nil {
+		return err
+	}
+	bucket := strings.TrimSpace(rawString(body, "bucket"))
+	avatar := isOwnAvatarKey(session.User.ID, requestedKey)
+	maxBytes := int64(10 * 1024 * 1024)
+	documentType := documentContentType(filename)
+	var contentLength int64
+	if documentType != "" || bucket == "documents" {
+		if documentType == "" {
+			return invalid("Unsupported document type")
+		}
+		var size float64
+		raw := body["fileSize"]
+		if raw == nil {
+			raw = body["contentLength"]
+		}
+		if json.Unmarshal(raw, &size) != nil || size <= 0 || size > float64(maxBytes) || size != float64(int64(size)) {
+			return invalid("Invalid file size. Maximum size: 10MB")
+		}
+		contentLength = int64(size)
+		contentType = documentType
+		if bucket == "" {
+			bucket = uploadBucket
 		}
 	} else {
-		fileKey = fmt.Sprintf("uploads/%s/%s-%s", session.User.ID, newRequestID(), filename)
+		if contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/gif" && contentType != "image/webp" && contentType != "video/mp4" && contentType != "video/webm" {
+			return invalid("unsupported content type")
+		}
+		fileMB, err := b.settingInt(r, "MEDIA_MAX_FILE_SIZE_MB", 5, 1, 200)
+		if err != nil {
+			return err
+		}
+		maxBytes = int64(fileMB) * 1024 * 1024
+		if bucket == "" {
+			if avatar {
+				bucket = systemBucket
+			} else {
+				bucket = generationsBucket
+			}
+		}
 	}
-	fileURL := "/api/storage/" + urlPathEscape(generationsBucket) + "/" + urlPathEscape(fileKey)
-	writeJSON(w, 200, map[string]any{"presignedUrl": fileURL, "uploadUrl": fileURL, "fileKey": fileKey, "fileUrl": fileURL, "key": fileKey, "bucket": generationsBucket, "contentType": contentType, "expiresIn": 3600})
+	if bucket == "avatars" || bucket == "_avatars" {
+		bucket = systemBucket
+	}
+	fileKey := requestedKey
+	if fileKey == "" {
+		fileKey = fmt.Sprintf("uploads/%s/%s%s", session.User.ID, newRequestID(), strings.ToLower(filepath.Ext(filename)))
+	}
+	if err := b.authorizeUserStorageWrite(r, session.User.ID, bucket, fileKey); err != nil {
+		return err
+	}
+	fileURL := "/api/storage/" + urlPathEscape(bucket) + "/" + urlPathEscape(fileKey)
+	if endpoint, endpointErr := b.settingString(r.Context(), "STORAGE_ENDPOINT", ""); endpointErr != nil {
+		return endpointErr
+	} else if strings.TrimSpace(endpoint) != "" {
+		access, accessErr := b.settingString(r.Context(), "STORAGE_ACCESS_KEY_ID", "")
+		if accessErr != nil {
+			return accessErr
+		}
+		secret, secretErr := b.settingString(r.Context(), "STORAGE_SECRET_ACCESS_KEY", "")
+		if secretErr != nil {
+			return secretErr
+		}
+		region, regionErr := b.settingString(r.Context(), "STORAGE_REGION", "auto")
+		if regionErr != nil {
+			return regionErr
+		}
+		if access == "" || secret == "" {
+			return &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+		}
+		cfg, cfgErr := awsconfig.LoadDefaultConfig(r.Context(), awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+		if cfgErr != nil {
+			return cfgErr
+		}
+		client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+		presigner := s3.NewPresignClient(client)
+		presigned, presignErr := presigner.PresignPutObject(r.Context(), &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(fileKey), ContentType: aws.String(contentType), ContentLength: func() *int64 {
+			if contentLength > 0 {
+				return aws.Int64(contentLength)
+			}
+			return nil
+		}()}, func(o *s3.PresignOptions) { o.Expires = time.Hour })
+		if presignErr != nil {
+			return presignErr
+		}
+		writeJSON(w, 200, map[string]any{"presignedUrl": presigned.URL, "uploadUrl": presigned.URL, "fileKey": fileKey, "fileUrl": fileURL, "key": fileKey, "bucket": bucket, "contentType": contentType, "expiresIn": 3600, "maxFileSizeBytes": maxBytes})
+		return nil
+	}
+	writeJSON(w, 200, map[string]any{"presignedUrl": fileURL, "uploadUrl": fileURL, "fileKey": fileKey, "fileUrl": fileURL, "key": fileKey, "bucket": bucket, "contentType": contentType, "expiresIn": 3600, "maxFileSizeBytes": maxBytes})
 	return nil
 }
 
@@ -932,7 +929,8 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	if bucket == "_avatars" {
+	isAvatarAlias := bucket == "_avatars"
+	if isAvatarAlias {
 		bucket = systemBucket
 	}
 	// A path width is accepted for parity with the Next route. Go currently
@@ -951,21 +949,31 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	if bucket == "" || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") {
 		return &apiError{400, "INVALID_PATH", "Invalid storage path"}
 	}
-	if bucket != systemBucket && bucket != generationsBucket {
+	uploadBucket, err := b.settingString(r.Context(), "STORAGE_BUCKET_NAME", "gpt2image-uploads")
+	if err != nil {
+		return err
+	}
+	if bucket != systemBucket && bucket != generationsBucket && bucket != uploadBucket && bucket != "documents" {
 		return forbidden()
 	}
 	domain := storageObjectDomain(bucket, key, systemBucket, generationsBucket)
-	if domain == "" {
+	// Uploads may share a physical bucket with generations or system assets.
+	// Preserve the resolved namespace so private images keep their thumbnails
+	// and public avatars/covers/logos keep their own access rules.
+	if domain == "" && (bucket == uploadBucket || bucket == "documents") {
+		domain = "documents"
+	}
+	if domain == "" || (isAvatarAlias && domain != "avatars") {
 		return &apiError{400, "INVALID_PATH", "Invalid public asset key"}
 	}
 	if thumbWidth != 0 && domain != "generations" && domain != "avatars" {
 		return &apiError{400, "INVALID_THUMBNAIL", "Public asset thumbnails are not allowed"}
 	}
-	if domain == "generations" {
+	if domain == "generations" || domain == "documents" {
 		if err := b.verifyStorageSignature(r, bucket, key); err != nil {
 			// First-party requests may use a valid session for objects they own,
 			// matching the Next route's signature fallback.
-			if !b.storageObjectOwned(r, key) {
+			if !b.storageObjectOwned(r, bucket, key) {
 				return err
 			}
 		}
@@ -977,15 +985,14 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 		}
 		return err
 	}
+	thumbnailEncoded := false
 	if thumbWidth > 0 {
 		if thumb, thumbErr := storageThumbnail(data, thumbWidth); thumbErr == nil {
+			thumbnailEncoded = !bytes.Equal(data, thumb)
 			data = thumb
 		}
 	}
 	contentType := "application/octet-stream"
-	if thumbWidth > 0 {
-		contentType = "image/webp"
-	}
 	switch strings.ToLower(filepath.Ext(key)) {
 	case ".png":
 		contentType = "image/png"
@@ -1002,9 +1009,12 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	case ".svg":
 		contentType = "image/svg+xml"
 	}
+	if thumbnailEncoded {
+		contentType = "image/webp"
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if domain == "generations" {
+	if domain == "generations" || domain == "documents" {
 		w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=2592000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -1015,9 +1025,8 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	if domain == "logo" && contentType == "image/svg+xml" {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	}
-	w.WriteHeader(200)
-	_, err = w.Write(data)
-	return err
+	http.ServeContent(w, r, key, time.Time{}, bytes.NewReader(data))
+	return nil
 }
 
 // storageThumbnail decodes a source image, scales it down while preserving
@@ -1050,12 +1059,34 @@ func storageThumbnail(data []byte, width int) ([]byte, error) {
 // endpoint is configured, otherwise from the local storage root. Credentials
 // are loaded at request time so admin key rotation takes effect immediately.
 func (b *backend) readStorageObject(ctx context.Context, bucket, key string) ([]byte, error) {
+	return b.readStorageObjectLimited(ctx, bucket, key, 0)
+}
+
+func (b *backend) readStorageObjectLimited(ctx context.Context, bucket, key string, maxBytes int64) ([]byte, error) {
+	read := func(reader io.Reader) ([]byte, error) {
+		if maxBytes > 0 {
+			reader = io.LimitReader(reader, maxBytes+1)
+		}
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+		if maxBytes > 0 && int64(len(data)) > maxBytes {
+			return nil, invalid("Storage object exceeds the file size limit")
+		}
+		return data, nil
+	}
 	endpoint, err := b.settingString(ctx, "STORAGE_ENDPOINT", "")
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(endpoint) == "" {
-		return os.ReadFile(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+		file, err := os.Open(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		return read(file)
 	}
 	access, err := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
 	if err != nil {
@@ -1082,7 +1113,84 @@ func (b *backend) readStorageObject(ctx context.Context, bucket, key string) ([]
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	if maxBytes > 0 && resp.ContentLength != nil && *resp.ContentLength > maxBytes {
+		return nil, invalid("Storage object exceeds the file size limit")
+	}
+	return read(resp.Body)
+}
+
+func (b *backend) writeStorageObject(ctx context.Context, bucket, key string, data []byte, contentType string) error {
+	endpoint, err := b.settingString(ctx, "STORAGE_ENDPOINT", "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(endpoint) == "" {
+		file := filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+			return err
+		}
+		return os.WriteFile(file, data, 0o640)
+	}
+	access, err := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
+	if err != nil {
+		return err
+	}
+	secret, err := b.settingString(ctx, "STORAGE_SECRET_ACCESS_KEY", "")
+	if err != nil {
+		return err
+	}
+	if access == "" || secret == "" {
+		return &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+	}
+	region, err := b.settingString(ctx, "STORAGE_REGION", "auto")
+	if err != nil {
+		return err
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+	if err != nil {
+		return err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: bytes.NewReader(data), ContentType: aws.String(contentType)})
+	return err
+}
+
+// deleteStorageObject is shared by HTTP handlers and maintenance jobs. Missing
+// local objects are already deleted, matching S3 DeleteObject's idempotency.
+func (b *backend) deleteStorageObject(ctx context.Context, bucket, key string) error {
+	endpoint, err := b.settingString(ctx, "STORAGE_ENDPOINT", "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(endpoint) == "" {
+		err := os.Remove(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	access, err := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
+	if err != nil {
+		return err
+	}
+	secret, err := b.settingString(ctx, "STORAGE_SECRET_ACCESS_KEY", "")
+	if err != nil {
+		return err
+	}
+	region, err := b.settingString(ctx, "STORAGE_REGION", "auto")
+	if err != nil {
+		return err
+	}
+	if access == "" || secret == "" {
+		return &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+	if err != nil {
+		return err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	return err
 }
 
 // storageBuckets resolves the runtime bucket settings used by the Next route.
@@ -1161,19 +1269,65 @@ func (b *backend) verifyStorageSignature(r *http.Request, bucket, key string) er
 	return nil
 }
 
-func (b *backend) storageObjectOwned(r *http.Request, key string) bool {
-	session, err := b.requireSession(r)
-	if err != nil || session == nil {
-		return false
+func (b *backend) storageObjectOwned(r *http.Request, bucket, key string) bool {
+	var userID string
+	if p, ok := b.signedInternalPrincipal(r); ok {
+		userID = p.UserID
+	} else {
+		session, err := b.requireSession(r)
+		if err != nil || session == nil {
+			return false
+		}
+		userID = session.User.ID
 	}
-	var owner string
-	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM generation WHERE storage_key=$1 LIMIT 1`, key).Scan(&owner); err == nil && owner == session.User.ID {
+	if strings.HasPrefix(key, "uploads/"+userID+"/") {
 		return true
 	}
-	if err := b.db.QueryRow(r.Context(), `SELECT user_id FROM video_generation WHERE storage_key=$1 LIMIT 1`, key).Scan(&owner); err == nil && owner == session.User.ID {
-		return true
+	var owned bool
+	err := b.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM generation WHERE user_id=$1 AND storage_bucket=$2 AND storage_key=$3 UNION ALL SELECT 1 FROM video_generation WHERE user_id=$1 AND storage_bucket=$2 AND storage_key=$3)`, userID, bucket, key).Scan(&owned)
+	return err == nil && owned
+}
+
+func documentContentType(filename string) string {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".pdf":
+		return "application/pdf"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".doc":
+		return "application/msword"
+	case ".md":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	default:
+		return ""
 	}
-	return false
+}
+
+func isOwnAvatarKey(userID, key string) bool {
+	return regexp.MustCompile(`^avatars/` + regexp.QuoteMeta(userID) + `-[0-9]+\.(jpe?g|png|gif|webp)$`).MatchString(key)
+}
+
+func (b *backend) authorizeUserStorageWrite(r *http.Request, userID, bucket, key string) error {
+	if !validStorageObjectPath(bucket, key) {
+		return invalid("Invalid storage path")
+	}
+	system, generations, err := b.storageBuckets(r.Context())
+	if err != nil {
+		return err
+	}
+	uploads, err := b.settingString(r.Context(), "STORAGE_BUCKET_NAME", "gpt2image-uploads")
+	if err != nil {
+		return err
+	}
+	if bucket == system && isOwnAvatarKey(userID, key) {
+		return nil
+	}
+	if (bucket == generations || bucket == uploads || bucket == "documents") && strings.HasPrefix(key, "uploads/"+userID+"/") {
+		return nil
+	}
+	return forbidden()
 }
 
 func (b *backend) handleStoragePut(w http.ResponseWriter, r *http.Request) error {
@@ -1182,25 +1336,34 @@ func (b *backend) handleStoragePut(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	bucket, key := r.PathValue("bucket"), r.PathValue("key")
-	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
-	if bucketErr != nil {
-		return bucketErr
-	}
-	if bucket != generationsBucket || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") || !strings.HasPrefix(key, "uploads/"+session.User.ID+"/") {
-		return &apiError{403, "FORBIDDEN", "Invalid upload path"}
-	}
-	file := filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+	if err := b.authorizeUserStorageWrite(r, session.User.ID, bucket, key); err != nil {
 		return err
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, b.config.maxBodyBytes+1))
+	fileMB, err := b.settingInt(r, "MEDIA_MAX_FILE_SIZE_MB", 5, 1, 200)
 	if err != nil {
 		return err
 	}
-	if int64(len(data)) > b.config.maxBodyBytes {
+	maxBytes := int64(fileMB) * 1024 * 1024
+	contentType := r.Header.Get("Content-Type")
+	if documentType := documentContentType(key); documentType != "" {
+		contentType = documentType
+		maxBytes = 10 * 1024 * 1024
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > maxBytes {
 		return &apiError{413, "REQUEST_BODY_TOO_LARGE", "请求体过大"}
 	}
-	if err = os.WriteFile(file, data, 0o640); err != nil {
+	if isOwnAvatarKey(session.User.ID, key) {
+		detected := http.DetectContentType(data)
+		if detected != "image/jpeg" && detected != "image/png" && detected != "image/gif" && detected != "image/webp" {
+			return invalid("Invalid avatar image")
+		}
+		contentType = detected
+	}
+	if err := b.writeStorageObject(r.Context(), bucket, key, data, contentType); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1219,104 +1382,346 @@ func (b *backend) handleStorageDelete(w http.ResponseWriter, r *http.Request) er
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
-	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
-	if bucketErr != nil {
-		return bucketErr
+	system, generations, err := b.storageBuckets(r.Context())
+	if err != nil {
+		return err
 	}
 	if in.Bucket == "" {
-		in.Bucket = generationsBucket
+		if isOwnAvatarKey(s.User.ID, in.Key) {
+			in.Bucket = system
+		} else {
+			in.Bucket = generations
+		}
 	}
-	if in.Bucket != generationsBucket || in.Key == "" || filepath.IsAbs(in.Key) || filepath.Clean(in.Key) != in.Key || strings.Contains(in.Key, "..") || strings.Contains(in.Key, "\\") || !strings.HasPrefix(in.Key, "uploads/"+s.User.ID+"/") {
-		return forbidden()
+	if err := b.authorizeUserStorageWrite(r, s.User.ID, in.Bucket, in.Key); err != nil {
+		return err
 	}
-	err = os.Remove(filepath.Join(b.config.storagePath, in.Bucket, filepath.FromSlash(in.Key)))
-	if os.IsNotExist(err) {
-		err = nil
-	}
-	if err != nil {
+	if err := b.deleteStorageObject(r.Context(), in.Bucket, in.Key); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": in.Key})
 	return nil
 }
 
-// DELETE /api/storage/{bucket}/{key...} is the path-oriented counterpart of
-// the historical JSON delete action. It is used by migrated clients while the
-// action endpoint remains available for compatibility.
 func (b *backend) handleStorageDeletePath(w http.ResponseWriter, r *http.Request) error {
 	s, err := b.requireSession(r)
 	if err != nil {
 		return err
 	}
-	_, generationsBucket, bucketErr := b.storageBuckets(r.Context())
-	if bucketErr != nil {
-		return bucketErr
-	}
 	bucket, key := r.PathValue("bucket"), r.PathValue("key")
-	if bucket != generationsBucket || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.Contains(key, "..") || strings.Contains(key, "\\") || !strings.HasPrefix(key, "uploads/"+s.User.ID+"/") {
-		return forbidden()
+	if err := b.authorizeUserStorageWrite(r, s.User.ID, bucket, key); err != nil {
+		return err
 	}
-	err = os.Remove(filepath.Join(b.config.storagePath, bucket, filepath.FromSlash(key)))
-	if os.IsNotExist(err) {
-		err = nil
-	}
-	if err != nil {
+	if err := b.deleteStorageObject(r.Context(), bucket, key); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": key})
 	return nil
 }
-func urlPathEscape(value string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(value, "%", "%25"), " ", "%20")
+
+// storageOperationAuthorized accepts the short-lived cron credential for
+// system UOL operations and falls back to the browser session for protected
+// user operations.
+func validStorageObjectPath(bucket, key string) bool {
+	if bucket == "" || bucket == "." || bucket == ".." || strings.ContainsAny(bucket, "/\\\x00") || key == "" || filepath.IsAbs(key) || filepath.Clean(key) != key || strings.ContainsAny(key, "\\\x00") {
+		return false
+	}
+	for _, part := range strings.Split(key, "/") {
+		if part == ".." || part == "." || part == "" {
+			return false
+		}
+	}
+	return true
 }
 
-func (b *backend) handleCompatibility(w http.ResponseWriter, r *http.Request) error {
-	if strings.HasPrefix(r.URL.Path, "/api/webhooks/") {
-		writeJSON(w, 200, map[string]any{"ok": true})
+func (b *backend) storageOperationAuthorized(r *http.Request, bucket, key string, systemOnly bool) error {
+	if !validStorageObjectPath(bucket, key) {
+		return invalid("Invalid storage path")
+	}
+	if b.cronAuthorized(r) {
 		return nil
 	}
-	if r.URL.Path == "/api/search" {
-		session, err := b.requireSession(r)
-		if err != nil {
-			return err
-		}
-		if session.User.Role != "admin" && session.User.Role != "super_admin" {
-			return forbidden()
-		}
-		writeJSON(w, 200, map[string]any{"results": []any{}})
+	if systemOnly {
+		return forbidden()
+	}
+	if _, ok := b.signedInternalPrincipal(r); ok {
 		return nil
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/admin/") || r.URL.Path == "/api/mcp/admin" {
-		session, err := b.requireSession(r)
-		if err != nil {
-			return err
-		}
-		if session.User.Role != "admin" && session.User.Role != "super_admin" {
-			return forbidden()
-		}
-	}
-	if r.URL.Path == "/api/site-logo" {
-		writeJSON(w, 200, map[string]any{"url": nil})
-		return nil
-	}
-	if _, err := b.requireSession(r); err != nil && !strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+	_, err := b.requireSession(r)
+	return err
+}
+
+func (b *backend) handleStorageObjectRead(w http.ResponseWriter, r *http.Request) error {
+	body, err := decodeObject(r)
+	if err != nil {
 		return err
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "data": map[string]any{}})
+	bucket, key := rawString(body, "bucket"), rawString(body, "key")
+	if err := b.storageOperationAuthorized(r, bucket, key, false); err != nil {
+		return err
+	}
+	if bucket == "" || key == "" {
+		return invalid("bucket and key are required")
+	}
+	if !b.cronAuthorized(r) {
+		systemBucket, generationsBucket, bucketErr := b.storageBuckets(r.Context())
+		if bucketErr != nil {
+			return bucketErr
+		}
+		uploadBucket, err := b.settingString(r.Context(), "STORAGE_BUCKET_NAME", "gpt2image-uploads")
+		if err != nil {
+			return err
+		}
+		if bucket != systemBucket && bucket != generationsBucket && bucket != uploadBucket && bucket != "documents" {
+			return forbidden()
+		}
+		if (bucket == generationsBucket || bucket == uploadBucket || bucket == "documents") && !b.storageObjectOwned(r, bucket, key) {
+			return forbidden()
+		}
+	}
+	data, err := b.readStorageObject(r.Context(), bucket, key)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &apiError{404, "NOT_FOUND", "storage object not found"}
+		}
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": base64.StdEncoding.EncodeToString(data), "contentType": http.DetectContentType(data), "contentLength": len(data)})
 	return nil
+}
+
+func (b *backend) handleStorageObjectPut(w http.ResponseWriter, r *http.Request) error {
+	body, err := decodeObject(r)
+	if err != nil {
+		return err
+	}
+	bucket, key := rawString(body, "bucket"), rawString(body, "key")
+	if err := b.storageOperationAuthorized(r, bucket, key, true); err != nil {
+		return err
+	}
+	encoded := rawString(body, "data")
+	if bucket == "" || key == "" || body["data"] == nil {
+		return invalid("bucket, key and data are required")
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return invalid("data must be base64")
+	}
+	contentType := rawString(body, "contentType")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if err := b.writeStorageObject(r.Context(), bucket, key, data, contentType); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "key": key})
+	return nil
+}
+
+func (b *backend) handleStorageObjectDelete(w http.ResponseWriter, r *http.Request) error {
+	body, err := decodeObject(r)
+	if err != nil {
+		return err
+	}
+	bucket, key := rawString(body, "bucket"), rawString(body, "key")
+	if err := b.storageOperationAuthorized(r, bucket, key, true); err != nil {
+		return err
+	}
+	if bucket == "" || key == "" {
+		return invalid("bucket and key are required")
+	}
+	if err := b.deleteStorageObject(r.Context(), bucket, key); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	return nil
+}
+
+func (b *backend) handleStorageSignedReadURL(w http.ResponseWriter, r *http.Request) error {
+	body, err := decodeObject(r)
+	if err != nil {
+		return err
+	}
+	bucket, key := rawString(body, "bucket"), rawString(body, "key")
+	if err := b.storageOperationAuthorized(r, bucket, key, true); err != nil {
+		return err
+	}
+	if bucket == "" || key == "" {
+		return invalid("bucket and key are required")
+	}
+	expires := 3600
+	if raw, exists := body["expiresIn"]; exists {
+		var value *int
+		if err := json.Unmarshal(raw, &value); err != nil || value == nil || *value < 1 || *value > 86400 {
+			return invalid("Invalid signed URL expiry")
+		}
+		expires = *value
+	}
+	signedURL, err := b.storageSignedReadURL(r.Context(), bucket, key, expires)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"url": signedURL})
+	return nil
+}
+
+func (b *backend) storageSignedReadURL(ctx context.Context, bucket, key string, expires int) (string, error) {
+	if !validStorageObjectPath(bucket, key) {
+		return "", invalid("Invalid storage path")
+	}
+	if expires < 1 || expires > 86400 {
+		return "", invalid("Invalid signed URL expiry")
+	}
+	exp := time.Now().Add(time.Duration(expires) * time.Second).Unix()
+	if endpoint, endpointErr := b.settingString(ctx, "STORAGE_ENDPOINT", ""); endpointErr != nil {
+		return "", endpointErr
+	} else if strings.TrimSpace(endpoint) != "" {
+		access, accessErr := b.settingString(ctx, "STORAGE_ACCESS_KEY_ID", "")
+		if accessErr != nil {
+			return "", accessErr
+		}
+		secret, secretErr := b.settingString(ctx, "STORAGE_SECRET_ACCESS_KEY", "")
+		if secretErr != nil {
+			return "", secretErr
+		}
+		region, regionErr := b.settingString(ctx, "STORAGE_REGION", "auto")
+		if regionErr != nil {
+			return "", regionErr
+		}
+		if access == "" || secret == "" {
+			return "", &apiError{503, "STORAGE_CONFIG_INVALID", "Storage credentials are not configured"}
+		}
+		cfg, cfgErr := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(access, secret, "")))
+		if cfgErr != nil {
+			return "", cfgErr
+		}
+		client := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true; o.BaseEndpoint = aws.String(endpoint) })
+		presigner := s3.NewPresignClient(client)
+		presigned, presignErr := presigner.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.PresignOptions) { o.Expires = time.Duration(expires) * time.Second })
+		if presignErr != nil {
+			return "", presignErr
+		}
+		return presigned.URL, nil
+	}
+	mac := hmac.New(sha256.New, []byte(b.config.authSecret))
+	_, _ = mac.Write([]byte(bucket + "/" + key + ":" + strconv.FormatInt(exp, 10)))
+	url := "/api/storage/" + urlPathEscape(bucket) + "/" + urlPathEscape(key) + "?exp=" + strconv.FormatInt(exp, 10) + "&sig=" + hex.EncodeToString(mac.Sum(nil))
+	return url, nil
+}
+func urlPathEscape(value string) string {
+	parts := strings.Split(value, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return strings.Join(parts, "/")
 }
 
 func (b *backend) handleReferral(w http.ResponseWriter, r *http.Request) error {
-	code := strings.TrimSpace(r.PathValue("code"))
-	if len(code) > 64 || !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(code) {
-		code = ""
+	rawCode := strings.TrimSpace(r.PathValue("code"))
+	code := ""
+	if referralCodePattern.MatchString(rawCode) {
+		code = strings.ToUpper(rawCode)
 	}
+
+	// Keep the locale contract in lockstep with the Next route: an explicit,
+	// supported NEXT_LOCALE cookie wins over Accept-Language.
 	locale := "zh"
-	if strings.HasPrefix(strings.ToLower(r.Header.Get("Accept-Language")), "en") {
+	cookieLocale := false
+	if cookie, err := r.Cookie("NEXT_LOCALE"); err == nil {
+		switch cookie.Value {
+		case "en", "zh":
+			locale = cookie.Value
+			cookieLocale = true
+		}
+	}
+	if !cookieLocale && strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Accept-Language"))), "en") {
 		locale = "en"
 	}
-	http.SetCookie(w, &http.Cookie{Name: "fluxmedia_referral_code", Value: code, Path: "/", MaxAge: 30 * 24 * 60 * 60, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: strings.HasPrefix(b.config.authURL, "https://")})
-	w.Header().Set("Location", "/"+locale+"/sign-up")
+
+	origin := b.referralRedirectOrigin(r)
+	redirect, err := url.Parse(origin)
+	if err != nil {
+		return fmt.Errorf("parse referral redirect origin: %w", err)
+	}
+	redirect.Path = "/" + locale + "/sign-up"
+	redirect.RawQuery = ""
+	redirect.Fragment = ""
+	w.Header().Set("Location", redirect.String())
+	if code != "" {
+		http.SetCookie(w, &http.Cookie{Name: "fluxmedia_referral_code", Value: code, Path: "/", MaxAge: 30 * 24 * 60 * 60, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: b.config.production})
+	}
 	w.WriteHeader(http.StatusSeeOther)
 	return nil
+}
+
+// handleUnsupportedReferralMethod makes the read-only referral contract
+// explicit for clients that accidentally submit a mutating request.
+func (b *backend) handleUnsupportedReferralMethod(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Allow", http.MethodGet)
+	return &apiError{http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "推广链接仅支持 GET 请求"}
+}
+
+var referralCodePattern = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
+
+const defaultPublicAppURL = "https://media.flux-code.cc"
+
+// referralRedirectOrigin mirrors resolvePublicAppUrl from the shared package:
+// configured public origins win, while internal listener addresses are
+// rejected and the canonical public site remains the final fallback.
+func (b *backend) referralRedirectOrigin(r *http.Request) string {
+	for _, candidate := range []string{b.config.authURL, b.config.publicAppURL} {
+		if origin := normalizeReferralOrigin(candidate); origin != "" {
+			return origin
+		}
+	}
+
+	proto := "http"
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded == "http" || forwarded == "https" {
+		proto = forwarded
+	} else if r.TLS != nil {
+		proto = "https"
+	}
+	for _, authority := range []string{
+		strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]),
+		r.Host,
+	} {
+		if authority == "" {
+			continue
+		}
+		if origin := normalizeReferralOrigin(proto + "://" + authority); origin != "" {
+			return origin
+		}
+	}
+	return defaultPublicAppURL
+}
+
+func normalizeReferralOrigin(candidate string) string {
+	if strings.TrimSpace(candidate) == "" {
+		return ""
+	}
+	u, err := url.Parse(strings.TrimSpace(candidate))
+	// resolvePublicAppUrl uses the origin of configured URLs; tolerate a
+	// configured base path but discard it when building the sign-up target.
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "0.0.0.0", "127.0.0.1", "localhost", "::", "::1":
+		return ""
+	}
+	if strings.HasSuffix(host, ".localhost") {
+		return ""
+	}
+	port := u.Port()
+	if (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host
 }

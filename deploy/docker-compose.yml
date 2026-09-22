@@ -20,6 +20,7 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://media.flux-code.cc}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://media.flux-code.cc}
       APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}
+      GO_BACKEND_URL: ${GO_BACKEND_CONTAINER_URL:-http://backend:8080}
       LOCAL_STORAGE_PATH: /app/storage
       REDIS_HOST: ${REDIS_HOST:?REDIS_HOST 必填}
       REDIS_PORT: ${REDIS_PORT:-6379}
@@ -88,8 +89,10 @@ services:
       GO_BACKEND_WRITE_TIMEOUT_MS: ${GO_BACKEND_WRITE_TIMEOUT_MS:-3600000}
       GO_BACKEND_READ_TIMEOUT_MS: ${GO_BACKEND_READ_TIMEOUT_MS:-30000}
       GO_BACKEND_IDLE_TIMEOUT_MS: ${GO_BACKEND_IDLE_TIMEOUT_MS:-75000}
-      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_URL:-http://script-runtime:8090}
+      GO_SCRIPT_RUNTIME_URL: ${GO_SCRIPT_RUNTIME_CONTAINER_URL:-http://script-runtime:8090}
       GO_SCRIPT_RUNTIME_TOKEN: ${GO_SCRIPT_RUNTIME_TOKEN:-}
+      GO_MEDIA_PROCESSING_URL: ${GO_MEDIA_PROCESSING_CONTAINER_URL:-http://media-processing:8091}
+      GO_MEDIA_PROCESSING_TOKEN: ${GO_MEDIA_PROCESSING_TOKEN:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${GO_BACKEND_PORT:-3001}:8080"
     healthcheck:
@@ -100,6 +103,8 @@ services:
       start_period: 15s
     depends_on:
       script-runtime:
+        condition: service_healthy
+      media-processing:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true
@@ -132,6 +137,28 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+
+  # 私有图像计算运行时；算法与 ONNX 模型由同一版本镜像携带。
+  media-processing:
+    image: ${FLUXMEDIA_MEDIA_PROCESSING_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-media-processing}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    restart: unless-stopped
+    init: true
+    networks:
+      - infra
+    environment:
+      MEDIA_PROCESSING_HOST: 0.0.0.0
+      MEDIA_PROCESSING_PORT: "8091"
+      MEDIA_PROCESSING_TOKEN: ${GO_MEDIA_PROCESSING_TOKEN:-}
+      MEDIA_PROCESSING_MODELS_PATH: /models
+    expose:
+      - "8091"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8091/healthz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     security_opt:
       - no-new-privileges:true
 
