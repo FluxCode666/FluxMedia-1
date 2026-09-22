@@ -8,8 +8,8 @@ export class RuntimePoolError extends Error {
 // Only counters and lifecycle leave this pool. Scripts, task IDs, bodies and
 // provider headers never participate in its public diagnostics.
 export class RuntimePool {
-  constructor({ workerCount, memoryLimitBytes, stackLimitBytes, workerPath = new URL("./worker.mjs", import.meta.url), permitTTL = 30 * 60_000 }) {
-    Object.assign(this, { workerCount, memoryLimitBytes, stackLimitBytes, workerPath, permitTTL });
+  constructor({ workerCount, memoryLimitBytes, stackLimitBytes, workerPath = new URL("./worker.mjs", import.meta.url), workerData, permitTTL = 30 * 60_000, executionTimeoutMs = 500 }) {
+    Object.assign(this, { workerCount, memoryLimitBytes, stackLimitBytes, workerPath, workerData, permitTTL, executionTimeoutMs });
     this.slots = [];
     this.requestQueue = [];
     this.responseQueue = [];
@@ -48,7 +48,7 @@ export class RuntimePool {
   }
 
   spawn(slot) {
-    const worker = new Worker(this.workerPath);
+    const worker = new Worker(this.workerPath, { workerData: this.workerData });
     slot.worker = worker;
     slot.ready = false;
     slot.retiring = false;
@@ -233,7 +233,7 @@ export class RuntimePool {
       if (!job) break;
       this.removeAccounting(job);
       slot.pending = job;
-      slot.timer = setTimeout(() => this.retire(slot, new RuntimePoolError("runtime_timeout")), 500);
+      slot.timer = setTimeout(() => this.retire(slot, new RuntimePoolError("runtime_timeout")), this.executionTimeoutMs);
       try {
         slot.worker.postMessage({ type: "job", id: job.id, kind: job.payload.kind, script: job.payload.script,
           inputJson: job.payload.inputJson, contextJson: job.payload.contextJson,

@@ -65,10 +65,14 @@ test("private HTTP diagnostics reflect real QuickJS permits, auth and safe count
 const workerPath = new URL("./test-fixtures/controlled-worker.mjs", import.meta.url);
 
 test("HTTP reports queued requests/responses and real saturation, with reserved responses first", async t => {
-  const runtime = await fixture(t, { workerPath });
+  const holdGate = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  const runtime = await fixture(t, {
+    workerPath,
+    workerData: { holdGate: holdGate.buffer },
+    executionTimeoutMs: 5_000,
+  });
   const permit = await runtime.reserve();
   const hold = runtime.execute("hold");
-  await delay(35);
   const completed = [];
   const queued = Array.from({ length: 70 }, (_, index) => runtime.execute("normal", { input: { index } }).then(async response => {
     const payload = await response.json();
@@ -82,6 +86,8 @@ test("HTTP reports queued requests/responses and real saturation, with reserved 
   const busy = await until(runtime.snapshot, value => value.requestQueueLength > 0 && value.responseQueueLength === 1 && value.saturationCount > 0);
   assert.ok(busy.requestQueueLength <= 64);
   assert.equal(busy.responsePermitsInUse, 1);
+  Atomics.store(holdGate, 0, 1);
+  Atomics.notify(holdGate, 0);
   await Promise.all([hold, responseJob, ...queued]);
   assert.equal(completed[0], "response");
   const idle = await runtime.snapshot();
