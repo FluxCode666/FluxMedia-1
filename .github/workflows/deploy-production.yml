@@ -101,6 +101,15 @@ jobs:
       - name: Test backend entrypoint command forwarding
         run: sh services/api-gateway/backend-entrypoint.test.sh
 
+      - name: Test video input asset deployment contract
+        run: bash deploy/video-input-asset-deployment-contract.test.sh
+
+      - name: Test production routing deployment contract
+        run: |
+          bash deploy/nginx/routing-contract.test.sh
+          bash deploy/production-routing-deployment-contract.test.sh
+          bash -n deploy/smoke-production-routing.sh
+
       - name: Verify Go backend
         working-directory: services/api-gateway
         run: |
@@ -436,6 +445,8 @@ jobs:
             deploy/read-release-ledger-digest.sh \
             deploy/release-recovery-policy.sh \
             deploy/read-env-value.sh \
+            deploy/nginx/conf.d/fluxmedia.conf \
+            deploy/smoke-production-routing.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
       - name: Login target host to GHCR
@@ -505,6 +516,10 @@ jobs:
             echo "目标服务器缺少发布恢复策略脚本。" >&2
             exit 1
           fi
+          if [ ! -f fluxmedia.conf ] || [ ! -f smoke-production-routing.sh ]; then
+            echo "目标服务器缺少 Nginx 配置或公网路由 smoke 脚本。" >&2
+            exit 1
+          fi
 
           # 用受测解析器读取单行 dotenv。
           # 不会 source/eval 配置或打印其他值。
@@ -523,6 +538,35 @@ jobs:
             else
               printf '%s=%s\n' "${key}" "${value}" >> .env
             fi
+          }
+
+          # 先备份并验证版本化 Nginx 配置。语法或 reload 失败时恢复原配置，
+          # 此时应用尚未停服。
+          install_nginx_configuration() {
+            nginx_target=/etc/nginx/conf.d/fluxmedia.conf
+            nginx_backup_dir="${deploy_path}/config-backups"
+            nginx_backup_path="${nginx_backup_dir}/fluxmedia.conf.$(date -u +%Y%m%dT%H%M%SZ).before-${image_tag}"
+            if [ ! -f "${nginx_target}" ]; then
+              echo "目标服务器缺少现有 Nginx 站点配置，拒绝无备份覆盖。" >&2
+              return 1
+            fi
+            install -d -m 750 "${nginx_backup_dir}"
+            install -m 644 "${nginx_target}" "${nginx_backup_path}"
+            install -m 644 fluxmedia.conf "${nginx_target}"
+            if ! nginx -t; then
+              install -m 644 "${nginx_backup_path}" "${nginx_target}"
+              nginx -t
+              echo "新 Nginx 配置校验失败，已恢复原配置。" >&2
+              return 1
+            fi
+            if ! systemctl reload nginx; then
+              install -m 644 "${nginx_backup_path}" "${nginx_target}"
+              nginx -t
+              systemctl reload nginx
+              echo "Nginx reload 失败，已恢复原配置。" >&2
+              return 1
+            fi
+            printf 'nginx_config_backup=%s\n' "${nginx_backup_path}"
           }
 
           # 使用统一 backend 镜像运行只读数据库门禁，跳过启动迁移。
@@ -557,9 +601,27 @@ jobs:
           # 旧 schema 输入全部复制为任务对象；0074 已完成时命令是幂等空操作。
           run_video_input_asset_migration() {
             docker compose --profile maintenance run --rm --no-deps \
-              --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true backend \
+              --interactive=false \
+              --volume "/root/docker-data/fluxmedia:/app/storage" \
+              --volume "${deploy_path}/state:/app/state" \
+              -e GO_BACKEND_SKIP_MIGRATION=true \
+              -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-${image_tag}.ndjson" \
+              backend \
               node apps/web/scripts/migrate-video-input-assets.mjs migrate \
               --confirm-no-legacy-writers </dev/null
+          }
+
+          # state 必须由镜像内的非 root 用户持有，且不可向同机其他用户开放。
+          prepare_video_input_migration_state() {
+            backend_uid="$(docker run --rm --entrypoint id "${backend_image}" -u)"
+            backend_gid="$(docker run --rm --entrypoint id "${backend_image}" -g)"
+            if ! [[ "${backend_uid}" =~ ^[0-9]+$ ]] \
+              || ! [[ "${backend_gid}" =~ ^[0-9]+$ ]]; then
+              echo "无法确定 backend 镜像的运行用户，拒绝创建迁移状态目录。" >&2
+              return 1
+            fi
+            install -d -m 700 \
+              -o "${backend_uid}" -g "${backend_gid}" "${deploy_path}/state"
           }
 
           # 统计迁移只创建 building 状态；必须使用新 Web 镜像补齐事实、汇总并零差异
@@ -577,7 +639,8 @@ jobs:
             docker compose --profile maintenance run --rm --no-deps \
               --interactive=false \
               -e "OPERATIONS_EPOCH_INITIALIZED_BY=release-${image_tag}" \
-              -e GO_BACKEND_SKIP_MIGRATION=true backend \
+              -e GO_BACKEND_SKIP_MIGRATION=true \
+              -e GO_BACKEND_URL=http://backend:8080 backend \
               pnpm --dir apps/web operations:epoch:ensure-current \
               </dev/null
           }
@@ -616,6 +679,12 @@ jobs:
           else
             printf 'previous_release=unknown\n'
           fi
+          cron_secret="$(read_env_value CRON_SECRET)"
+          if [ "${#cron_secret}" -lt 32 ]; then
+            echo "生产 .env 缺少至少 32 字符的 CRON_SECRET，拒绝停服。" >&2
+            exit 1
+          fi
+          unset cron_secret
           # 停服前先确认当前配置能创建恢复点。未配置 S3 时，备份脚本会使用
           # deploy-path/backups 下的持久化本地目录，不会跳过数据库备份。
           bash ./create-database-backup.sh \
@@ -673,6 +742,7 @@ jobs:
           set_env_value FLUXMEDIA_MEDIA_PROCESSING_IMAGE "${media_processing_image}"
           set_env_value FLUXMEDIA_TAG "${image_tag}"
           docker compose --profile maintenance config --quiet
+          install_nginx_configuration
 
           if ! docker compose --profile maintenance pull web backend script-runtime media-processing; then
             exit 1
@@ -712,7 +782,7 @@ jobs:
           bash ./create-database-backup.sh \
             create .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
-          install -d -m 700 state
+          prepare_video_input_migration_state
           echo "收编历史视频输入资产。"
           migration_started=true
           run_video_input_asset_migration
@@ -779,6 +849,8 @@ jobs:
             if [ "${web_health_status}" = "healthy" ] \
               && [ "${gateway_health_status}" = "healthy" ]; then
               echo "web 与 Go backend均已通过健康检查。"
+              bash ./smoke-production-routing.sh \
+                https://media.flux-code.cc https://media.fluxhall.cc
               web_stopped=false
               deployment_succeeded=true
               printf 'deployment_completed=true\n'
@@ -831,6 +903,7 @@ jobs:
           )"
           deployment_completed="$(extract_evidence deployment_completed)"
           previous_release="$(extract_evidence previous_release)"
+          nginx_config_backup="$(extract_evidence nginx_config_backup)"
           if [ "${relay_count}" != "0" ] \
             || { [ "${backup_storage}" != "local" ] \
               && [ "${backup_storage}" != "s3" ]; } \
@@ -839,6 +912,7 @@ jobs:
             || [ -z "${backup_delete_after}" ] \
             || [ "${backup_archive_manifest_verified}" != "true" ] \
             || [ "${backup_storage_verified}" != "true" ] \
+            || [ -z "${nginx_config_backup}" ] \
             || [ "${deployment_completed}" != "true" ]; then
             echo "::error::部署完成但安全证据不完整。"
             exit 1
@@ -855,6 +929,7 @@ jobs:
             printf 'backup_storage_verified=%s\n' \
               "${backup_storage_verified}"
             echo "previous_release=${previous_release}"
+            echo "nginx_config_backup=${nginx_config_backup}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Deployment summary
@@ -868,7 +943,8 @@ jobs:
             echo "- 域名：\`${PUBLIC_APP_URL}\`"
             echo "- 提交：\`${GITHUB_SHA}\`"
             echo "- 迁移前版本：\`${{ steps.deploy.outputs.previous_release }}\`"
-            echo "- 服务：\`backend → web\`（Go backend承载公网入口）"
+            echo "- 服务：页面/静态资源 → Web；API/媒体/Webhook → Go backend"
+            echo "- Nginx 配置备份：\`${{ steps.deploy.outputs.nginx_config_backup }}\`"
             echo "- 纯中转预检：\`${{ steps.deploy.outputs.relay_count }}\`"
             echo "- 备份存储：\`${{ steps.deploy.outputs.backup_storage }}\`"
             echo "- 备份 artifact：\`${{ steps.deploy.outputs.backup_artifact_id }}\`"

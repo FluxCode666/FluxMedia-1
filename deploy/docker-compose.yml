@@ -62,7 +62,7 @@ services:
         soft: 65535
         hard: 65535
 
-  # Go backend 是生产公网入口，并在同一容器 entrypoint 内执行数据库迁移。
+  # Go backend 是生产 API 公网入口，并在同一容器 entrypoint 内执行数据库迁移。
   backend:
     image: ${FLUXMEDIA_BACKEND_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-backend}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
     restart: unless-stopped

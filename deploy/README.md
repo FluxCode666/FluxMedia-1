@@ -1,19 +1,21 @@
 # FluxMedia 生产部署
 
-本目录提供 `media.flux-code.cc` 的生产部署配置。Nginx 将页面和未迁移的 Next.js API
-转发到 web，将已迁移的 Go API 转发到 backend。两个容器只监听宿主机回环地址：web
+本目录提供 `media.flux-code.cc` 与 `media.fluxhall.cc` 的生产部署配置。Nginx 将页面和
+静态资源转发到 web，将 API、媒体与 Webhook 转发到 backend。两个容器只监听宿主机回环地址：web
 使用 `127.0.0.1:${WEB_PORT}`（默认 `3000`），Go backend 使用
 `127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`）。backend entrypoint 在同一服务中执行
 数据库迁移，然后启动 Go 进程；Compose 不再定义独立 migrate 服务。
 
 ## 文件
 
-- `docker-compose.yml`：Go `backend` 与内部 `web`；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
+- `docker-compose.yml`：Next.js `web`、Go `backend` 与两个私有运行时；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
 - `read-env-value.sh`：生产 Workflow 使用的 fail-closed dotenv 单键读取器。
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
 - `.env.example`：不含真实机密的服务器环境变量模板。
 - `nginx/nginx.conf`：参考 user-service 的宿主机 Nginx 主配置。
-- `nginx/conf.d/fluxmedia.conf`：`media.flux-code.cc` 的 HTTPS 站点配置。
+- `nginx/conf.d/fluxmedia.conf`：两个生产域名的 HTTPS Web/API 分流配置。
+- `nginx/routing-contract.test.sh`：Web 与 Go upstream 分流的静态回归测试。
+- `smoke-production-routing.sh`：页面、Next.js 静态资源、Go API 与健康入口的公网 smoke。
 - `.github/workflows/deploy-production.yml`：质量门、GHCR 构建与 SSH 部署流水线。
 
 ## 首次配置服务器
@@ -35,7 +37,7 @@ sudo chmod 600 /root/flux-media/.env
 sudo editor /root/flux-media/.env
 ```
 
-至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
+至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`CRON_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
 `REDIS_PASSWORD`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。数据库必须已创建；外部 Redis
 必须可从 Web 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
@@ -90,7 +92,10 @@ docker compose ps web backend
 手工执行迁移时复用 backend 镜像。迁移成功后再启动主服务：
 
 ```bash
-install -d -m 700 state
+backend_image="$(bash ./read-env-value.sh .env FLUXMEDIA_BACKEND_IMAGE):$(bash ./read-env-value.sh .env FLUXMEDIA_TAG)"
+backend_uid="$(docker run --rm --entrypoint id "${backend_image}" -u)"
+backend_gid="$(docker run --rm --entrypoint id "${backend_image}" -g)"
+install -d -m 700 -o "${backend_uid}" -g "${backend_gid}" state
 docker compose stop --timeout 60 web backend
 docker compose run --rm --no-deps --interactive=false \
   -e GO_BACKEND_SKIP_MIGRATION=true backend \
@@ -110,7 +115,11 @@ docker compose run --rm --no-deps --interactive=false \
 
 ```bash
 docker compose run --rm --no-deps --interactive=false \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend \
+  --volume "/root/docker-data/fluxmedia:/app/storage" \
+  --volume "$(pwd)/state:/app/state" \
+  -e GO_BACKEND_SKIP_MIGRATION=true \
+  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_TAG).ndjson" \
+  backend \
   node apps/web/scripts/migrate-video-input-assets.mjs migrate \
   --confirm-no-legacy-writers
 release_preflight="$(docker compose run --rm --no-deps \
@@ -131,20 +140,23 @@ docker compose run --rm --no-deps --interactive=false web \
 docker compose up -d web backend
 docker compose run --rm --no-deps --interactive=false \
   -e OPERATIONS_EPOCH_INITIALIZED_BY=release-<版本号> \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend pnpm --dir apps/web operations:epoch:ensure-current
+  -e GO_BACKEND_SKIP_MIGRATION=true \
+  -e GO_BACKEND_URL=http://backend:8080 backend \
+  pnpm --dir apps/web operations:epoch:ensure-current
 ```
 
 自动部署必须关闭 backend 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
 默认的交互输入，backend 容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
 
-自动部署先拉取新镜像，再停止旧 Web 与 Go backend、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
+自动部署先校验 `CRON_SECRET`，备份、安装并验证版本化 Nginx 配置，再拉取新镜像。随后停止旧 Web 与 Go backend、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
 只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、迁移、
 postcheck 与控制台统计回填对账。新 Web 启动后、健康检查前，流水线会自动确保运营统计
 epoch：空表按生产应用时区当前日初始化，已有值原样跳过。资产收编开始后，任何迁移、
 后置校验、统计对账、epoch 门禁、启动或任一服务健康检查失败都会保持 Web 与 backend 停止，
 绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版 Web 在本轮停服前确实处于
 运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与 backend；该证据证明数据库尚未
-改变且上一版已运行在当前 schema 上。恢复迁移前数据库备份后手工启动旧 schema 镜像时，
+改变且上一版已运行在当前 schema 上。容器健康后还必须通过两个公网域名的页面、静态资源、
+API 和健康入口 smoke，之后才记录发布成功。恢复迁移前数据库备份后手工启动旧 schema 镜像时，
 仍必须让 `legacy-startup` 门禁证明三个旧视频列完整。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
 
@@ -153,7 +165,11 @@ epoch：空表按生产应用时区当前日初始化，已有值原样跳过。
 
 ```bash
 docker compose run --rm --no-deps --interactive=false \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend \
+  --volume "/root/docker-data/fluxmedia:/app/storage" \
+  --volume "$(pwd)/state:/app/state" \
+  -e GO_BACKEND_SKIP_MIGRATION=true \
+  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_TAG).ndjson" \
+  backend \
   node apps/web/scripts/migrate-video-input-assets.mjs rollback \
   --confirm-database-restored
 ```
@@ -209,8 +225,8 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 如果部署账号不是 `root`，必须将 `DEPLOY_PATH` 改为该账号可写的绝对路径。
 
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/flux-media`。服务器
-上的真实 `.env` 由运维持久维护；流水线只同步 `docker-compose.yml`、
-`create-database-backup.sh` 和 `read-env-value.sh`，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
+上的真实 `.env` 由运维持久维护；流水线同步 `docker-compose.yml`、部署脚本和版本化 Nginx
+站点配置，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
 `FLUXMEDIA_BACKEND_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
 并排空数据库连接后，通过 backend 镜像执行只读门禁、备份、迁移和后置校验，
 再启动新 `web`。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
