@@ -172,8 +172,14 @@ func TestImageChargedTaskPinsAuthorizedRouteAndPriceAcrossSettingsChanges(t *tes
 	provider := seedImagePricingMember(t, b, group, model, server.URL, true, 99)
 	seedImagePricingMember(t, b, otherGroup, model, foreign.URL, true, 0)
 	input := imagePricingInput(map[string]any{"model": model, "prompt": "local fixture", "backendGroupId": group, "resolution": "2k", "groupAuthorization": map[string]any{"id": otherGroup}, "billingSnapshot": map[string]any{"amount": 0}})
-	r := httptest.NewRequest(http.MethodPost, "http://localhost/api/images/generate", nil)
-	task, err := b.createImageTask(r, &apiPrincipal{UserID: uid}, input, "generate")
+	if _, err := b.createImageTask(httptest.NewRequest(http.MethodPost, "http://localhost/api/images/generate", nil), &apiPrincipal{UserID: uid}, input, "generate"); err == nil {
+		t.Fatal("caller-controlled admission snapshots accepted")
+	} else if apiErr, ok := err.(*apiError); !ok || apiErr.code != "INVALID_REQUEST" {
+		t.Fatalf("unexpected forged snapshot error: %v", err)
+	}
+	delete(input, "groupAuthorization")
+	delete(input, "billingSnapshot")
+	task, err := b.createImageTask(httptest.NewRequest(http.MethodPost, "http://localhost/api/images/generate", nil), &apiPrincipal{UserID: uid}, input, "generate")
 	if err != nil {
 		t.Fatal(err)
 	}
