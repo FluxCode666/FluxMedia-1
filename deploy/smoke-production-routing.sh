@@ -21,6 +21,7 @@ for base_url in "$@"; do
   headers_path="${tmp_dir}/${host}.headers"
   page_path="${tmp_dir}/${host}.html"
   api_path="${tmp_dir}/${host}.api.json"
+  compat_api_path="${tmp_dir}/${host}.compat-api.json"
 
   page_status="$(
     curl --silent --show-error --location --max-time 30 --retry 3 \
@@ -63,6 +64,24 @@ for base_url in "$@"; do
   fi
   if grep -Fq 'route_not_migrated' "${api_path}"; then
     printf '%s API smoke reached the Go fallback route\n' "${origin}" >&2
+    exit 1
+  fi
+
+  # The browser JSON client uses this prefix so Next.js can proxy to Go in
+  # local development. Production Nginx must strip it before proxying to Go.
+  compat_api_status="$(
+    curl --silent --show-error --max-time 30 --retry 3 \
+      --output "${compat_api_path}" --write-out '%{http_code}' \
+      "${origin}/api/go/api/user/credits"
+  )"
+  if [ "${compat_api_status}" != "401" ]; then
+    printf '%s compatibility API smoke returned HTTP %s\n' \
+      "${origin}" "${compat_api_status}" >&2
+    exit 1
+  fi
+  if grep -Fq 'route_not_migrated' "${compat_api_path}"; then
+    printf '%s compatibility API reached the Go fallback route\n' \
+      "${origin}" >&2
     exit 1
   fi
 

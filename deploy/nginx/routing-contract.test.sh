@@ -52,6 +52,8 @@ require_count 0 'fluxmedia_gateway'
 
 require_location_upstream 'location /' 'fluxmedia_web' 2
 require_location_upstream 'location /_next/static/' 'fluxmedia_web' 2
+require_location_upstream 'location ^~ /api/go/' 'fluxmedia_backend' 2
+require_count 2 'rewrite ^/api/go(/.*)$ $1 break;'
 require_location_upstream \
   'location ~ ^/(?:api/)?(?:v1|v1beta)/' 'fluxmedia_backend' 2
 require_location_upstream \
