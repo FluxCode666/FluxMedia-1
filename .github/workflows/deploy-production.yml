@@ -101,6 +101,9 @@ jobs:
       - name: Test backend entrypoint command forwarding
         run: sh services/api-gateway/backend-entrypoint.test.sh
 
+      - name: Test backend image build performance contract
+        run: bash deploy/backend-image-build-contract.test.sh
+
       - name: Test video input asset deployment contract
         run: bash deploy/video-input-asset-deployment-contract.test.sh
 
@@ -322,8 +325,13 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=fluxmedia-backend
-          cache-to: type=gha,mode=max,scope=fluxmedia-backend
+          # Prefer the already-pushed image as BuildKit's cache source. The
+          # read-only GHA fallback carries the previous release into this
+          # strategy without uploading the multi-gigabyte runtime again.
+          cache-from: |
+            type=registry,ref=${{ steps.meta.outputs.backend_image }}:latest
+            type=gha,scope=fluxmedia-backend
+          cache-to: type=inline
 
       - name: Build and push script runtime image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
