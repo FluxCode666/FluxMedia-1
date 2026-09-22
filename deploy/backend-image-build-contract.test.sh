@@ -30,6 +30,7 @@ forbid_text() {
 }
 
 require_text "${dockerfile_path}" 'RUN go mod download'
+require_text "${dockerfile_path}" 'apt-get install --yes --no-install-recommends ca-certificates'
 require_text \
   "${dockerfile_path}" \
   'COPY --chown=backend:backend --from=migration-runtime /app ./'
