@@ -4,7 +4,9 @@
 
 ## 部署边界
 
-`api-upstream-script-runtime` 是只允许 backend 访问的私有服务，默认监听 8090，不发布宿主机端口。它使用 Node.js Worker Thread 和 QuickJS，每个作业建立独立的 QuickJS Runtime。Go 通过 `GO_SCRIPT_RUNTIME_URL` 调用 `POST /v1/execute`，并可通过 `GO_SCRIPT_RUNTIME_TOKEN` 设置内部 Bearer 鉴权。
+`api-upstream-script-runtime` 是只允许 backend 访问的私有进程。生产环境中它与 Next.js、Go backend 和图片处理运行时一起由统一 `app` 容器监管，固定监听 `127.0.0.1:8090`，不发布宿主机端口。它使用 Node.js Worker Thread 和 QuickJS，每个作业建立独立的 QuickJS Runtime。Go 通过 `GO_SCRIPT_RUNTIME_URL=http://127.0.0.1:8090` 调用 `POST /v1/execute`，并可通过 `GO_SCRIPT_RUNTIME_TOKEN` 设置内部 Bearer 鉴权。
+
+本地源码开发仍可将四个进程分别启动；`Dockerfile.api-upstream-script-runtime` 也保留用于专项构建和测试，但不是生产部署单元。
 
 ```json
 {
@@ -31,11 +33,11 @@
 
 ## 迁移切换
 
-当前仓库的图片/视频业务仍有部分 Next.js UOL binding，因此 Web 容器暂时仍拥有旧的本地 Worker Pool。新增 Runtime 是 Go 业务接管后的唯一执行目标；Go 生图执行器接入前，不应把 Web 的 `runApiUpstreamScript` 改成无条件远程调用，否则尚未迁移的任务链路会被切断。
+当前仓库的图片/视频业务仍有部分 Next.js UOL binding，因此 Web 进程暂时仍拥有旧的本地 Worker Pool。新增 Runtime 是 Go 业务接管后的唯一执行目标；Go 生图执行器接入前，不应把 Web 的 `runApiUpstreamScript` 改成无条件远程调用，否则尚未迁移的任务链路会被切断。
 
 完成 Go 生图路由后，切换顺序为：
 
 1. Go 请求执行器调用 Runtime 的 `/v1/execute`。
 2. 在 Go 中保留所有上游请求和响应的安全校验。
-3. 停止 Web 容器中的本地脚本 Worker 和相关 UOL binding。
-4. 生产 Compose 只允许 backend 访问 Runtime，Runtime 不对公网暴露端口。
+3. 停止 Web 进程中的本地脚本 Worker 和相关 UOL binding。
+4. 生产 `app` 容器只允许 backend 进程通过回环地址访问 Runtime，Runtime 不对公网或宿主机暴露端口。

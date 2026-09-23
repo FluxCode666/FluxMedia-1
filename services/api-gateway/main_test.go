@@ -85,6 +85,18 @@ func TestBackendHealthAndExplicitUnimplementedRoute(t *testing.T) {
 		t.Fatalf("unexpected health response: %d %s", health.Code, health.Body.String())
 	}
 
+	compatHealth := httptest.NewRecorder()
+	handler.ServeHTTP(compatHealth, httptest.NewRequest(http.MethodGet, "http://backend.local/api/go/healthz", nil))
+	if compatHealth.Code != http.StatusOK || !strings.Contains(compatHealth.Body.String(), "go-backend") {
+		t.Fatalf("unexpected compatibility health response: %d %s", compatHealth.Code, compatHealth.Body.String())
+	}
+
+	compatCredits := httptest.NewRecorder()
+	handler.ServeHTTP(compatCredits, httptest.NewRequest(http.MethodGet, "http://backend.local/api/go/api/user/credits", nil))
+	if compatCredits.Code != http.StatusUnauthorized || strings.Contains(compatCredits.Body.String(), "route_not_migrated") {
+		t.Fatalf("unexpected compatibility credits response: %d %s", compatCredits.Code, compatCredits.Body.String())
+	}
+
 	route := httptest.NewRecorder()
 	handler.ServeHTTP(route, httptest.NewRequest(http.MethodGet, "http://backend.local/api/not-implemented", nil))
 	if route.Code != http.StatusNotImplemented || !strings.Contains(route.Body.String(), "route_not_migrated") {

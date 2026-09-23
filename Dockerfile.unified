@@ -1,0 +1,168 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+
+# FluxMedia production image: Next.js, Go API, QuickJS and media processing
+# share one immutable image while PostgreSQL, Redis and Nginx stay external.
+FROM node:22-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS node-base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+FROM node-base AS pruner
+WORKDIR /app
+RUN --mount=type=cache,id=fluxmedia-pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm add --global turbo@2.9.18
+COPY . .
+RUN turbo prune @repo/web --docker
+
+FROM node-base AS web-deps
+WORKDIR /app
+COPY --from=pruner /app/out/json/ ./
+RUN --mount=type=cache,id=fluxmedia-pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile
+
+FROM web-deps AS web-builder
+WORKDIR /app
+COPY --from=pruner /app/out/full/ ./
+COPY tsconfig.base.json ./tsconfig.base.json
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG NEXT_PUBLIC_APP_NAME=FluxMedia
+ARG NEXT_PUBLIC_PAYMENT_PROVIDER=none
+ARG NEXT_PUBLIC_ASSET_PREFIX=
+ARG NEXT_PUBLIC_GA_ID=
+ARG NEXT_PUBLIC_SENTRY_DSN=
+ARG DATABASE_URL=postgresql://gpt2image:gpt2image@localhost:5432/gpt2image
+ARG BETTER_AUTH_SECRET=build-time-placeholder-secret-not-for-runtime
+ARG BETTER_AUTH_URL=http://localhost:3000
+ARG GO_BACKEND_URL=http://127.0.0.1:8080
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
+ENV NEXT_PUBLIC_PAYMENT_PROVIDER=$NEXT_PUBLIC_PAYMENT_PROVIDER
+ENV NEXT_PUBLIC_ASSET_PREFIX=$NEXT_PUBLIC_ASSET_PREFIX
+ENV NEXT_PUBLIC_GA_ID=$NEXT_PUBLIC_GA_ID
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+ENV DATABASE_URL=$DATABASE_URL
+ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
+ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
+ENV GO_BACKEND_URL=$GO_BACKEND_URL
+RUN --mount=type=cache,id=fluxmedia-next-cache,target=/app/apps/web/.next/cache,sharing=locked \
+    --mount=type=cache,id=fluxmedia-turbo-cache,target=/app/.turbo,sharing=locked \
+    pnpm turbo build --filter=@repo/web
+
+# Next's standalone trace keeps the Linux ONNX native binding, but its bundled
+# application code does not need the package's JavaScript entrypoints. The
+# separate media runtime does, so extract only those small portable files here
+# instead of copying the roughly 250 MB all-platform package into the image.
+FROM web-builder AS onnx-runtime-deps
+RUN set -eu; \
+    node_manifest="$(find /app/node_modules/.pnpm -type f \
+      -path '*/node_modules/onnxruntime-node/package.json' -print -quit)"; \
+    common_manifest="$(find /app/node_modules/.pnpm -type f \
+      -path '*/node_modules/onnxruntime-common/package.json' -print -quit)"; \
+    test -n "${node_manifest}"; \
+    test -n "${common_manifest}"; \
+    mkdir -p /out/onnxruntime-node /out/onnxruntime-common; \
+    cp "${node_manifest}" /out/onnxruntime-node/package.json; \
+    cp -R "$(dirname "${node_manifest}")/dist" /out/onnxruntime-node/dist; \
+    cp "${common_manifest}" /out/onnxruntime-common/package.json; \
+    cp -R "$(dirname "${common_manifest}")/dist" /out/onnxruntime-common/dist
+
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS go-builder
+WORKDIR /src/services/api-gateway
+COPY services/api-gateway/go.mod services/api-gateway/go.sum ./
+RUN --mount=type=cache,id=fluxmedia-go-mod,target=/go/pkg/mod,sharing=locked \
+    go mod download
+COPY services/api-gateway/*.go ./
+COPY services/api-gateway/system_settings_definitions.json ./
+RUN --mount=type=cache,id=fluxmedia-go-mod,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=fluxmedia-go-build,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/backend .
+
+FROM node:22-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOME=/home/fluxmedia
+ENV FLUXMEDIA_WEB_ROOT=/app/apps/web
+ENV LOCAL_STORAGE_PATH=/app/storage
+ENV SYSTEM_ASSETS_BUCKET_NAME=system
+ENV GENERATIONS_BUCKET_NAME=generations
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV GO_BACKEND_BIND=:8080
+ENV GO_BACKEND_URL=http://127.0.0.1:8080
+ENV GO_SCRIPT_RUNTIME_URL=http://127.0.0.1:8090
+ENV GO_MEDIA_PROCESSING_URL=http://127.0.0.1:8091
+ENV SCRIPT_RUNTIME_BIND=:8090
+ENV SCRIPT_RUNTIME_HOST=127.0.0.1
+ENV MEDIA_PROCESSING_HOST=127.0.0.1
+ENV MEDIA_PROCESSING_PORT=8091
+ENV MEDIA_PROCESSING_MODELS_PATH=/app/apps/web/models
+
+RUN groupadd --system --gid 1001 fluxmedia && \
+    useradd --system --create-home --home-dir /home/fluxmedia \
+      --uid 1001 --gid fluxmedia fluxmedia && \
+    apt-get update && \
+    apt-get install --yes --no-install-recommends ca-certificates ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/.next/standalone ./
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/public ./apps/web/public
+COPY --link --chown=1001:1001 --from=web-builder /app/packages/database/drizzle ./packages/database/drizzle
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/src/content ./apps/web/src/content
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/src/features/pseo/data ./apps/web/src/features/pseo/data
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/scripts/preflight-api-upstream-adapter-migration.mjs ./apps/web/scripts/preflight-api-upstream-adapter-migration.mjs
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/scripts/api-upstream-worker-probe.mjs ./apps/web/scripts/api-upstream-worker-probe.mjs
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/scripts/backfill-dashboard-analytics.mjs ./apps/web/scripts/backfill-dashboard-analytics.mjs
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/scripts/dashboard-analytics-backfill-core.mjs ./apps/web/scripts/dashboard-analytics-backfill-core.mjs
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/scripts/migrate-video-input-assets.mjs ./apps/web/scripts/migrate-video-input-assets.mjs
+COPY --link --chown=1001:1001 --from=web-builder /app/apps/web/src/features/image-generation/video-input-migration.ts ./apps/web/src/features/image-generation/video-input-migration.ts
+COPY --link --chown=1001:1001 packages/database/scripts/release-governance-gate.mjs ./apps/web/scripts/release-governance-gate.mjs
+COPY --link --chown=1001:1001 services/api-upstream-script-runtime ./services/api-upstream-script-runtime
+COPY --link --chown=1001:1001 services/media-processing-runtime ./services/media-processing-runtime
+COPY --link --chown=1001:1001 services/unified-runtime ./services/unified-runtime
+COPY --link --chown=1001:1001 --from=onnx-runtime-deps /out/onnxruntime-node ./vendor/onnxruntime-node
+COPY --link --chown=1001:1001 --from=onnx-runtime-deps /out/onnxruntime-common ./vendor/onnxruntime-common
+COPY --link --chown=1001:1001 --from=go-builder /out/backend /backend
+COPY --link --chmod=0755 services/unified-runtime/entrypoint.sh /usr/local/bin/fluxmedia-entrypoint
+
+# The standalone trace already contains these exact production packages and
+# native binaries. Stable links let the two internal services reuse them rather
+# than installing and exporting a second 300 MB dependency tree.
+RUN set -eu; \
+    mkdir -p \
+      /app/services/api-upstream-script-runtime/node_modules \
+      /app/services/media-processing-runtime/node_modules \
+      /app/apps/web/node_modules/@aws-sdk \
+      /app/storage /app/apps/web/.next/cache; \
+    ln -s /app/apps/web/node_modules/quickjs-emscripten \
+      /app/services/api-upstream-script-runtime/node_modules/quickjs-emscripten; \
+    ln -s /app/node_modules/.pnpm/node_modules/sharp \
+      /app/services/media-processing-runtime/node_modules/sharp; \
+    onnx_native_dir="$(find /app/node_modules/.pnpm -type d \
+      -path '*/node_modules/onnxruntime-node' -print -quit)"; \
+    test -n "${onnx_native_dir}"; \
+    test -r "${onnx_native_dir}/bin/napi-v6/linux/x64/onnxruntime_binding.node"; \
+    test -r "${onnx_native_dir}/bin/napi-v6/linux/x64/libonnxruntime.so.1"; \
+    mkdir -p /app/vendor/onnxruntime-node/node_modules; \
+    ln -s "${onnx_native_dir}/bin" /app/vendor/onnxruntime-node/bin; \
+    ln -s /app/vendor/onnxruntime-common \
+      /app/vendor/onnxruntime-node/node_modules/onnxruntime-common; \
+    ln -s /app/vendor/onnxruntime-node \
+      /app/services/media-processing-runtime/node_modules/onnxruntime-node; \
+    ln -s /app/node_modules/.pnpm/node_modules/@aws-sdk/client-s3 \
+      /app/apps/web/node_modules/@aws-sdk/client-s3; \
+    chown -R fluxmedia:fluxmedia /app/storage /app/apps/web/.next/cache; \
+    node --input-type=module -e \
+      "await Promise.all([import('./services/api-upstream-script-runtime/server.mjs'),import('./services/media-processing-runtime/server.mjs'),import('./apps/web/scripts/migrate-video-input-assets.mjs')])"; \
+    node -e \
+      "(async()=>{const {RuntimePool}=await import('./services/api-upstream-script-runtime/pool.mjs');const pool=new RuntimePool({workerCount:1,memoryLimitBytes:16*1024*1024,stackLimitBytes:512*1024,executionTimeoutMs:5000});await pool.start();try{const output=await pool.execute({kind:'execute',script:'return 1;',stage:'request',inputJson:'null',contextJson:'{}'});if(output!==1)throw new Error('QuickJS self-check failed')}finally{await pool.close(0)}})().catch((error)=>{console.error(error);process.exit(1)})"
+
+USER fluxmedia:fluxmedia
+EXPOSE 3000 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+  CMD ["node", "/app/services/unified-runtime/healthcheck.mjs"]
+ENTRYPOINT ["/usr/local/bin/fluxmedia-entrypoint"]

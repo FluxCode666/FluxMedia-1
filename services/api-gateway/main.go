@@ -333,7 +333,38 @@ func tlsConfig(enabled bool) *tls.Config {
 }
 
 func (b *backend) handler() http.Handler {
-	return withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, b.withBackendRateLimit(b.router())))
+	core := withRequestID(b.logger, withBodyLimit(b.config.maxBodyBytes, b.withBackendRateLimit(b.router())))
+	return stripGoCompatibilityPrefix(core)
+}
+
+// The browser client keeps /api/go as a same-origin compatibility prefix.
+// Nginx normally removes it before reaching Go, but a standalone Next rewrite
+// or an older reverse-proxy rule may forward the prefix unchanged. Normalize it
+// at the backend boundary so that both paths reach the exact same handlers.
+func stripGoCompatibilityPrefix(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		var stripped string
+		switch {
+		case path == "/api/go":
+			stripped = "/"
+		case strings.HasPrefix(path, "/api/go/"):
+			stripped = strings.TrimPrefix(path, "/api/go")
+		default:
+			next.ServeHTTP(w, r)
+			return
+		}
+		clone := r.Clone(r.Context())
+		clone.URL.Path = stripped
+		if clone.URL.RawPath != "" {
+			if clone.URL.RawPath == "/api/go" {
+				clone.URL.RawPath = "/"
+			} else {
+				clone.URL.RawPath = strings.TrimPrefix(clone.URL.RawPath, "/api/go")
+			}
+		}
+		next.ServeHTTP(w, clone)
+	})
 }
 
 func (b *backend) router() *http.ServeMux {

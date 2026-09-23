@@ -52,7 +52,8 @@ make dev-migrate       # 可选：仅执行迁移后退出，使用相同的数�
 make dev-backend       # Go backend :8080
 make dev-frontend      # Next.js 页面 :3000
 make dev-script-runtime # 私有 QuickJS 脚本运行时 :8090
-# 或使用 make dev 一次启动上述三个服务
+make dev-media-processing-runtime # 私有 ONNX / sharp 运行时 :8091
+# 或使用 make dev 一次启动上述四个进程
 ```
 
 常用质量门：
@@ -133,23 +134,27 @@ test@test.com
 
 ## 容器与生产部署
 
-根目录 `docker-compose.yml` 提供 PostgreSQL、Redis、backend 与 Web 的自托管组合；迁移
-由 backend entrypoint 执行。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
-由外部基础设施提供，统一启动命令为 `docker compose up -d backend web`。
+根目录 `docker-compose.yml` 提供 PostgreSQL、Redis 与统一 `app` 容器的自托管组合；
+源码开发的 `make dev` / `pnpm dev` 仍将四个应用进程分别启动，便于独立调试。生产环境
+使用 `deploy/docker-compose.yml`：Next.js、Go、QuickJS 与 ONNX/Sharp 四个进程同样由
+`Dockerfile.unified` 打进一个 `app` 镜像和容器，PostgreSQL、Redis 与宿主机 Nginx
+继续作为外部基础设施。生产启动命令为 `docker compose up -d app`。
 
 ```bash
 GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet
 docker compose up -d
 ```
 
-根 Compose 中 Go backend 容器固定监听容器内的 `8080`，宿主机映射端口由
-`GO_BACKEND_PORT` 配置，默认是 `3000`。如果需要使用 `3001`，在 Compose 使用的 env 文件中设置：
+根 Compose 的 `app` 容器中，Go 进程固定监听 `8080`；宿主机映射端口由
+`GO_BACKEND_PORT` 配置，默认是 `3001`。如需修改，在 Compose 使用的 env 文件中设置：
 
 ```bash
 GO_BACKEND_PORT=3001
 ```
 
-生产 Compose 会同时启动 backend、私有 script-runtime 和 Web；数据库迁移由 backend 容器
-entrypoint 执行。生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
+生产 Compose 的统一健康检查同时探测四个内部进程；任一进程退出都会使容器失败。
+数据库迁移只由发布流水线在维护窗口中执行一次，常驻 `app` 启动时跳过迁移。
+旧的四个专项 Dockerfile 仍保留用于组件级构建和诊断，不代表 Compose 仍使用四容器拓扑。
+生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
 [deploy/README.md](deploy/README.md)。统一号池调度契约见
 [docs/image-backend-pool-scheduling.md](docs/image-backend-pool-scheduling.md)。

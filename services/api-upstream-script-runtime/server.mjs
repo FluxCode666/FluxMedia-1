@@ -3,8 +3,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RuntimePool, RuntimePoolError } from "./pool.mjs";
 
-const bind = process.env.SCRIPT_RUNTIME_BIND || ":8090";
-const listenTarget = bind.startsWith(":") ? Number(bind.slice(1)) : bind;
 const workerCount = boundedInt("API_UPSTREAM_SCRIPT_WORKER_COUNT", 1, 8, 1);
 const memoryLimitBytes = boundedInt("API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB", 16, 128, 32) * 1024 * 1024;
 const stackLimitBytes = boundedInt("API_UPSTREAM_SCRIPT_STACK_LIMIT_KB", 256, 2048, 512) * 1024;
@@ -33,6 +31,29 @@ function boundedInt(name, min, max, fallback) {
     throw new Error(`${name} must be between ${min} and ${max}`);
   }
   return value;
+}
+
+export function resolveListenTarget(environment = process.env) {
+  const bind = (environment.SCRIPT_RUNTIME_BIND || ":8090").trim();
+  const host = environment.SCRIPT_RUNTIME_HOST?.trim() || undefined;
+  if (bind.startsWith(":")) {
+    const rawPort = bind.slice(1);
+    if (!/^[0-9]+$/.test(rawPort)) {
+      throw new Error("SCRIPT_RUNTIME_BIND must contain a valid port");
+    }
+    const port = Number(rawPort);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      throw new Error("SCRIPT_RUNTIME_BIND must contain a valid port");
+    }
+    return {
+      options: host ? { port, host } : { port },
+      display: host ? `${host}:${port}` : bind,
+    };
+  }
+  if (host) {
+    throw new Error("SCRIPT_RUNTIME_HOST requires a :port SCRIPT_RUNTIME_BIND");
+  }
+  return { options: { path: bind }, display: bind };
 }
 
 function safeTree(value) {
@@ -145,12 +166,62 @@ export function createRuntimeServer(pool, token = authToken) {
   });
 }
 
+function closeHttpServer(server) {
+  return new Promise((resolveClose, rejectClose) => {
+    server.close((error) => {
+      if (error) rejectClose(error);
+      else resolveClose();
+    });
+  });
+}
+
+export async function shutdownRuntime(server, pool) {
+  const errors = [];
+  try {
+    await closeHttpServer(server);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await pool.close();
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "script runtime shutdown failed");
+  }
+}
+
+export function registerRuntimeShutdown(
+  server,
+  pool,
+  {
+    signalSource = process,
+    logger = console,
+    setExitCode = (code) => { process.exitCode = code; },
+  } = {}
+) {
+  let shutdownPromise;
+  const shutdown = () => {
+    if (!shutdownPromise) {
+      shutdownPromise = shutdownRuntime(server, pool).catch(() => {
+        logger.error?.("api upstream script runtime shutdown failed");
+        setExitCode(1);
+      });
+    }
+    return shutdownPromise;
+  };
+  signalSource.once("SIGTERM", () => { void shutdown(); });
+  signalSource.once("SIGINT", () => { void shutdown(); });
+  return shutdown;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const pool = new RuntimePool({ workerCount, memoryLimitBytes, stackLimitBytes });
   await pool.start();
   const server = createRuntimeServer(pool);
-  server.listen(listenTarget, () => console.log(`api upstream script runtime listening on ${bind}`));
-  const shutdown = async () => { server.close(); await pool.close(); process.exit(0); };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  const listenTarget = resolveListenTarget();
+  server.listen(listenTarget.options, () => console.log(`api upstream script runtime listening on ${listenTarget.display}`));
+  registerRuntimeShutdown(server, pool);
 }

@@ -20,10 +20,13 @@ require_text() {
   fi
 }
 
+require_text \
+  "${workflow_path}" \
+  '--volume "${storage_path}:/app/storage"'
+require_text \
+  "${readme_path}" \
+  '--volume "/root/docker-data/fluxmedia:/app/storage"'
 for file_path in "${workflow_path}" "${readme_path}"; do
-  require_text \
-    "${file_path}" \
-    '--volume "/root/docker-data/fluxmedia:/app/storage"'
   require_text \
     "${file_path}" \
     'VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-'
@@ -34,7 +37,9 @@ require_text \
   '--volume "${deploy_path}/state:/app/state"'
 require_text \
   "${workflow_path}" \
-  'backend_uid="$(docker run --rm --entrypoint id "${backend_image}" -u)"'
+  'app_uid="$(docker run --rm --entrypoint id "${app_ref}" -u)"'
+require_text "${workflow_path}" 'storage_path=/root/docker-data/fluxmedia'
+require_text "${workflow_path}" 'test -w /app/storage'
 require_text \
   "${workflow_path}" \
   'install -d -m 700 \'
@@ -42,17 +47,21 @@ require_text \
 storage_mount_count="$(
   grep -Fc -- '- /root/docker-data/fluxmedia:/app/storage' "${compose_path}"
 )"
-if [ "${storage_mount_count}" -ne 2 ]; then
-  printf 'web 与 backend 必须共享同一个生产图片存储目录。\n' >&2
+if [ "${storage_mount_count}" -ne 1 ]; then
+  printf '统一 app 必须只挂载一次生产图片存储目录。\n' >&2
   exit 1
 fi
+
+require_text "${workflow_path}" 'candidate_compose run --rm --no-deps \'
+require_text "${workflow_path}" '              app \'
 
 prepare_line="$(
   grep -nF 'prepare_video_input_migration_state' "${workflow_path}" \
     | tail -1 | cut -d: -f1
 )"
 migration_started_line="$(
-  grep -nF 'migration_started=true' "${workflow_path}" | cut -d: -f1
+  grep -nF 'migration_started=true' "${workflow_path}" \
+    | tail -1 | cut -d: -f1
 )"
 asset_migration_line="$(
   grep -nF 'run_video_input_asset_migration' "${workflow_path}" \

@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { processImage } from "./processor.mjs";
 
 const maxLineBytes = 720 * 1024 * 1024;
@@ -75,8 +77,68 @@ export function createMediaServer(processor = processImage) {
   server.headersTimeout = 30_000;
   return server;
 }
-if (import.meta.url === new URL(process.argv[1], "file:").href) {
+
+export function closeMediaServer(server, { timeoutMs = 5_000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+    return Promise.reject(new Error("invalid media shutdown timeout"));
+  }
+  return new Promise((resolveClose, rejectClose) => {
+    let settled = false;
+    let timer;
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) rejectClose(error);
+      else resolveClose();
+    };
+    try {
+      server.close((error) => settle(error));
+      server.closeIdleConnections?.();
+      timer = setTimeout(() => {
+        settle(new Error("media server shutdown timed out"));
+        try {
+          server.closeAllConnections?.();
+        } catch {
+          // Timeout is already reported; allow the parent supervisor to kill
+          // the process if Node cannot forcibly close its remaining sockets.
+        }
+      }, timeoutMs);
+      if (settled) clearTimeout(timer);
+    } catch (error) {
+      settle(error);
+    }
+  });
+}
+
+export function registerMediaShutdown(
+  server,
+  {
+    signalSource = process,
+    logger = console,
+    setExitCode = (code) => { process.exitCode = code; },
+    timeoutMs = 5_000,
+  } = {}
+) {
+  let shutdownPromise;
+  const shutdown = () => {
+    if (!shutdownPromise) {
+      shutdownPromise = closeMediaServer(server, { timeoutMs }).catch(() => {
+        logger.error?.("media processing runtime shutdown failed");
+        setExitCode(1);
+      });
+    }
+    return shutdownPromise;
+  };
+  signalSource.once("SIGTERM", () => { void shutdown(); });
+  signalSource.once("SIGINT", () => { void shutdown(); });
+  return shutdown;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.MEDIA_PROCESSING_PORT || 8091);
   const host = process.env.MEDIA_PROCESSING_HOST || "127.0.0.1";
-  createMediaServer().listen(port, host, () => console.log(`Media processing runtime listening on ${host}:${port}`));
+  const server = createMediaServer();
+  server.listen(port, host, () => console.log(`Media processing runtime listening on ${host}:${port}`));
+  registerMediaShutdown(server);
 }

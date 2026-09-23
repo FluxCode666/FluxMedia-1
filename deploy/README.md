@@ -1,14 +1,16 @@
 # FluxMedia 生产部署
 
 本目录提供 `media.flux-code.cc` 与 `media.fluxhall.cc` 的生产部署配置。Nginx 将页面和
-静态资源转发到 web，将 API、媒体与 Webhook 转发到 backend。两个容器只监听宿主机回环地址：web
-使用 `127.0.0.1:${WEB_PORT}`（默认 `3000`），Go backend 使用
-`127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`）。backend entrypoint 在同一服务中执行
-数据库迁移，然后启动 Go 进程；Compose 不再定义独立 migrate 服务。
+静态资源转发到 Next.js，将 API、媒体与 Webhook 转发到 Go。生产 Compose 只运行一个
+`app` 容器，其中由监管进程启动 Next.js、Go、QuickJS 与 ONNX/Sharp 四个进程；
+PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主机回环地址发布
+`127.0.0.1:${WEB_PORT}`（默认 `3000`）和
+`127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`）。数据库迁移由发布流水线在维护窗口中
+恰好执行一次，常驻 `app` 启动时跳过迁移。
 
 ## 文件
 
-- `docker-compose.yml`：Next.js `web`、Go `backend` 与两个私有运行时；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
+- `docker-compose.yml`：统一 `app` 服务；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
 - `read-env-value.sh`：生产 Workflow 使用的 fail-closed dotenv 单键读取器。
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
 - `.env.example`：不含真实机密的服务器环境变量模板。
@@ -20,8 +22,8 @@
 
 ## 首次配置服务器
 
-目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot。生产 Workflow 会在停止旧 Web
-前执行真实的 schema-only archive 探测，在停止旧 Web 后创建一致性备份。备份脚本优先使用
+目标机需要 Docker Engine、Docker Compose 2.30 或更高版本（用于 `env_file.format: raw`）、Nginx、Certbot。生产 Workflow 会在停止旧应用
+前执行真实的 schema-only archive 探测，在停止旧应用后创建一致性备份。备份脚本优先使用
 宿主机上不低于数据库主版本的 PostgreSQL `pg_dump`/`pg_restore` 客户端；宿主机没有客户端时，
 通过 `DEPLOY_BACKUP_POSTGRES_CONTAINER` 指定的运行中 PostgreSQL 容器执行，例如共享容器
 `fluxcode-postgres`。配置了
@@ -29,23 +31,24 @@ S3 bucket 时使用 age 公钥加密并上传到启用版本控制的 bucket，�
 `backups/`。先准备部署目录和真实环境变量：
 
 ```bash
-sudo install -d -m 750 /root/flux-media
-sudo cp deploy/docker-compose.yml /root/flux-media/docker-compose.yml
-sudo cp deploy/create-database-backup.sh deploy/read-env-value.sh /root/flux-media/
-sudo cp deploy/.env.example /root/flux-media/.env
-sudo chmod 600 /root/flux-media/.env
-sudo editor /root/flux-media/.env
+sudo install -d -m 750 /root/fluxmedia
+sudo cp deploy/docker-compose.yml /root/fluxmedia/docker-compose.yml
+sudo cp deploy/create-database-backup.sh deploy/read-env-value.sh /root/fluxmedia/
+sudo cp deploy/.env.example /root/fluxmedia/.env
+sudo chmod 600 /root/fluxmedia/.env
+sudo editor /root/fluxmedia/.env
 ```
 
 至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`CRON_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
 `REDIS_PASSWORD`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。数据库必须已创建；外部 Redis
-必须可从 Web 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
-缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL
+必须可从 `app` 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
+缓存默认使用逻辑库 4。迁移由部署流水线在切换 `app` 前执行。本 Compose 不启动 PostgreSQL
 或 Redis。
 
-web 容器内固定监听 `3000`，宿主机端口由 `WEB_PORT` 配置；backend 容器内固定监听
-`8080`，宿主机端口由 `GO_BACKEND_PORT` 配置。修改任一端口后，必须同步修改
+`app` 内的 Next.js 固定监听 `3000`，Go 固定监听 `8080`；宿主机端口分别由
+`WEB_PORT` 与 `GO_BACKEND_PORT` 配置。QuickJS 和 ONNX/Sharp 只监听容器回环地址
+`127.0.0.1:8090` 与 `127.0.0.1:8091`，不发布宿主机端口。修改任一公开端口后，必须同步修改
 `nginx/conf.d/fluxmedia.conf` 中对应的 upstream 地址，然后执行 `nginx -t` 并 reload。
 
 ## Redis MQ 运行要求
@@ -83,31 +86,32 @@ archive manifest 与最终文件 SHA-256。该回退只能应对数据库迁移�
 配置完成后先验证网关入口：
 
 ```bash
-cd /root/flux-media
+cd /root/fluxmedia
 docker compose config --quiet
-docker compose up -d web backend
-docker compose ps web backend
+docker compose up -d app
+docker compose ps app
 ```
 
-手工执行迁移时复用 backend 镜像。迁移成功后再启动主服务：
+手工执行迁移时复用候选 `app` 镜像。先保存现有 Compose 和 `.env`，迁移成功后再启动
+统一服务；迁移一旦开始，不得直接用旧 schema 镜像覆盖新数据库：
 
 ```bash
-backend_image="$(bash ./read-env-value.sh .env FLUXMEDIA_BACKEND_IMAGE):$(bash ./read-env-value.sh .env FLUXMEDIA_TAG)"
-backend_uid="$(docker run --rm --entrypoint id "${backend_image}" -u)"
-backend_gid="$(docker run --rm --entrypoint id "${backend_image}" -g)"
-install -d -m 700 -o "${backend_uid}" -g "${backend_gid}" state
-docker compose stop --timeout 60 web backend
+app_image_ref="$(bash ./read-env-value.sh .env FLUXMEDIA_APP_IMAGE_REF)"
+app_uid="$(docker run --rm --entrypoint id "${app_image_ref}" -u)"
+app_gid="$(docker run --rm --entrypoint id "${app_image_ref}" -g)"
+install -d -m 700 -o "${app_uid}" -g "${app_gid}" state
+docker compose stop --timeout 60 app
 docker compose run --rm --no-deps --interactive=false \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend \
-  pnpm --dir packages/database db:release-gate -- drain
+  -e GO_BACKEND_SKIP_MIGRATION=true app \
+  node apps/web/scripts/release-governance-gate.mjs drain
 ```
 
 早期预检确认订阅、Epay 和其他迁移前置条件均满足：
 
 ```bash
 docker compose run --rm --no-deps --interactive=false \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend \
-  pnpm --dir packages/database db:release-gate -- preflight-early
+  -e GO_BACKEND_SKIP_MIGRATION=true app \
+  node apps/web/scripts/release-governance-gate.mjs preflight-early
 ```
 
 此时必须先用 `create-database-backup.sh create` 创建迁移前备份，并保存其 manifest；传入
@@ -118,58 +122,66 @@ docker compose run --rm --no-deps --interactive=false \
   --volume "/root/docker-data/fluxmedia:/app/storage" \
   --volume "$(pwd)/state:/app/state" \
   -e GO_BACKEND_SKIP_MIGRATION=true \
-  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_TAG).ndjson" \
-  backend \
+  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_RELEASE_TAG).ndjson" \
+  app \
   node apps/web/scripts/migrate-video-input-assets.mjs migrate \
   --confirm-no-legacy-writers
 release_preflight="$(docker compose run --rm --no-deps \
-  --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true backend \
-  pnpm --dir packages/database db:release-gate -- preflight \
+  --interactive=false -e GO_BACKEND_SKIP_MIGRATION=true app \
+  node apps/web/scripts/release-governance-gate.mjs preflight \
   | tee /dev/stderr)"
 release_credits_ledger_digest="$(printf '%s\n' "${release_preflight}" \
   | bash ./read-release-ledger-digest.sh)"
 docker compose run --rm --no-deps --interactive=false \
-  -e GO_BACKEND_MIGRATE_ONLY=true backend
+  -e GO_BACKEND_SKIP_MIGRATION=false app /backend --migrate
 docker compose run --rm --no-deps --interactive=false \
   -e "RELEASE_CREDITS_LEDGER_DIGEST=${release_credits_ledger_digest}" \
-  -e GO_BACKEND_SKIP_MIGRATION=true backend \
-  pnpm --dir packages/database db:release-gate -- postcheck
-docker compose run --rm --no-deps --interactive=false web \
+  -e GO_BACKEND_SKIP_MIGRATION=true app \
+  node apps/web/scripts/release-governance-gate.mjs postcheck
+docker compose run --rm --no-deps --interactive=false app \
   node apps/web/scripts/backfill-dashboard-analytics.mjs \
   --batch-size=500 --skip-ready
-docker compose up -d web backend
-docker compose run --rm --no-deps --interactive=false \
+docker compose up -d app
+docker compose exec --interactive=false \
   -e OPERATIONS_EPOCH_INITIALIZED_BY=release-<版本号> \
-  -e GO_BACKEND_SKIP_MIGRATION=true \
-  -e GO_BACKEND_URL=http://backend:8080 backend \
-  pnpm --dir apps/web operations:epoch:ensure-current
+  app /usr/local/bin/fluxmedia-entrypoint \
+  node /app/services/unified-runtime/ensure-operations-epoch.mjs
 ```
 
-自动部署必须关闭 backend 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
-默认的交互输入，backend 容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
+自动部署必须关闭一次性 `app` 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
+默认的交互输入，迁移容器会读取后续应用启动命令，导致只完成迁移却未启动服务。
 
-自动部署先校验 `CRON_SECRET`，备份、安装并验证版本化 Nginx 配置，再拉取新镜像。随后停止旧 Web 与 Go backend、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
+自动部署先校验 `CRON_SECRET`，备份、安装并验证版本化 Nginx 配置，再以 digest 拉取
+候选单一镜像。流水线在覆盖生产 Compose 前保存上一版 Compose 与镜像元数据；随后停止
+旧应用、确认数据库连接已排空，并执行早期
 只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、迁移、
-postcheck 与控制台统计回填对账。新 Web 启动后、健康检查前，流水线会自动确保运营统计
+postcheck 与控制台统计回填对账。新 `app` 启动后、健康检查前，流水线会自动确保运营统计
 epoch：空表按生产应用时区当前日初始化，已有值原样跳过。资产收编开始后，任何迁移、
-后置校验、统计对账、epoch 门禁、启动或任一服务健康检查失败都会保持 Web 与 backend 停止，
-绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版 Web 在本轮停服前确实处于
-运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与 backend；该证据证明数据库尚未
-改变且上一版已运行在当前 schema 上。容器健康后还必须通过两个公网域名的页面、静态资源、
+后置校验、统计对账、epoch 门禁、启动或四进程联合健康检查失败都会保持 `app` 停止，
+绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版应用在本轮停服前确实处于
+运行状态且上一版 Compose 与镜像元数据完整，退出状态机才恢复原 Compose 并重启原服务；
+这个跨拓扑恢复边界支持首次从四容器切换到单容器。容器健康后还必须通过两个公网域名的页面、静态资源、
 API 和健康入口 smoke，之后才记录发布成功。恢复迁移前数据库备份后手工启动旧 schema 镜像时，
 仍必须让 `legacy-startup` 门禁证明三个旧视频列完整。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
 
+停服前，流水线会原子写入 `release-state/deployment-attempt.env`，记录上一版 Compose、镜像
+元数据和 Nginx 备份。若 SSH、runner 或宿主机在迁移边界前硬中断，下一次运行会先按该账本
+幂等恢复上一版，再继续发布。资产迁移前会原子写入
+`release-state/migration-in-progress.env`；该 marker 一旦存在就是权威状态，即使 `.env` 或
+Compose 恰好只完成一半提升，后续运行也只允许用新候选镜像前向续跑，不会启动旧 schema
+镜像。两个状态文件只有在联合健康检查和公网 smoke 全部通过后才一起删除。
+
 资产收编会先把本轮新对象以 0600 NDJSON 写入部署目录 `state/`。若选择恢复迁移前数据库
-备份，必须在数据库恢复完成且旧 Web 仍停止时，用同一 backend 镜像执行幂等对象回滚：
+备份，必须在数据库恢复完成且旧应用仍停止时，用同一候选 `app` 镜像执行幂等对象回滚：
 
 ```bash
 docker compose run --rm --no-deps --interactive=false \
   --volume "/root/docker-data/fluxmedia:/app/storage" \
   --volume "$(pwd)/state:/app/state" \
   -e GO_BACKEND_SKIP_MIGRATION=true \
-  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_TAG).ndjson" \
-  backend \
+  -e "VIDEO_INPUT_ROLLBACK_MANIFEST=/app/state/video-input-rollback-$(bash ./read-env-value.sh .env FLUXMEDIA_RELEASE_TAG).ndjson" \
+  app \
   node apps/web/scripts/migrate-video-input-assets.mjs rollback \
   --confirm-database-restored
 ```
@@ -224,15 +236,19 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 
 如果部署账号不是 `root`，必须将 `DEPLOY_PATH` 改为该账号可写的绝对路径。
 
-可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/flux-media`。服务器
+可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/fluxmedia`。服务器
 上的真实 `.env` 由运维持久维护；流水线同步 `docker-compose.yml`、部署脚本和版本化 Nginx
-站点配置，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
-`FLUXMEDIA_BACKEND_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
-并排空数据库连接后，通过 backend 镜像执行只读门禁、备份、迁移和后置校验，
-再启动新 `web`。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
+站点配置，并把 `.env` 中的 `FLUXMEDIA_APP_IMAGE_REF` 更新为构建结果的完整 digest 引用，
+同时记录 `FLUXMEDIA_RELEASE_TAG`。部署命令停止旧应用并排空数据库连接后，通过候选统一镜像执行
+只读门禁、备份、恰好一次迁移和后置校验，再启动新 `app`。首次从旧四服务拓扑升级时，
+候选 Compose 先作为独立文件同步；只有迁移前门禁通过后才切换，迁移前失败则恢复旧
+Compose。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 与基础设施负责，流水线不会创建或修改 Redis 服务。
+
+统一镜像当前固定为 `linux/amd64`：Go 二进制以及 ONNX/Sharp 原生模块都按 x64 构建，生产
+主机必须支持 amd64；ARM 开发机上的根 Compose 会明确使用 amd64 模拟运行。
 
 生产部署从 Actions 手动触发，可选择 `main`，也可选择与输入版本完全一致的 Git tag；
 版本号必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。tag 与输入版本不一致时
-流水线会拒绝部署。新容器未通过健康检查时，流水线保持维护状态并记录备份存储类型、
-artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或启动旧 Web。
+流水线会拒绝部署。新容器的四个内部进程未全部通过联合健康检查时，流水线保持维护状态并
+记录备份存储类型、artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或启动旧应用。

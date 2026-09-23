@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # 运营总览 epoch 发布门禁的静态回归测试。
-# 使用方：生产部署质量门。锁定 backend 镜像、Web 命令与远程发布顺序，避免迁移成功
-# 但 epoch 仍为空时启动 Web 并宣告发布成功。
+# 使用方：生产部署质量门。锁定统一镜像内的 epoch 命令与远程发布顺序，避免迁移成功
+# 但 epoch 仍为空时宣告发布成功。
 
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
 workflow_path="${repository_root}/.github/workflows/deploy-production.yml"
-dockerfile_path="${repository_root}/Dockerfile.web"
+dockerfile_path="${repository_root}/Dockerfile.unified"
 package_path="${repository_root}/apps/web/package.json"
 compose_path="${repository_root}/deploy/docker-compose.yml"
 operation_path="${repository_root}/packages/shared/src/uol/operations/operations-dashboard-facts.ts"
@@ -46,12 +46,12 @@ forbid_text \
   'operations.initializeEpoch'
 require_text \
   "${dockerfile_path}" \
-  'COPY scripts/with-root-env.mjs ./scripts/with-root-env.mjs'
+  'COPY --link --chown=1001:1001 services/unified-runtime ./services/unified-runtime'
 app_time_zone_count="$(
   grep -Fc -- 'APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}' "${compose_path}"
 )"
-if [ "${app_time_zone_count}" -ne 2 ]; then
-  printf 'backend 与 web 必须共享同一个 APP_TIME_ZONE 默认值。\n' >&2
+if [ "${app_time_zone_count}" -ne 1 ]; then
+  printf '统一 app 必须设置唯一的 APP_TIME_ZONE 默认值。\n' >&2
   exit 1
 fi
 require_text \
@@ -62,10 +62,10 @@ require_text \
   'OPERATIONS_EPOCH_INITIALIZED_BY=release-${image_tag}'
 require_text \
   "${workflow_path}" \
-  'pnpm --dir apps/web operations:epoch:ensure-current'
+  'app /usr/local/bin/fluxmedia-entrypoint'
 
-web_start_line="$(
-  grep -nF 'if ! docker compose up -d --remove-orphans web backend script-runtime media-processing; then' \
+app_start_line="$(
+  grep -nF 'if ! active_compose up -d --remove-orphans app; then' \
     "${workflow_path}" | cut -d: -f1
 )"
 epoch_gate_line="$(
@@ -76,13 +76,13 @@ deployment_success_line="$(
   grep -nF 'deployment_succeeded=true' "${workflow_path}" \
     | cut -d: -f1
 )"
-if [ -z "${web_start_line}" ] || [ -z "${epoch_gate_line}" ] \
+if [ -z "${app_start_line}" ] || [ -z "${epoch_gate_line}" ] \
   || [ -z "${deployment_success_line}" ]; then
-  printf '无法定位 Web 启动、epoch 门禁或发布成功标记。\n' >&2
+  printf '无法定位 app 启动、epoch 门禁或发布成功标记。\n' >&2
   exit 1
 fi
-if [ "${web_start_line}" -ge "${epoch_gate_line}" ]; then
-  printf '首次 epoch 必须在新 Web 事实写入路径启动后初始化。\n' >&2
+if [ "${app_start_line}" -ge "${epoch_gate_line}" ]; then
+  printf '首次 epoch 必须在新 app 的 Go 事实写入路径启动后初始化。\n' >&2
   exit 1
 fi
 if [ "${epoch_gate_line}" -ge "${deployment_success_line}" ]; then

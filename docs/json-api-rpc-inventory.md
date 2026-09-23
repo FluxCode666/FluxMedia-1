@@ -22,4 +22,4 @@
 
 ## 本地配置
 
-开发环境把 `GO_BACKEND_URL=http://localhost:8080` 写入根环境；生产 Compose 的 web 服务使用 `http://backend:8080`。前端请求始终使用 `/api/go/...`，因此浏览器不会直接连接 Redis 或 PostgreSQL。
+开发环境把 `GO_BACKEND_URL=http://localhost:8080` 写入根环境，Next.js 与 Go 等进程仍可分别启动。生产 Compose 则由单个 `app` 容器监管 Next.js、Go、QuickJS 和图片处理四个进程，Web 进程通过 `http://127.0.0.1:8080` 访问 Go。前端请求始终使用 `/api/go/...`，因此浏览器不会直接连接 Redis 或 PostgreSQL。

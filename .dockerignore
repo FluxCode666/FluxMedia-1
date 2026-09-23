@@ -11,6 +11,8 @@ out
 # Version control
 .git
 .gitignore
+.worktrees
+.claude
 
 # Docker files (avoid recursive context)
 Dockerfile
@@ -39,6 +41,8 @@ LICENSE
 # IDE & editor
 .vscode
 .idea
+.playwright-cli
+.planning
 *.swp
 *.swo
 *~
@@ -70,3 +74,5 @@ src/
 **/.turbo
 .vercel
 .sentry
+messages
+skills

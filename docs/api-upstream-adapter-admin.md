@@ -435,7 +435,7 @@ API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB=32
 API_UPSTREAM_SCRIPT_STACK_LIMIT_KB=512
 ```
 
-Worker 数是每个 Node 进程的 Worker Thread 数；增加 Web 进程或容器会按进程倍增。
+Worker 数是每个脚本运行时 Node 进程的 Worker Thread 数。生产统一 `app` 容器默认只有一个脚本运行时进程；扩容应用容器时容量会按容器数倍增。本地源码开发仍可独立启动该进程。
 
 ## 空脚本的内置行为
 
@@ -534,7 +534,7 @@ Worker 数是每个 Node 进程的 Worker Thread 数；增加 Web 进程或容�
 本地查看：
 
 ```bash
-docker compose -f deploy/docker-compose.yml logs --no-color --no-log-prefix -f web \
+docker compose -f deploy/docker-compose.yml logs --no-color --no-log-prefix -f app \
   | jq -c 'select(.event == "api_upstream_script_failed")'
 ```
 
