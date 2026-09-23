@@ -63,6 +63,9 @@ require_text \
 require_text \
   "${workflow_path}" \
   'app /usr/local/bin/fluxmedia-entrypoint'
+require_text \
+  "${workflow_path}" \
+  'node /app/services/unified-runtime/ensure-operations-epoch.mjs \'
 
 app_start_line="$(
   grep -nF 'if ! active_compose up -d --remove-orphans app; then' \

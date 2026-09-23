@@ -688,7 +688,8 @@ jobs:
             active_compose exec -T \
               -e "OPERATIONS_EPOCH_INITIALIZED_BY=release-${image_tag}" \
               app /usr/local/bin/fluxmedia-entrypoint \
-              node /app/services/unified-runtime/ensure-operations-epoch.mjs
+              node /app/services/unified-runtime/ensure-operations-epoch.mjs \
+              </dev/null
           }
 
           remove_env_key() {
