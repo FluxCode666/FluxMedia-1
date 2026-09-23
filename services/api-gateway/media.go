@@ -1002,6 +1002,35 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 			data = thumb
 		}
 	}
+	contentType := storageContentType(key, data, thumbnailEncoded)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if domain == "generations" || domain == "documents" {
+		w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=2592000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	if contentType == "application/octet-stream" && domain != "logo" && domain != "model" {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	if domain == "logo" && contentType == "image/svg+xml" {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
+	http.ServeContent(w, r, key, time.Time{}, bytes.NewReader(data))
+	return nil
+}
+
+// storageContentType resolves the response MIME without trusting an opaque
+// object key as the only source of truth. Generation workers historically used
+// extensionless keys, and the browser's reference-image loader intentionally
+// rejects application/octet-stream. DecodeConfig validates the image header
+// without decoding all pixels and also covers WebP, which net/http's content
+// sniffer does not recognize.
+func storageContentType(key string, data []byte, thumbnailEncoded bool) string {
+	if thumbnailEncoded {
+		return "image/webp"
+	}
+
 	contentType := "application/octet-stream"
 	switch strings.ToLower(filepath.Ext(key)) {
 	case ".png":
@@ -1019,24 +1048,34 @@ func (b *backend) handleStorageGet(w http.ResponseWriter, r *http.Request) error
 	case ".svg":
 		contentType = "image/svg+xml"
 	}
-	if thumbnailEncoded {
-		contentType = "image/webp"
+
+	if contentType == "application/octet-stream" || isRasterImageContentType(contentType) {
+		if detected := detectRasterImageContentType(data); detected != "" {
+			return detected
+		}
 	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if domain == "generations" || domain == "documents" {
-		w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=2592000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	return contentType
+}
+
+func isRasterImageContentType(contentType string) bool {
+	return contentType == "image/png" || contentType == "image/jpeg" || contentType == "image/webp"
+}
+
+func detectRasterImageContentType(data []byte) string {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return ""
 	}
-	if contentType == "application/octet-stream" && domain != "logo" && domain != "model" {
-		w.Header().Set("Content-Disposition", "attachment")
+	switch format {
+	case "png":
+		return "image/png"
+	case "jpeg":
+		return "image/jpeg"
+	case "webp":
+		return "image/webp"
+	default:
+		return ""
 	}
-	if domain == "logo" && contentType == "image/svg+xml" {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	}
-	http.ServeContent(w, r, key, time.Time{}, bytes.NewReader(data))
-	return nil
 }
 
 // storageThumbnail decodes a source image, scales it down while preserving

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"net/url"
 	"strconv"
@@ -67,6 +68,58 @@ func TestStorageGenerationThumbnailsWithSharedBuckets(t *testing.T) {
 				if w.Code != 403 {
 					t.Fatalf("invalid signature accepted at width %d: %d", width, w.Code)
 				}
+			}
+		})
+	}
+}
+
+func TestStorageDetectsExtensionlessRasterImages(t *testing.T) {
+	b := integrationBackend(t)
+	b.config.storagePath = t.TempDir()
+	setStorageTestSetting(t, b, "STORAGE_ENDPOINT", "")
+	setStorageTestSetting(t, b, "SYSTEM_ASSETS_BUCKET_NAME", "test-system")
+	setStorageTestSetting(t, b, "GENERATIONS_BUCKET_NAME", "test-generations")
+	setStorageTestSetting(t, b, "STORAGE_BUCKET_NAME", "test-uploads")
+
+	base := image.NewNRGBA(image.Rect(0, 0, 256, 128))
+	var pngData bytes.Buffer
+	if err := png.Encode(&pngData, base); err != nil {
+		t.Fatal(err)
+	}
+	var jpegData bytes.Buffer
+	if err := jpeg.Encode(&jpegData, base, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	webpData, err := storageThumbnail(pngData.Bytes(), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, key, wantType string
+		data                []byte
+	}{
+		{name: "png", key: "user/generations/opaque-png", wantType: "image/png", data: pngData.Bytes()},
+		{name: "jpeg", key: "user/generations/opaque-jpeg", wantType: "image/jpeg", data: jpegData.Bytes()},
+		{name: "webp", key: "user/generations/opaque-webp", wantType: "image/webp", data: webpData},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := b.putStorageObject(context.Background(), "test-generations", tc.key, tc.data, tc.wantType); err != nil {
+				t.Fatal(err)
+			}
+			signed, err := b.storageSignedReadURL(context.Background(), "test-generations", tc.key, 3600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := storageTestRequest(b, "GET", signed, nil, nil, nil)
+			if w.Code != 200 || w.Header().Get("Content-Type") != tc.wantType {
+				t.Fatalf("extensionless %s: %d %s", tc.name, w.Code, w.Header().Get("Content-Type"))
+			}
+			if disposition := w.Header().Get("Content-Disposition"); disposition != "" {
+				t.Fatalf("extensionless %s unexpectedly downloads: %s", tc.name, disposition)
+			}
+			if _, _, err := image.Decode(bytes.NewReader(w.Body.Bytes())); err != nil {
+				t.Fatalf("extensionless %s body is not a decodable image: %v", tc.name, err)
 			}
 		})
 	}
