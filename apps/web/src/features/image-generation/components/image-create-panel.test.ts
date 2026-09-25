@@ -22,6 +22,7 @@ type CapturedSimplePanelProps = {
   onResolutionChange?: (value: string) => void;
   onRemoveSourceImage?: (index: number) => void;
   onSourceImagesChange?: (files: FileList | null) => void;
+  onWhiteboardSave?: (file: File) => boolean;
   onSubmit?: () => Promise<void>;
   recent?: ReadonlyArray<{
     id: string;
@@ -473,6 +474,26 @@ describe("ImageCreatePanel", () => {
     act(() => testHarness.panelProps?.onRemoveSourceImage?.(0));
     expect(testHarness.panelProps?.sourceImages).toEqual([second]);
     expect(testHarness.panelProps?.mode).toBe("edit");
+  });
+
+  it("手绘 PNG 复用参考图校验并切换到图生图", () => {
+    mountImageCreatePanel(vi.fn(), { maxEditImages: 1 }, null);
+    const drawing = new File([new Uint8Array([1, 2, 3])], "whiteboard.png", {
+      type: "image/png",
+    });
+    let accepted = false;
+    act(() => {
+      accepted = testHarness.panelProps?.onWhiteboardSave?.(drawing) ?? false;
+    });
+    expect(accepted).toBe(true);
+    expect(testHarness.panelProps?.sourceImages).toEqual([drawing]);
+    expect(testHarness.panelProps?.mode).toBe("edit");
+
+    act(() => {
+      accepted = testHarness.panelProps?.onWhiteboardSave?.(drawing) ?? false;
+    });
+    expect(accepted).toBe(false);
+    expect(testHarness.panelProps?.sourceImages).toEqual([drawing]);
   });
 
   it("超过系统图片数量时保留已经选择的参考图", () => {

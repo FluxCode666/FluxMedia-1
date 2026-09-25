@@ -688,8 +688,8 @@ export function ImageCreatePanel({
   ]);
 
   /** 追加来源图片并在客户端校验，失败时保留已经选择的参考图。 */
-  const changeSourceImages = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const addSourceImages = (files: readonly File[]): boolean => {
+    if (files.length === 0) return false;
     invalidateInitialReferenceLoad();
     try {
       const knownFiles = new Set(sourceImages.map(getReferenceFileFingerprint));
@@ -713,9 +713,15 @@ export function ImageCreatePanel({
       setMode("edit");
       selectModelForMode("edit");
       setError(null);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "图片校验失败");
+      return false;
     }
+  };
+
+  const changeSourceImages = (files: FileList | null) => {
+    if (files) addSourceImages(Array.from(files));
   };
 
   /** 删除单张参考图；移除主参考图时同时清理与其像素坐标绑定的蒙版。 */
@@ -1110,6 +1116,7 @@ export function ImageCreatePanel({
       onAspectRatioChange={setAspectRatio}
       onResolutionChange={setResolution}
       onSourceImagesChange={changeSourceImages}
+      onWhiteboardSave={(file) => addSourceImages([file])}
       onSubmit={submit}
       prompt={prompt}
       quality={quality}

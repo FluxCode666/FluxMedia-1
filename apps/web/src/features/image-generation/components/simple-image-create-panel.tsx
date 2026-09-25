@@ -47,6 +47,7 @@ import { Link } from "@/i18n/routing";
 
 import { ImageGenerationResultGallery } from "./image-generation-result-gallery";
 import { ImageMaskEditor } from "./image-mask-editor";
+import { ImageWhiteboard } from "./image-whiteboard";
 
 type ImageCreateMode = "generate" | "edit" | "mask";
 
@@ -89,6 +90,7 @@ type SimpleImageCreatePanelProps = {
   onRemoveSourceImage: (index: number) => void;
   onResolutionChange: (value: string) => void;
   onSourceImagesChange: (files: FileList | null) => void;
+  onWhiteboardSave: (file: File) => boolean;
   onSubmit: () => Promise<void>;
   prompt: string;
   quality: string;
@@ -166,6 +168,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const dragEnterDepthRef = useRef(0);
   const sourcePreviewUrls = useSourcePreviews(props.sourceImages);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [isDraggingReference, setIsDraggingReference] = useState(false);
   const [imagePreview, setImagePreview] = useState<
     | { kind: "reference"; index: number }
@@ -195,6 +198,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
         ),
     [props.catalog.groups, props.groupId, props.model]
   );
+  const supportsDrawing = selectedModel?.capabilities.edit === true;
   const resolutionOptions = useMemo(
     () =>
       normalizeImageModelResolutions(selectedModel?.supportedResolutions).map(
@@ -254,6 +258,10 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
       setImagePreview(null);
     }
   }, [imagePreview, props.maskAvailable, props.sourceImages.length]);
+
+  useEffect(() => {
+    if (!supportsDrawing) setWhiteboardOpen(false);
+  }, [supportsDrawing]);
 
   const referencePreviewUrl =
     imagePreview?.kind === "reference"
@@ -411,6 +419,19 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     <ImagePlus className="mr-1.5 size-4" />
                     添加参考图
                   </Button>
+                  {supportsDrawing ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full px-3.5"
+                      onClick={() => setWhiteboardOpen(true)}
+                      disabled={referenceUploadDisabled}
+                    >
+                      <Brush className="mr-1.5 size-4" />
+                      手绘白板
+                    </Button>
+                  ) : null}
                   <span className="text-xs text-muted-foreground">
                     可选。点击选择或拖拽到输入卡片，最多添加{" "}
                     {props.maxEditImages} 张。
@@ -501,6 +522,19 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                       清空全部
                     </Button>
                   </div>
+
+                  {supportsDrawing && !referenceLimitReached ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setWhiteboardOpen(true)}
+                      disabled={referenceInteractionLocked}
+                    >
+                      <Brush className="mr-1.5 size-4" />
+                      手绘添加参考图
+                    </Button>
+                  ) : null}
 
                   <div className="hidden flex-wrap items-center gap-2">
                     <Button
@@ -834,6 +868,13 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
           </div>
         </section>
       </form>
+
+      {whiteboardOpen && supportsDrawing ? (
+        <ImageWhiteboard
+          onClose={() => setWhiteboardOpen(false)}
+          onSave={props.onWhiteboardSave}
+        />
+      ) : null}
 
       <ImageGenerationResultGallery
         busy={props.busy}

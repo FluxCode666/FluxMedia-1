@@ -62,6 +62,8 @@ function createFileDragEvent(type: string, files: FileList): Event {
 /** 挂载最小可用生图表单并返回参考图拖拽区域。 */
 function mountPanel(input: {
   busy?: boolean;
+  catalog?: ImageGenerationModelCatalog;
+  maxEditImages?: number;
   onRecentReferenceSelect?: (image: {
     id: string;
     imageUrl: string | null;
@@ -69,6 +71,7 @@ function mountPanel(input: {
     status?: string;
   }) => Promise<boolean>;
   onSourceImagesChange: (files: FileList | null) => void;
+  onWhiteboardSave?: (file: File) => boolean;
   recent?: readonly {
     id: string;
     imageUrl: string | null;
@@ -88,14 +91,14 @@ function mountPanel(input: {
         background: "auto",
         busy: input.busy ?? false,
         submissionState: input.submissionState,
-        catalog,
+        catalog: input.catalog ?? catalog,
         error: null,
         estimatedCredits: 1,
         groupId: "group-1",
         hasAvailableModel: true,
         mask: null,
         maskAvailable: false,
-        maxEditImages: 16,
+        maxEditImages: input.maxEditImages ?? 16,
         maxUploadBytes: 20 * 1024 * 1024,
         mode: "generate",
         model: "gpt-image-2",
@@ -113,6 +116,8 @@ function mountPanel(input: {
         onRemoveSourceImage: vi.fn(),
         onResolutionChange: vi.fn(),
         onSourceImagesChange: input.onSourceImagesChange,
+        onWhiteboardSave:
+          input.onWhiteboardSave ?? vi.fn().mockReturnValue(true),
         onSubmit: vi.fn().mockResolvedValue(undefined),
         prompt: "生成一张测试图片",
         quality: "auto",
@@ -145,6 +150,69 @@ afterEach(() => {
 });
 
 describe("SimpleImageCreatePanel reference drag and drop", () => {
+  it("only offers the whiteboard for models that support image editing", () => {
+    mountPanel({ onSourceImagesChange: vi.fn() });
+    expect(container?.textContent).toContain("手绘白板");
+
+    act(() => root?.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+
+    mountPanel({
+      onSourceImagesChange: vi.fn(),
+      catalog: {
+        groups: [
+          {
+            id: "group-1",
+            name: "默认分组",
+            isDefault: true,
+            models: [
+              {
+                id: "gpt-image-2",
+                capabilities: { generate: true, edit: false, mask: false },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(document.body.textContent).not.toContain("手绘白板");
+  });
+
+  it("opens the drawing dialog from the reference controls", () => {
+    const context = {
+      fillRect: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue(context);
+    mountPanel({ onSourceImagesChange: vi.fn() });
+    const drawButton = Array.from(
+      container?.querySelectorAll("button") ?? []
+    ).find((button) => button.textContent?.includes("手绘白板"));
+    act(() => drawButton?.click());
+    expect(document.body.textContent).toContain("在白色画板上绘制草图");
+    getContext.mockRestore();
+  });
+
+  it("disables the whiteboard when the reference limit is reached", () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn().mockReturnValue("blob:first"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    mountPanel({
+      onSourceImagesChange: vi.fn(),
+      maxEditImages: 1,
+      sourceImages: [new File(["a"], "first.png", { type: "image/png" })],
+    });
+    expect(container?.textContent).not.toContain("手绘添加参考图");
+  });
+
   it("points the gallery shortcut at the dashboard gallery route", () => {
     mountPanel({ onSourceImagesChange: vi.fn() });
 
