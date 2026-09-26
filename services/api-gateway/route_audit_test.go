@@ -47,3 +47,25 @@ func TestMigrationRouteAuditRejectsMissingServerMethodsAndInfrastructure(t *test
 		})
 	}
 }
+
+func TestMigrationRouteAuditAllowsNextOwnedControlPlaneRoutes(t *testing.T) {
+	inventory := map[string]any{
+		"schemaVersion": 2,
+		"routes": []map[string]any{{
+			"path":    "/api/admin/system-updates",
+			"methods": []string{"GET", "POST"},
+		}},
+		"runtimeInfrastructureImports": []map[string]string{},
+	}
+	data, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "inventory.json")
+	if err = os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = auditRoutes(file); err != nil {
+		t.Fatal(err)
+	}
+}

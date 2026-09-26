@@ -11,6 +11,13 @@ import (
 	"sort"
 )
 
+// These are platform control-plane endpoints owned by Next.js. They use the
+// browser session and call GitHub directly; they are not application APIs for
+// the Go backend to proxy.
+var nextOwnedRoutes = map[string]struct{}{
+	"/api/admin/system-updates": {},
+}
+
 // Validate the actual registered Go router; a 501 fallback never counts as coverage.
 // This is a deployment guard, not a substitute for behavioral contract tests.
 func auditRoutes(file string) error {
@@ -46,6 +53,9 @@ func auditRoutes(file string) error {
 	covered := 0
 	parameter := regexp.MustCompile(`\[\[?[^\]]+\]\]?`)
 	for _, route := range inventory.Routes {
+		if _, nextOwned := nextOwnedRoutes[route.Path]; nextOwned {
+			continue
+		}
 		if route.Path == "/api/auth/[...all]" {
 			continue
 		} // Expanded explicitly below; a wildcard is not an auth contract.

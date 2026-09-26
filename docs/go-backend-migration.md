@@ -17,11 +17,13 @@ go -C services/api-gateway run . --route-audit
 pnpm --filter @repo/web exec vitest run src/server/uol-migration-boundary.test.ts
 ```
 
-当前静态清单包括 51 个路由文件、86 个导出的 HTTP 方法、27 个 Server Action 文件、
+当前静态清单包括 52 个路由文件、88 个导出的 HTTP 方法、27 个 Server Action 文件、
 123 个 Action 导出和 187 个 operation。这些是不同层的入口，存在重叠，不能相加作为
 接口总量或迁移百分比。
 
-- Go 路由检查覆盖 102 个展开后的 HTTP 方法，包括显式枚举的认证子路由；缺失为 0。
+- Go 路由检查覆盖 102 个后端拥有的展开 HTTP 方法，包括显式枚举的认证子路由；缺失为 0。
+  `GET/POST /api/admin/system-updates` 是由 Next.js 直接调用 GitHub 的平台控制面接口，
+  通过显式路径豁免保留在 Next.js，不属于 Go 后端迁移边界。
 - 额外抽取了 226 处可静态确定路径和方法的 Go 调用，去重后 125 个方法/路径组合；
   实际 ServeMux 均有匹配，防止仅检查 `route.ts` 遗漏 Server Action 的 405。
 - Web 运行时依赖图中的 `@repo/database` 导入为 0；直接数据库驱动、Redis 和队列
