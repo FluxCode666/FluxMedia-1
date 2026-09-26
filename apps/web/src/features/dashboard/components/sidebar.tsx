@@ -167,6 +167,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       Announcements: t("nav.announcements"),
       Settings: t("nav.settings"),
       "System Settings": t("nav.systemSettings"),
+      "System Updates": t("nav.systemUpdates"),
       "Global Status": t("nav.globalStatus"),
       "Admin Data Dashboard": t("nav.adminAnalytics"),
       "Operations Dashboard": t("nav.operations"),

@@ -11,6 +11,7 @@ import {
   Boxes,
   ChartNoAxesCombined,
   CreditCard,
+  Download,
   History,
   Megaphone,
   ReceiptText,
@@ -150,6 +151,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
       title: "System Settings",
       href: "/dashboard/admin/settings",
       icon: Shield,
+    });
+    items.push({
+      title: "System Updates",
+      href: "/dashboard/admin/system-updates",
+      icon: Download,
     });
   }
 

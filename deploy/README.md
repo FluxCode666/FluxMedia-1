@@ -13,6 +13,8 @@ PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主
 - `docker-compose.yml`：统一 `app` 服务；超管、数据库与外部 Redis 连接信息由服务器 `.env` 注入。
 - `read-env-value.sh`：生产 Workflow 使用的 fail-closed dotenv 单键读取器。
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
+- `configure-system-updates.sh`：一键配置站内超管系统更新能力，并重建 `app` 容器。
+- `configure-system-updates.test.sh`：系统更新配置命令的 token 保密、dotenv 原子更新和权限回归测试。
 - `.env.example`：不含真实机密的服务器环境变量模板。
 - `nginx/nginx.conf`：参考 user-service 的宿主机 Nginx 主配置。
 - `nginx/conf.d/fluxmedia.conf`：两个生产域名的 HTTPS Web/API 分流配置。
@@ -33,7 +35,8 @@ S3 bucket 时使用 age 公钥加密并上传到启用版本控制的 bucket，�
 ```bash
 sudo install -d -m 750 /root/fluxmedia
 sudo cp deploy/docker-compose.yml /root/fluxmedia/docker-compose.yml
-sudo cp deploy/create-database-backup.sh deploy/read-env-value.sh /root/fluxmedia/
+sudo cp deploy/create-database-backup.sh deploy/read-env-value.sh \
+  deploy/configure-system-updates.sh /root/fluxmedia/
 sudo cp deploy/.env.example /root/fluxmedia/.env
 sudo chmod 600 /root/fluxmedia/.env
 sudo editor /root/fluxmedia/.env
@@ -234,6 +237,27 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 保持一致，流水线设置 `StrictHostKeyChecking=no` 和 `UserKnownHostsFile=/dev/null`，不校验
 服务器主机指纹。部署账号需要具备目标目录写权限和 Docker 执行权限。
 
+站内系统更新入口仅向 `super_admin` 开放。若要从站内发起生产更新，在服务器
+`deploy/.env` 配置 `FLUXMEDIA_GITHUB_ACTIONS_TOKEN`：使用 GitHub fine-grained personal access
+token，仓库范围仅选 `FluxCode666/FluxMedia-1`，仓库权限仅需 `Contents: read` 和 `Actions: write`。该 token
+可触发生产工作流，因此应限制可管理超管账号并按周期轮换；不要将 token 提交到仓库或放入
+GitHub Actions 日志。配置后需重新创建 `app` 容器以注入变量。未配置时，站内仍可查看
+Release，但不能触发部署。
+
+配置完成后，在服务器执行以下一条命令；命令会隐藏输入、校验 workflow API 权限、原子更新
+`.env`，并使用 `--force-recreate` 让运行中的 `app` 容器加载 token：
+
+```bash
+sudo bash /root/fluxmedia/configure-system-updates.sh
+```
+
+自动化环境也可以通过 stdin 传入，token 不会出现在命令行参数中：
+
+```bash
+printf '%s\n' "$GITHUB_ACTIONS_TOKEN" \
+  | sudo bash /root/fluxmedia/configure-system-updates.sh --token-stdin
+```
+
 如果部署账号不是 `root`，必须将 `DEPLOY_PATH` 改为该账号可写的绝对路径。
 
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/fluxmedia`。服务器
@@ -248,7 +272,8 @@ Compose。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 统一镜像当前固定为 `linux/amd64`：Go 二进制以及 ONNX/Sharp 原生模块都按 x64 构建，生产
 主机必须支持 amd64；ARM 开发机上的根 Compose 会明确使用 amd64 模拟运行。
 
-生产部署从 Actions 手动触发，可选择 `main`，也可选择与输入版本完全一致的 Git tag；
+推送合规版本 tag 会构建镜像并创建 GitHub Release，但不会自动部署生产。生产部署从站内
+“系统更新”页或 Actions 手动触发，可选择 `main`，也可选择与输入版本完全一致的 Git tag；
 版本号必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。tag 与输入版本不一致时
 流水线会拒绝部署。新容器的四个内部进程未全部通过联合健康检查时，流水线保持维护状态并
 记录备份存储类型、artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或启动旧应用。

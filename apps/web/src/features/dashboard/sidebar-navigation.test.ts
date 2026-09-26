@@ -57,6 +57,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/image-size-configs",
         "/dashboard/admin/supplier-groups",
         "/dashboard/admin/settings",
+        "/dashboard/admin/system-updates",
       ],
     ],
   ] as const)("builds the expected menu for %s", (role, expectedHrefs) => {

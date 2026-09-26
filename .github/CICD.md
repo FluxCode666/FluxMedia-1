@@ -3,29 +3,33 @@
 FluxMedia 使用 GitHub Actions 完成 Pull Request 质量门禁、生产镜像构建和 Docker
 Compose 部署。CI 不包含生产机密；生产运行时配置只保存在目标服务器的
 `deploy/.env`，GitHub Actions 仅通过 `production` Environment 提供 SSH 与 GHCR
-访问凭据。
+访问凭据。推送版本 tag 后，流水线会创建 GitHub Release；生产部署需管理员手动触发。
 
 ## 1. 流水线总览
 
 | 工作流 | 文件 | 触发方式 | 作用 |
 |---|---|---|---|
 | CI | `.github/workflows/ci.yml` | Pull Request 到 `main`，或手动触发 | 文档一致性、lint、类型检查、单元测试、媒体集成测试、Web 构建和 PR 容器构建校验 |
-| Deploy Production | `.github/workflows/deploy-production.yml` | 推送合规版本 tag，或 GitHub Actions 页面手动触发 | 质量门禁、构建并推送统一 GHCR 应用镜像、可选 SSH 生产部署 |
+| Deploy Production | `.github/workflows/deploy-production.yml` | 推送合规版本 tag，或 GitHub Actions / 站内超管手动触发 | tag 推送执行质量门、构建并发布 GHCR 镜像和 GitHub Release；生产部署由手动触发 |
 
-当前 CI **不会因为 push 到 `main` 自动触发**。推送合规版本 tag 会自动运行生产发布；
-也可以从 `Actions → Deploy Production → Run workflow` 手动发起。
+当前 CI **不会因为 push 到 `main` 自动触发**。推送合规版本 tag 会自动构建并发布
+GitHub Release，但不会直接更新生产环境；超管可从站内“系统更新”页触发部署，也可以从
+`Actions → Deploy Production → Run workflow` 手动发起。
 
 ```text
 Pull Request → main
        │
        └─ CI：文档 / lint / typecheck / test / integration / build / Docker 校验
 
-合规版本 tag，或 main/匹配版本 tag 上的手动运行
+合规版本 tag 推送
        │
        └─ Deploy Production
              ├─ Quality gate
              ├─ GHCR：统一 app（迁移命令也使用同一镜像）
-             └─ production Environment 审批（如已配置）→ SSH 部署
+             └─ GitHub Release（自动生成变更说明）
+
+站内超管 / Actions 手动部署
+       └─ 同一版本工作流 → production Environment 审批 → SSH 部署
 ```
 
 生产工作流文件是执行契约；修改工作流、部署 Compose 或服务器环境要求时，必须同步更新
@@ -42,6 +46,7 @@ Pull Request → main
 | `deploy/docker-compose.yml` | 生产单一 `app` 服务；PostgreSQL、Redis 与 Nginx 仍是外部基础设施 |
 | `deploy/.env.example` | 生产服务器 `.env` 模板，不包含真实机密 |
 | `deploy/README.md` | 服务器初始化、Redis、备份、Nginx 和迁移操作手册 |
+| `deploy/configure-system-updates.sh` | 服务器端一键配置站内超管更新能力并重建 `app` |
 | `docs/CI-CD.md` | CI/CD 设计摘要和维护窗口契约 |
 
 ## 3. CI 质量门禁
@@ -74,20 +79,26 @@ pnpm --filter @repo/web build
 
 ### 4.1 触发和输入
 
-生产工作流会在推送合规版本 tag 时自动触发，也支持 `workflow_dispatch` 手动触发；普通
-分支 push（包括 `main`）不会自动部署。tag 自动触发时版本取自 tag 名且一定执行部署。
+生产工作流会在推送合规版本 tag 时自动构建镜像并创建 GitHub Release，也支持
+`workflow_dispatch` 手动触发部署；普通分支 push（包括 `main`）不会自动触发。
+tag push 本身不部署生产，部署仅由手动 `workflow_dispatch` 运行执行。
 
 | 输入 | 必需 | 说明 |
 |---|:---:|---|
 | `version` | 手动触发时是 | 必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha 或 beta 或 rc>.<N>]`，例如 `v0.8.1`、`v0.9.0-rc.1` |
-| `skip_deploy` | 否 | 仅手动触发有效；`true` 时只构建并推送镜像，不连接生产服务器；默认 `false` |
+| `skip_deploy` | 否 | 仅手动触发有效；`true` 时只构建并推送镜像，不部署也不创建 Release；默认 `false` |
 
 工作流接受从 `main` 手动运行，或从 `refs/tags/<version>` 手动运行且 tag 名与输入
 `version` 完全一致。tag push 和手动输入都会经过严格 SemVer 校验，不接受不带 `v` 的版本号。
+站内“系统更新”页仅供 `super_admin` 使用；它只读取最新稳定 Release，并通过
+`workflow_dispatch` 调用同一生产工作流。生产 `.env` 需配置 `FLUXMEDIA_GITHUB_ACTIONS_TOKEN`，
+使用仅限本仓库、授予 `Contents: read` 和 `Actions: write` 的 fine-grained token。该 token 只用于站内发起
+工作流，部署 SSH/GHCR 权限仍由 GitHub `production` Environment 管理。
 
 ### 4.2 质量门和构建顺序
 
-生产发布先执行 `quality`，成功后才进入 `build-and-push`：
+每次发布先执行 `quality`，成功后才进入 `build-and-push`。tag push 随后创建 GitHub
+Release；生产部署由超管从站内更新页对该 Release 发起 `workflow_dispatch`：
 
 1. 启动临时 PostgreSQL 16 和 Redis 7.4。
 2. 验证版本与分支/tag 关系。
@@ -95,6 +106,8 @@ pnpm --filter @repo/web build
 4. 运行 Fumadocs source 生成、lint、typecheck、全仓测试和集成测试。
 5. 构建 Web standalone，执行 API upstream worker 检查与 smoke test。
 6. 使用 `Dockerfile.unified` 和 Docker Buildx 构建并推送统一应用镜像。
+7. tag push 后以对应 tag 创建 GitHub Release 和自动生成的变更说明；该触发不部署生产。
+8. 站内超管选择最新稳定 Release 后，在同一 tag 上手动触发质量门、镜像构建和生产部署。
 
 ### 4.3 GHCR 镜像
 
@@ -218,11 +231,11 @@ PostgreSQL 容器；备份脚本会在该容器内执行 `pg_dump/pg_restore`，
 
 1. 创建 PR 并等待 CI 所有必需检查通过。
 2. 合并到 `main`；合并 push 不会再次触发 CI，这是当前配置的预期行为。
-3. 创建并推送合规版本 tag 以自动发布；需要人工运行时，打开 GitHub
-   `Actions → Deploy Production → Run workflow`。
-4. 手动运行时选择 `main` 或匹配输入版本的 tag，输入版本号并保持 `skip_deploy=false`。
-5. 如配置了 Required reviewers，等待生产 Environment 审批。
-6. 检查 Actions summary、`app` 联合健康状态和公网访问。
+3. 创建并推送合规版本 tag；工作流通过质量门后构建镜像并发布 GitHub Release，不部署生产。
+4. 超管从站内“系统更新”页选择该 Release 并发起部署，或在 GitHub Actions 手动运行匹配版本 tag。
+5. Actions 手动运行时也可选择 `main` 并输入版本号；保持 `skip_deploy=false` 才会部署。
+6. 如配置了 Required reviewers，等待生产 Environment 审批。
+7. 检查 Actions summary、`app` 联合健康状态和公网访问。
 
 `skip_deploy=true` 只构建并推送镜像，不会更新服务器 `.env` 或执行数据库迁移。回滚优先
 重新运行 Deploy Production，输入仍存在于 GHCR 的旧版本。若迁移已经开始，不能只改回

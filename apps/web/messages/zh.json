@@ -840,6 +840,30 @@
       "closed": "已关闭"
     }
   },
+  "SystemUpdates": {
+    "title": "系统更新",
+    "description": "检查 GitHub 最新 Release，并通过生产发布工作流部署。",
+    "statusTitle": "版本状态",
+    "statusDescription": "仅支持从此处部署更新的稳定版本。",
+    "checkAgain": "重新检查",
+    "loading": "正在检查 GitHub Releases…",
+    "loadError": "暂时无法获取版本信息，请稍后重试。",
+    "dispatchError": "GitHub 未能启动生产部署，请检查工作流后重试。",
+    "currentVersion": "当前版本",
+    "latestVersion": "最新稳定版",
+    "updateAvailable": "有可用更新",
+    "upToDate": "已是最新",
+    "unknownVersion": "版本未知",
+    "updateNow": "部署更新",
+    "startingUpdate": "正在启动部署…",
+    "confirm": "确定将 FluxMedia {version} 部署到生产环境吗？这会启动数据库迁移和生产发布。",
+    "dispatchNotConfigured": "尚未配置部署权限。请在生产环境配置仅对此仓库拥有 Contents: read、Actions: write 权限的 GitHub fine-grained token，并命名为 FLUXMEDIA_GITHUB_ACTIONS_TOKEN。",
+    "dispatchAccepted": "已排队部署 {version}。",
+    "viewWorkflow": "查看工作流",
+    "viewRelease": "查看 Release 说明",
+    "publishedAt": "发布时间：{date}",
+    "noReleaseNotes": "此版本暂无发布说明。"
+  },
   "Dashboard": {
     "nav": {
       "dashboard": "控制台",
@@ -863,6 +887,7 @@
       "orderManagement": "订单管理",
       "announcementManagement": "公告管理",
       "systemSettings": "系统设置",
+      "systemUpdates": "系统更新",
       "globalStatus": "全局状态",
       "adminAnalytics": "数据看板",
       "operations": "运营总览",
@@ -895,6 +920,7 @@
       "orderManagement": "订单管理",
       "announcementManagement": "公告管理",
       "systemSettings": "系统设置",
+      "systemUpdates": "系统更新",
       "globalStatus": "全局状态",
       "adminAnalytics": "数据看板",
       "operations": "运营总览",

@@ -1,8 +1,7 @@
 # FluxMedia 生产部署流水线。
 #
-# 使用方式：推送符合 SemVer 的 Git tag 自动触发，也可手动触发。流水线先执行质量门，
-# 再构建统一应用镜像并推送 GHCR，最后通过 SSH 账号密码同步生产 Compose。
-# 真实运行时配置只保存在目标服务器 deploy/.env，不进入仓库或 Actions 日志。
+# 使用方式：推送符合 SemVer 的 Git tag 自动执行质量门、构建 GHCR 镜像并发布 GitHub
+# Release；生产部署由站内超管或 GitHub Actions 手动触发。运行时配置只保存在目标服务器。
 name: Deploy Production
 
 on:
@@ -100,6 +99,9 @@ jobs:
 
       - name: Test deployment release recovery policy
         run: bash deploy/release-recovery-policy.test.sh
+
+      - name: Test in-site system update configuration command
+        run: bash deploy/configure-system-updates.test.sh
 
       - name: Test backend entrypoint command forwarding
         run: sh services/api-gateway/backend-entrypoint.test.sh
@@ -319,7 +321,7 @@ jobs:
   deploy:
     name: Migrate database and deploy unified application with Docker Compose
     needs: build-and-push
-    if: ${{ github.event_name == 'push' || inputs.skip_deploy != true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_deploy != true }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -415,6 +417,7 @@ jobs:
             deploy/read-release-ledger-digest.sh \
             deploy/release-recovery-policy.sh \
             deploy/read-env-value.sh \
+            deploy/configure-system-updates.sh \
             deploy/nginx/conf.d/fluxmedia.conf \
             deploy/smoke-production-routing.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
@@ -1278,4 +1281,55 @@ jobs:
               "\`${{ steps.deploy.outputs.backup_storage_verified }}\`"
             echo "- 操作者：\`${GITHUB_ACTOR}\`"
             echo "- 回滚边界：迁移后失败保持维护状态，不自动启动旧镜像"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-and-push, deploy]
+    if: ${{ always() && needs.build-and-push.result == 'success' && (github.event_name == 'push' || needs.deploy.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+    steps:
+      - name: Checkout deployment commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Publish release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "GitHub Release ${VERSION} already exists; deployment completed successfully."
+            exit 0
+          fi
+
+          tag_sha="$(git ls-remote origin "refs/tags/${VERSION}" "refs/tags/${VERSION}^{}" \
+            | awk '$2 ~ /\^\{\}$/ { peeled = $1 } $2 !~ /\^\{\}$/ { direct = $1 } END { print peeled != "" ? peeled : direct }')"
+          if [ -n "${tag_sha}" ] && [ "${tag_sha}" != "${GITHUB_SHA}" ]; then
+            echo "::error::Tag ${VERSION} points to ${tag_sha}, not the deployed commit ${GITHUB_SHA}."
+            exit 1
+          fi
+
+          release_flags=(--generate-notes)
+          if [[ "${VERSION}" =~ -(alpha|beta|rc)\.[0-9]+$ ]]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "FluxMedia ${VERSION}" \
+            "${release_flags[@]}"
+
+          {
+            echo "## GitHub Release"
+            echo ""
+            echo "- Published: [FluxMedia ${VERSION}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION})"
+            echo "- The production workflow can be dispatched from the in-site system updates page."
           } >> "${GITHUB_STEP_SUMMARY}"

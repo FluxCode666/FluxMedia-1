@@ -34,8 +34,9 @@ pnpm --filter @repo/web build
 
 - `fluxmedia-1-app`
 
-该工作流是唯一镜像发布链路；推送合规版本 tag 会自动构建并部署，也可从 `main` 或与
-输入版本一致的 tag 手动触发。版本必须符合
+该工作流是唯一镜像发布链路；推送合规版本 tag 会执行质量门、构建 GHCR 镜像并创建
+GitHub Release，但不会自动部署生产。站内超管或 Actions 手动触发同一版本的
+`workflow_dispatch` 后才进入生产部署。Actions 也可从 `main` 手动触发。版本必须符合
 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
 
 部署阶段将 `deploy/docker-compose.yml` 与维护脚本同步到目标机，并更新

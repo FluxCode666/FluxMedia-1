@@ -840,6 +840,30 @@
       "closed": "Closed"
     }
   },
+  "SystemUpdates": {
+    "title": "System Updates",
+    "description": "Check the latest GitHub release and deploy it through the production workflow.",
+    "statusTitle": "Release status",
+    "statusDescription": "Only stable, newer releases can be deployed from here.",
+    "checkAgain": "Check again",
+    "loading": "Checking GitHub Releases…",
+    "loadError": "Unable to load release information. Please try again later.",
+    "dispatchError": "GitHub could not start the production deployment. Check the workflow and try again.",
+    "currentVersion": "Installed version",
+    "latestVersion": "Latest stable release",
+    "updateAvailable": "Update available",
+    "upToDate": "Up to date",
+    "unknownVersion": "Version unknown",
+    "updateNow": "Deploy update",
+    "startingUpdate": "Starting deployment…",
+    "confirm": "Deploy FluxMedia {version} to production? This starts the database migration and production rollout.",
+    "dispatchNotConfigured": "Deployment is not configured. Add a fine-grained GitHub token with Contents: read and Actions: write access for this repository to the production environment as FLUXMEDIA_GITHUB_ACTIONS_TOKEN.",
+    "dispatchAccepted": "Deployment of {version} was queued.",
+    "viewWorkflow": "View workflow",
+    "viewRelease": "View release notes",
+    "publishedAt": "Published {date}",
+    "noReleaseNotes": "This release has no notes."
+  },
   "Dashboard": {
     "nav": {
       "dashboard": "Dashboard",
@@ -863,6 +887,7 @@
       "orderManagement": "Order Management",
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
+      "systemUpdates": "System Updates",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
       "operations": "Operations Dashboard",
@@ -895,6 +920,7 @@
       "orderManagement": "Order Management",
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
+      "systemUpdates": "System Updates",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
       "operations": "Operations Dashboard",
