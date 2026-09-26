@@ -25,6 +25,14 @@
       "source": "apps/web/src/app/api/admin/site-branding/logo/route.ts"
     },
     {
+      "path": "/api/admin/system-updates",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "source": "apps/web/src/app/api/admin/system-updates/route.ts"
+    },
+    {
       "path": "/api/admin/videos/reconciliation",
       "methods": [
         "GET",
@@ -2789,31 +2797,31 @@
       "path": "/api/internal/credits/service",
       "method": "POST",
       "source": "packages/shared/src/credits/core.ts",
-      "line": 130
+      "line": 154
     },
     {
       "path": "/api/internal/credits/operation",
       "method": "POST",
       "source": "packages/shared/src/credits/core.ts",
-      "line": 152
+      "line": 188
     },
     {
       "path": "/api/internal/credits/operation",
       "method": "POST",
       "source": "packages/shared/src/credits/core.ts",
-      "line": 165
+      "line": 222
     },
     {
       "path": "/api/admin/users/audit-value/credits/status",
       "method": "POST",
       "source": "packages/shared/src/credits/core.ts",
-      "line": 198
+      "line": 296
     },
     {
       "path": "/api/admin/users/audit-value/credits/status",
       "method": "POST",
       "source": "packages/shared/src/credits/core.ts",
-      "line": 201
+      "line": 302
     },
     {
       "path": "/api/credits/purchase-checkout",
