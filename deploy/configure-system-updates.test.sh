@@ -54,7 +54,7 @@ if ! grep -Fxq 'DATABASE_URL=postgresql://db/flux' "${env_file}"; then
   printf '用例失败：环境文件其他配置被破坏。\n' >&2
   exit 1
 fi
-if [ "$(stat -f '%Lp' "${env_file}" 2>/dev/null || stat -c '%a' "${env_file}")" != "600" ]; then
+if [ "$(stat -c '%a' "${env_file}" 2>/dev/null || stat -f '%Lp' "${env_file}")" != "600" ]; then
   printf '用例失败：环境文件权限不是 600。\n' >&2
   exit 1
 fi
