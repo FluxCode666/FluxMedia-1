@@ -237,7 +237,8 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 保持一致，流水线设置 `StrictHostKeyChecking=no` 和 `UserKnownHostsFile=/dev/null`，不校验
 服务器主机指纹。部署账号需要具备目标目录写权限和 Docker 执行权限。
 
-站内系统更新入口仅向 `super_admin` 开放。若要从站内发起生产更新，在服务器
+站内系统更新入口仅向 `super_admin` 开放。Nginx 对 `/api/admin/system-updates` 使用
+精确匹配并转发到 Next.js，其余业务 API 仍进入 Go。若要从站内发起生产更新，在服务器
 `deploy/.env` 配置 `FLUXMEDIA_GITHUB_ACTIONS_TOKEN`：使用 GitHub fine-grained personal access
 token，仓库范围仅选 `FluxCode666/FluxMedia-1`，仓库权限仅需 `Contents: read` 和 `Actions: write`。该 token
 可触发生产工作流，因此应限制可管理超管账号并按周期轮换；不要将 token 提交到仓库或放入
