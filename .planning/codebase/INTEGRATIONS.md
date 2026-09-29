@@ -27,7 +27,7 @@
 ## 运维与监控
 
 - Docker、Nginx、Certbot 与部署脚本位于 `deploy/` 和根 `Dockerfile*`。
-- GitHub Actions 位于 `.github/workflows/ci.yml`（PR 质量门）、`.github/workflows/release.yml`（tag 触发的镜像与带部署包的 GitHub Release）与 `.github/workflows/deploy-production.yml`（手动生产部署）；站内系统更新由宿主机 systemd 更新器（`deploy/system-update-runner.sh`）消费同一 Release 部署包。
+- GitHub Actions 位于 `.github/workflows/ci.yml`（PR 质量门）、`.github/workflows/release.yml`（tag 触发的镜像与带部署包的 GitHub Release）与 `.github/workflows/deploy-production.yml`（手动生产部署）；生产部署只能手动运行 Deploy Production，经 SSH 执行 Release 部署包内的 `deploy/apply-release.sh`。
 - Sentry 在 `apps/web/sentry.*.config.ts` 装配；日志通过 `@repo/shared/logger` 输出。
 
 ## 集成边界

@@ -81,8 +81,6 @@ describe("控制台生成入口多语言契约", () => {
     expect(superAdminHrefs).toContain("/dashboard/admin/supplier-groups");
     expect(adminHrefs).not.toContain("/dashboard/admin/settings");
     expect(superAdminHrefs).toContain("/dashboard/admin/settings");
-    expect(superAdminHrefs).toContain("/dashboard/admin/system-updates");
-    expect(adminHrefs).not.toContain("/dashboard/admin/system-updates");
     expect(adminHrefs).toContain("/dashboard/admin/agent-tokens");
     expect(superAdminHrefs).toContain("/dashboard/admin/agent-tokens");
     expect(observerHrefs).not.toContain("/dashboard/admin/agent-tokens");
@@ -123,12 +121,5 @@ describe("控制台生成入口多语言契约", () => {
     expect(zhMessages.Dashboard.nav.operations).toBe("运营总览");
     expect(enMessages.Dashboard.pages.operations).toBe("Operations Dashboard");
     expect(zhMessages.Dashboard.pages.operations).toBe("运营总览");
-  });
-
-  it("仅为超管提供中英文系统更新入口和页面标题", () => {
-    expect(enMessages.Dashboard.nav.systemUpdates).toBe("System Updates");
-    expect(zhMessages.Dashboard.nav.systemUpdates).toBe("系统更新");
-    expect(enMessages.Dashboard.pages.systemUpdates).toBe("System Updates");
-    expect(zhMessages.Dashboard.pages.systemUpdates).toBe("系统更新");
   });
 });

@@ -4,7 +4,7 @@ FluxMedia 使用 GitHub Actions 完成 Pull Request 质量门禁、版本发布�
 GitHub Release）和 Docker Compose 生产部署。CI 不包含生产机密；生产运行时配置只保存在
 目标服务器的 `deploy/.env`，GitHub Actions 仅通过 `production` Environment 提供 SSH（及
 可选的 GHCR）访问凭据。推送版本 tag 后，Release 流水线发布版本但不接触生产服务器；生产
-发布由超管在站内“系统更新”页触发宿主机更新器完成，或由运维手动运行 Deploy Production。
+发布只能由运维手动运行 Deploy Production 完成。
 
 ## 1. 流水线总览
 
@@ -15,12 +15,9 @@ GitHub Release）和 Docker Compose 生产部署。CI 不包含生产机密；�
 | Deploy Production | `.github/workflows/deploy-production.yml` | 仅 `workflow_dispatch` 手动触发 | 下载并校验已发布版本的部署包，经 SSH 在生产服务器执行 `apply-release.sh` |
 
 当前 CI **不会因为 push 到 `main` 自动触发**。推送合规版本 tag 只触发 Release，不会
-更新生产环境。生产发布有两个入口，二者消费同一个 Release 部署包、执行同一套发布逻辑，
-并通过服务器上的 `release-state/deploy.lock` 互斥：
-
-- 站内超管在“系统更新”页（`/dashboard/admin/system-updates`）点击更新，由宿主机 systemd
-  更新器执行发布；
-- 运维在 `Actions → Deploy Production → Run workflow` 手动输入版本号，经 SSH 发布。
+更新生产环境。生产发布只有一个入口：运维在 `Actions → Deploy Production → Run workflow`
+手动输入版本号，工作流消费该版本的 Release 部署包并经 SSH 发布；服务器上的
+`release-state/deploy.lock` 保证同一时间只有一个部署在执行。
 
 ```text
 Pull Request → main
@@ -34,10 +31,8 @@ Pull Request → main
              ├─ build-and-push：GHCR 统一 app 镜像（<version> 与 latest）
              └─ publish-release：GitHub Release + fluxmedia-release.env + fluxmedia-deploy.tar.gz
 
-生产发布（二选一，共用 release-state/deploy.lock）
-       ├─ 站内超管“系统更新” → requests/update-request.json → systemd 更新器
-       │     → fetch-release-bundle.sh → apply-release.sh → deploy-release.sh
-       └─ Deploy Production（手动）→ fetch-release-bundle.sh → scp 部署包
+生产发布（手动，持有 release-state/deploy.lock）
+       └─ Deploy Production → fetch-release-bundle.sh（runner）→ scp 部署包
              → production Environment 审批 → SSH apply-release.sh → deploy-release.sh
 ```
 
@@ -57,14 +52,11 @@ Pull Request → main
 | `deploy/.env.example` | 生产服务器 `.env` 模板，不包含真实机密 |
 | `deploy/build-release-bundle.sh` | Release 流水线构建部署包与 manifest；部署包是生产部署文件的唯一清单 |
 | `deploy/read-release-manifest.sh` | 严格解析 `fluxmedia-release.env`（不 source），供构建、下载与落地三处复核 |
-| `deploy/fetch-release-bundle.sh` | 匿名 HTTPS 下载公开 Release 部署包，校验 SHA-256，只接受扁平普通文件 |
+| `deploy/fetch-release-bundle.sh` | 在 Actions runner 上匿名 HTTPS 下载公开 Release 部署包，校验 SHA-256，只接受扁平普通文件；不进入部署包 |
 | `deploy/apply-release.sh` | 在 `release-state/deploy.lock` 下原子落地部署包文件，再执行 `deploy-release.sh` |
 | `deploy/deploy-release.sh` | 真正的生产发布状态机：备份、门禁、迁移、Nginx、smoke 与安全证据输出 |
-| `deploy/install-system-updater.sh` | 每次发布时由 `deploy-release.sh` 调用，幂等安装站内系统更新器目录与 systemd 单元 |
-| `deploy/system-update-runner.sh` | 宿主机 root 更新执行器；处理站内请求，也支持运维手动指定版本 |
-| `deploy/systemd/` | `fluxmedia-system-update.path` 与 `fluxmedia-system-update.service` 单元模板 |
-| `deploy/release-bundle.test.sh` | 部署包与站内更新器的回归测试（需 Linux） |
-| `deploy/README.md` | 服务器初始化、Redis、备份、Nginx、迁移和站内更新器操作手册 |
+| `deploy/release-bundle.test.sh` | manifest 解析、部署包构建/下载/校验、路径穿越拒绝，以及 `apply-release.sh` 落地、部署锁与缺失文件拒绝的回归测试（需 Linux） |
+| `deploy/README.md` | 服务器初始化、Redis、备份、Nginx 和迁移操作手册 |
 | `docs/CI-CD.md` | CI/CD 设计摘要和维护窗口契约 |
 
 ## 3. CI 质量门禁
@@ -128,10 +120,10 @@ Release 资产：
 | 资产 | 内容 |
 |---|---|
 | `fluxmedia-release.env` | manifest：`RELEASE_TAG`、`GIT_SHA`、`APP_IMAGE`、`APP_DIGEST`、`BUNDLE_SHA256` |
-| `fluxmedia-deploy.tar.gz` | 扁平部署包：候选 Compose（`docker-compose.next.yml`）、Nginx 站点配置 `fluxmedia.conf`、全部部署脚本、站内更新器脚本与两个 systemd 单元 |
+| `fluxmedia-deploy.tar.gz` | 扁平部署包：候选 Compose（`docker-compose.next.yml`）、Nginx 站点配置 `fluxmedia.conf`，以及 `create-database-backup.sh`、`read-release-ledger-digest.sh`、`release-recovery-policy.sh`、`read-env-value.sh`、`smoke-production-routing.sh`、`deploy-release.sh`、`apply-release.sh`、`read-release-manifest.sh` |
 
 Release 流水线不使用 `production` Environment，也不连接生产服务器。只有由该流水线发布、
-带部署包的版本才能被站内更新或 Deploy Production 部署；旧流水线创建的 Release 没有部署包，
+带部署包的版本才能被 Deploy Production 部署；旧流水线创建的 Release 没有部署包，
 不能再用于部署。
 
 ### 4.2 Deploy Production（`deploy-production.yml`）
@@ -157,41 +149,9 @@ Release 流水线不使用 `production` Environment，也不连接生产服务�
    `deployment_completed=true`。任一缺失即判定失败。
 6. 写入 Actions summary，并在结束时（无论成败）删除服务器上的 incoming 目录。
 
-Deploy Production 不校验版本新旧，可用于部署预发布版本或回退到仍带部署包的旧版本；
-站内更新只允许升级到更高的稳定版本。
+Deploy Production 不校验版本新旧，可用于部署预发布版本或回退到仍带部署包的旧版本。
 
-### 4.3 站内系统更新
-
-“系统更新”页（`/dashboard/admin/system-updates`）仅 `super_admin` 可见。仓库公开，应用
-匿名读取最新稳定 GitHub Release，**不需要任何 GitHub token**。点击更新后：
-
-1. 应用把请求原子写入 `/app/system-update/requests/update-request.json`（宿主机
-   `/var/lib/fluxmedia/system-update/requests/`）。
-2. 宿主机 `fluxmedia-system-update.path` 检测到请求文件，启动 root oneshot
-   `fluxmedia-system-update.service`，执行 `system-update-runner.sh`。
-3. runner 取走请求，只接受严格高于当前 `FLUXMEDIA_RELEASE_TAG` 的稳定版本，下载并校验
-   部署包后执行 `apply-release.sh`，并要求输出中存在 `deployment_completed=true` 与匹配
-   manifest 的 `deployed_image_ref`。
-4. runner 持续写入 `status/status.json`（state、phase、error、logTail），页面轮询展示
-   阶段、错误和日志尾部。`app` 容器重启期间站点会短暂不可用，页面恢复后继续显示结果。
-
-错误码：
-
-| 错误码 | 含义 |
-|---|---|
-| `invalid_request` | 请求文件缺失字段、格式非法、过大或是符号链接 |
-| `invalid_version` | 目标版本不是稳定版 `vX.Y.Z` |
-| `current_version_unknown` | 服务器 `.env` 缺少 `FLUXMEDIA_RELEASE_TAG` |
-| `version_not_newer` | 目标版本不高于当前版本 |
-| `download_failed` | 下载或校验 Release 部署包失败 |
-| `deploy_failed` | `apply-release.sh`/`deploy-release.sh` 以非零退出（含部署锁被占用） |
-| `deploy_evidence_missing` | 发布退出成功但缺少完成证据或镜像引用不一致 |
-| `runner_interrupted` | runner 在执行中被中断（例如服务被停止或主机重启） |
-
-宿主机前置条件：systemd、`python3`、`flock`、`curl`。更新器由每次发布自动安装或刷新，
-无需单独配置；首次启用方式见第 6 节。
-
-### 4.4 GHCR 镜像
+### 4.3 GHCR 镜像
 
 | 服务 | 镜像 |
 |---|---|
@@ -199,10 +159,10 @@ Deploy Production 不校验版本新旧，可用于部署预发布版本或回�
 
 镜像同时推送 `<version>` 和 `latest` 两个 tag，平台为 `linux/amd64`。构建端使用 GitHub
 自动提供的 `GITHUB_TOKEN` 推送。GHCR 包设为公开时，目标服务器可匿名拉取；包为私有时，
-Deploy Production 通过可选的 `GHCR_PAT` 让目标机登录，站内更新则依赖目标机上已有的
-`docker login` 凭据。Release manifest 记录构建产物 digest，发布时把
-`${image}@sha256:...` 写入服务器的 `FLUXMEDIA_APP_IMAGE_REF`；Compose 始终按 digest
-启动，不能用可变 tag 作为部署或回滚标识。
+Deploy Production 通过可选的 `GHCR_PAT` 让目标机登录。Release manifest 记录构建产物
+digest，发布时把 `${image}@sha256:...` 写入服务器的 `FLUXMEDIA_APP_IMAGE_REF`，并把
+版本号写入 `FLUXMEDIA_RELEASE_TAG` 作为发布记录；Compose 始终按 digest 启动，不能用
+可变 tag 作为部署或回滚标识。
 
 统一镜像构建期使用固定公开配置：`NEXT_PUBLIC_APP_URL` 和 `BETTER_AUTH_URL` 为
 `https://media.flux-code.cc`，`NEXT_PUBLIC_APP_NAME` 为 `FluxMedia`，支付 provider
@@ -224,7 +184,7 @@ branches 限制为 `main`。
 | Secret | 必需 | 说明 |
 |---|:---:|---|
 | `DEPLOY_HOST` | 是 | 生产服务器 IP 或域名 |
-| `DEPLOY_USER` | 是 | SSH 登录用户；发布需要写 `/etc/systemd/system` 与 `/var/lib/fluxmedia`，通常为 `root` |
+| `DEPLOY_USER` | 是 | SSH 登录用户；需要部署目录写权限与 Docker 执行权限，默认目录位于 `/root`，通常为 `root` |
 | `DEPLOY_PASSWORD` | 是 | SSH 登录密码；当前工作流使用密码认证，不读取 SSH 私钥 |
 | `DEPLOY_PORT` | 否 | SSH 端口，留空时使用 `22` |
 | `GHCR_PAT` | 否 | 仅 GHCR 包为私有时需要，至少 `read:packages`；未配置时按公开镜像匿名拉取 |
@@ -246,9 +206,9 @@ S3 访问密钥或 age 私钥放入 GitHub Environment。这些值由目标服�
 ## 6. 首次初始化生产服务器
 
 目标机至少需要 Docker Engine、Docker Compose v2（2.30 或更高）、Nginx、Certbot、
-不低于生产数据库主版本的 PostgreSQL `pg_dump`/`pg_restore` 客户端，以及站内更新器所需的
-systemd、`python3`、`flock`、`curl`。PostgreSQL、Redis 和 Nginx 都在统一应用容器之外；
-生产 Compose 不会创建或重建这些基础设施。
+不低于生产数据库主版本的 PostgreSQL `pg_dump`/`pg_restore` 客户端，以及 `flock`
+（`apply-release.sh` 部署锁）与 `curl`（公网路由 smoke）。PostgreSQL、Redis 和 Nginx
+都在统一应用容器之外；生产 Compose 不会创建或重建这些基础设施。
 
 ```bash
 sudo install -d -m 750 /root/fluxmedia
@@ -258,9 +218,9 @@ sudo chmod 600 /root/fluxmedia/.env
 sudo editor /root/fluxmedia/.env
 ```
 
-如果部署用户不是 `root`，将目录替换为 `DEPLOY_PATH`，并确保该用户拥有目录、Docker 权限
-以及安装 systemd 单元的权限。候选 Compose、Nginx 配置和全部部署脚本由每次发布从
-Release 部署包原子同步，不需要手工复制；发布不会覆盖服务器 `.env`。
+如果部署用户不是 `root`，将目录替换为 `DEPLOY_PATH`，并确保该用户拥有目录与 Docker
+权限。候选 Compose、Nginx 配置和全部部署脚本由每次发布从 Release 部署包原子同步，
+不需要手工复制；发布不会覆盖服务器 `.env`。
 
 服务器 `.env` 至少填写：
 
@@ -273,36 +233,30 @@ Release 部署包原子同步，不需要手工复制；发布不会覆盖服务
 | `FLUXMEDIA_SUPER_ADMIN_EMAIL` | 首次自用模式超管邮箱 |
 | `FLUXMEDIA_SUPER_ADMIN_PASSWORD` | 首次自用模式超管密码 |
 
-`FLUXMEDIA_APP_IMAGE_REF` 与 `FLUXMEDIA_RELEASE_TAG` 由每次发布写入，不需要手工维护。
+`FLUXMEDIA_APP_IMAGE_REF` 与 `FLUXMEDIA_RELEASE_TAG` 由每次发布写入（用于发布记录与
+回滚定位），不需要手工维护。
 完整变量模板见 [`deploy/.env.example`](../deploy/.env.example)。Redis 应使用
 `maxmemory-policy noeviction`；公网或托管 Redis 使用 `REDIS_TLS=true`。更多 Redis、
 备份和 Nginx 要求见 [`deploy/README.md`](../deploy/README.md)。
 
-启用站内更新（新服务器或从旧流水线升级的现有服务器均适用）：对一个由新 Release 流水线
-发布的版本手动运行一次 Deploy Production。该次发布会调用 `install-system-updater.sh`，
-创建 `/var/lib/fluxmedia/system-update/` 目录、安装并启用 systemd 单元，同时写入
-`FLUXMEDIA_RELEASE_TAG`；之后即可在站内点击更新。无法使用 Actions 时的手工引导方式见
-[`deploy/README.md`](../deploy/README.md) 的“站内系统更新器”一节。
-
 ## 7. 自动部署状态机
 
-两个入口最终都由 `apply-release.sh` 在 `release-state/deploy.lock` 下原子落地部署包文件
-（临时文件加 rename，正在执行的旧脚本不会读到半新内容），再以非交互 stdin 执行
-`deploy-release.sh`：
+Deploy Production 经 SSH 调用 `apply-release.sh`，由它在 `release-state/deploy.lock`
+下原子落地部署包文件（临时文件加 rename，正在执行的旧脚本不会读到半新内容），再以
+非交互 stdin 执行 `deploy-release.sh`：
 
 1. 校验服务器存在 `.env`、现役与候选 Compose、环境读取器、备份脚本、恢复策略脚本、
-   Nginx 配置、路由 smoke 与更新器安装脚本。
+   Nginx 配置与路由 smoke 脚本。
 2. 记录上一版 Compose 与镜像引用，验证候选 Compose，备份并安装版本化 Nginx 配置，按
    digest 拉取本次统一镜像。
-3. 使用统一镜像执行停服前门禁，并刷新站内系统更新器（其目录是候选 Compose 的 bind mount
-   源），然后停止旧应用并确认数据库连接排空。
+3. 使用统一镜像执行停服前门禁，然后停止旧应用并确认数据库连接排空。
 4. 执行 drain、API upstream 预检、数据库备份、视频输入资产收编、数据库迁移和 postcheck。
 5. 使用统一镜像回填并零差异对账运营统计读模型，再启动单一 `app` 服务。
 6. 确保运营统计 epoch，等待包含四个内部进程的联合健康检查，并执行公网路由 smoke，最后
    输出 `deployment_completed=true` 等安全证据。
 
-迁移容器必须使用非交互 stdin。调用方是 SSH 会话或 systemd，迁移命令继承 stdin 会吞掉
-后续 Web 启动和健康检查命令。
+迁移容器必须使用非交互 stdin。调用方是 SSH 会话，迁移命令继承 stdin 会吞掉后续 Web
+启动和健康检查命令。
 
 迁移开始前失败时，仅当上一版应用本轮停服前确实运行且旧 Compose、镜像元数据完整，才
 恢复上一版应用与代理。迁移开始后失败则保持维护状态，停止新 `app`，**不自动启动旧
@@ -329,12 +283,12 @@ PostgreSQL 容器；备份脚本会在该容器内执行 `pg_dump/pg_restore`，
 3. 在 `main` 上创建并推送合规版本 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
 4. 等待 Release 流水线完成，确认 GitHub Release 附带 `fluxmedia-release.env` 与
    `fluxmedia-deploy.tar.gz`。
-5. 超管在站内“系统更新”页点击更新并观察阶段与日志；或运维在 Actions 手动运行 Deploy
-   Production 并输入该版本（如配置了 Required reviewers，需等待审批）。
-6. 检查站内更新结果或 Actions summary、`app` 联合健康状态和公网访问。
+5. 运维在 Actions 手动运行 Deploy Production 并输入该版本（如配置了 Required
+   reviewers，需等待审批）。
+6. 检查 Actions summary、`app` 联合健康状态和公网访问。
 
-预发布版本（`-alpha`/`-beta`/`-rc`）只能通过 Deploy Production 部署。回滚优先手动运行
-Deploy Production，输入仍带部署包且镜像仍存在于 GHCR 的旧版本；站内更新不支持降级。
+预发布版本（`-alpha`/`-beta`/`-rc`）同样通过 Deploy Production 部署。回滚时手动运行
+Deploy Production，输入仍带部署包且镜像仍存在于 GHCR 的旧版本。
 若迁移已经开始，不能只改回旧 tag 启动服务，必须先确认数据库 schema、备份恢复、资产回滚
 和 legacy-startup 门禁。
 
@@ -350,7 +304,7 @@ Release 失败时：确认 tag 与 `version` 一致、从 tag 而非分支运行
 Environment secret 缺失时检查 `production` Environment。Deploy Production 要求
 `DEPLOY_HOST`、`DEPLOY_USER` 和 `DEPLOY_PASSWORD`；`DEPLOY_PORT`、`DEPLOY_PATH`、
 `GHCR_USERNAME`、`GHCR_PAT` 可以使用默认值或留空。“另一个生产部署正在进行”表示
-`release-state/deploy.lock` 被站内更新或另一次部署占用，等待其完成后重试。
+`release-state/deploy.lock` 被另一次部署占用，等待其完成后重试。
 
 目标机排障：
 
@@ -359,10 +313,6 @@ cd /root/fluxmedia
 docker compose ps
 docker compose logs --tail=200 app
 docker compose config --quiet
-systemctl status fluxmedia-system-update.path
-journalctl -u fluxmedia-system-update.service --since today
-sudo cat /var/lib/fluxmedia/system-update/status/status.json
-sudo ls -t /var/lib/fluxmedia/system-update/logs/
 ```
 
 `app` 健康检查会同时探测 Next.js `3000`、Go `8080`、QuickJS `8090` 和图片处理
@@ -371,5 +321,5 @@ sudo ls -t /var/lib/fluxmedia/system-update/logs/
 不要把 `.env` 或完整容器环境输出到工单、Actions 日志或聊天记录。
 
 工作流文件是最终执行事实；修改触发条件、job、镜像名、Release 资产、Environment 配置、
-部署路径、更新器或恢复边界时，必须同步更新本文件、`docs/CI-CD.md` 和必要的
+部署路径或恢复边界时，必须同步更新本文件、`docs/CI-CD.md` 和必要的
 `deploy/README.md` 内容。

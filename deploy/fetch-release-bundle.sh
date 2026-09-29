@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # 从公开 GitHub Release 下载并校验 FluxMedia 部署包。
 #
-# 使用方：
-#   - system-update-runner.sh（目标服务器，站内系统更新）
-#   - .github/workflows/deploy-production.yml（Actions runner，手动部署）
+# 使用方：.github/workflows/deploy-production.yml（Actions runner，手动部署）。
 # 参数：<release_tag> <dest_dir>
 # 结果：dest_dir/bundle/ 为已校验的扁平部署包（含 release-manifest.env）；
 #       标准输出为 read-release-manifest.sh 的规范化 KEY=value 行。

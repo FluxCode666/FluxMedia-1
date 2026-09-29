@@ -37,34 +37,26 @@ pnpm --filter @repo/web build
   `publish-release` 用 `deploy/build-release-bundle.sh` 生成部署包并创建 GitHub
   Release（`-alpha`/`-beta`/`-rc` 为 prerelease），附带 `fluxmedia-release.env`
   （`RELEASE_TAG`、`GIT_SHA`、`APP_IMAGE`、`APP_DIGEST`、`BUNDLE_SHA256`）与
-  `fluxmedia-deploy.tar.gz`（Compose、Nginx 配置、部署脚本、更新器与 systemd 单元）。
+  `fluxmedia-deploy.tar.gz`（候选 Compose、Nginx 配置与部署脚本）。
   该流水线不接触生产服务器。
 - `.github/workflows/deploy-production.yml`（Deploy Production）：仅手动触发，输入已发布
-  的 `version`。它用 `deploy/fetch-release-bundle.sh` 下载并校验部署包，上传到
-  `${DEPLOY_PATH}/incoming/`，经 SSH 执行 `apply-release.sh`，校验安全证据后清理上传目录。
-  不构建镜像、不运行质量门；仅当 GHCR 包私有时才需要 `GHCR_PAT`。
+  的 `version`。它在 Actions runner 上用 `deploy/fetch-release-bundle.sh` 下载并校验
+  部署包，上传到 `${DEPLOY_PATH}/incoming/`，经 SSH 执行 `apply-release.sh`，校验安全
+  证据后清理上传目录。不构建镜像、不运行质量门；仅当 GHCR 包私有时才需要 `GHCR_PAT`。
 
-生产发布有两个入口，共用同一部署包与 `deploy/apply-release.sh` →
-`deploy/deploy-release.sh` 发布逻辑，并通过服务器 `release-state/deploy.lock` 互斥：
-
-1. 站内“系统更新”页（仅 `super_admin`）：应用匿名读取公开仓库的最新稳定 Release（无需
-   GitHub token），点击更新写入请求文件；宿主机 systemd 更新器
-   （`fluxmedia-system-update.path`/`.service`，执行 `system-update-runner.sh`）只接受严格
-   高于当前 `FLUXMEDIA_RELEASE_TAG` 的稳定版本，下载校验后发布，并把阶段、错误码与日志
-   尾部写入 `status/status.json` 供页面轮询。`app` 容器重启期间站点短暂不可用。
-2. Actions 手动运行 Deploy Production：可部署预发布版本，或回退到仍带部署包的旧版本。
-
-更新器由每次发布中的 `install-system-updater.sh` 幂等安装；宿主机需具备 systemd、
-`python3`、`flock`、`curl`。现有服务器首次启用时，先对新 Release 流水线发布的版本运行
-一次 Deploy Production。版本必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
+生产发布只有 Deploy Production 一个入口：`deploy/apply-release.sh` 持有服务器
+`release-state/deploy.lock` 防止并发部署，原子落地部署包后调用
+`deploy/deploy-release.sh`。
+它可部署预发布版本，也可回退到仍带部署包且镜像仍存在于 GHCR 的旧版本；宿主机需具备
+`flock` 与 `curl`。版本必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
 
 部署阶段从部署包原子同步候选 Compose、Nginx 配置与维护脚本，并更新
 `FLUXMEDIA_APP_IMAGE_REF` 为 manifest 中不可变的 `${image}@sha256:...` 引用、
-`FLUXMEDIA_RELEASE_TAG` 为本次版本。目标机的其余 `.env` 与业务机密不会由仓库覆盖。
+`FLUXMEDIA_RELEASE_TAG` 为本次版本（用于发布记录与回滚定位）。目标机的其余 `.env`
+与业务机密不会由仓库覆盖。
 生产 Compose 只启动一个 `app` 服务，在同一容器内监管 Next.js、Go backend、QuickJS 和
 图片处理四个进程；内部运行时分别使用 `127.0.0.1:8090` 和 `127.0.0.1:8091`。
-PostgreSQL、Redis 和 Nginx 仍在应用容器之外。`app` 只读挂载更新器 `status/`，可写挂载
-`requests/`，不持有任何部署权限。
+PostgreSQL、Redis 和 Nginx 仍在应用容器之外；`app` 不持有任何部署权限。
 
 本地源码开发仍可分别启动四个进程；原有四个专项 Dockerfile 继续用于开发和专项测试，
 但不再是生产发布单元。根目录自托管 Compose 也使用统一 `app` 镜像。
@@ -90,7 +82,7 @@ Compose 在停服前归档；这使首次发布能在不可逆迁移开始前从
 或先恢复迁移前备份再恢复旧镜像。
 
 停服前的 `release-state/deployment-attempt.env` 持久记录上一版 Compose、镜像元数据与
-Nginx 备份，覆盖 SSH、Actions runner、宿主机更新器或宿主机在部分停服时消失的场景。不可逆边界使用原子写入的
+Nginx 备份，覆盖 SSH、Actions runner 或宿主机在部分停服时消失的场景。不可逆边界使用原子写入的
 `release-state/migration-in-progress.env`；marker 存在时它优先于 `.env` 和 Compose 的
 中间状态，后续发布只执行幂等迁移、校验和前向启动。联合健康检查及公网 smoke 成功后
 才删除这两个文件。

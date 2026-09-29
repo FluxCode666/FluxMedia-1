@@ -9,9 +9,9 @@ PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主
 恰好执行一次，常驻 `app` 启动时跳过迁移。
 
 生产发布只消费 Release 流水线（`.github/workflows/release.yml`）发布到 GitHub Release 的
-部署包。发布入口有两个：站内超管“系统更新”页触发的宿主机 systemd 更新器，以及手动运行的
-`.github/workflows/deploy-production.yml`。二者执行同一个 `apply-release.sh`，并通过部署
-目录中的 `release-state/deploy.lock` 互斥。流水线细节见 [`.github/CICD.md`](../.github/CICD.md)。
+部署包。发布入口只有一个：手动运行 `.github/workflows/deploy-production.yml`，由它经 SSH
+执行部署包内的 `apply-release.sh`；部署目录中的 `release-state/deploy.lock` 防止并发部署。
+流水线细节见 [`.github/CICD.md`](../.github/CICD.md)。
 
 ## 文件
 
@@ -22,16 +22,13 @@ PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主
   `fluxmedia-release.env`；其文件清单是生产部署文件的唯一来源。
 - `read-release-manifest.sh`：严格解析 manifest（不 source），校验版本、提交、镜像 digest
   与部署包 SHA-256。
-- `fetch-release-bundle.sh`：匿名 HTTPS 下载公开 Release 部署包，校验 SHA-256，只接受扁平
-  普通文件。
-- `apply-release.sh`：持有 `release-state/deploy.lock`，原子落地部署包文件后执行
-  `deploy-release.sh`；Actions 与站内更新器共用。
+- `fetch-release-bundle.sh`：在 Actions runner 上匿名 HTTPS 下载公开 Release 部署包，校验
+  SHA-256，只接受扁平普通文件；不进入部署包。
+- `apply-release.sh`：由 Deploy Production 经 SSH 调用，持有 `release-state/deploy.lock`，
+  原子落地部署包文件后执行 `deploy-release.sh`。
 - `deploy-release.sh`：生产发布状态机（备份、门禁、迁移、Nginx、smoke 与安全证据）。
-- `install-system-updater.sh`：每次发布时幂等安装站内更新器目录与 systemd 单元。
-- `system-update-runner.sh`：宿主机 root 更新执行器，处理站内请求或运维手动指定的版本。
-- `systemd/fluxmedia-system-update.path`、`systemd/fluxmedia-system-update.service`：
-  更新器 systemd 单元模板。
-- `release-bundle.test.sh`：部署包、下载校验与更新器链路回归测试（需 Linux）。
+- `release-bundle.test.sh`：manifest 解析、部署包构建/下载/校验、路径穿越拒绝，以及
+  `apply-release.sh` 落地、部署锁与缺失文件拒绝的回归测试（需 Linux）。
 - `.env.example`：不含真实机密的服务器环境变量模板。
 - `nginx/nginx.conf`：参考 user-service 的宿主机 Nginx 主配置。
 - `nginx/conf.d/fluxmedia.conf`：两个生产域名的 HTTPS Web/API 分流配置。
@@ -43,7 +40,7 @@ PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主
 ## 首次配置服务器
 
 目标机需要 Docker Engine、Docker Compose 2.30 或更高版本（用于 `env_file.format: raw`）、Nginx、Certbot，
-以及站内更新器所需的 systemd、`python3`、`flock`、`curl`。发布脚本会在停止旧应用
+以及 `flock`（`apply-release.sh` 部署锁）与 `curl`（公网路由 smoke）。发布脚本会在停止旧应用
 前执行真实的 schema-only archive 探测，在停止旧应用后创建一致性备份。备份脚本优先使用
 宿主机上不低于数据库主版本的 PostgreSQL `pg_dump`/`pg_restore` 客户端；宿主机没有客户端时，
 通过 `DEPLOY_BACKUP_POSTGRES_CONTAINER` 指定的运行中 PostgreSQL 容器执行，例如共享容器
@@ -62,7 +59,7 @@ sudo editor /root/fluxmedia/.env
 至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`CRON_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
 `REDIS_PASSWORD`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。`FLUXMEDIA_APP_IMAGE_REF` 与
-`FLUXMEDIA_RELEASE_TAG` 由每次发布写入。备份、门禁、恢复脚本、候选 Compose 与 Nginx 配置
+`FLUXMEDIA_RELEASE_TAG` 由每次发布写入（用于发布记录与回滚定位）。备份、门禁、恢复脚本、候选 Compose 与 Nginx 配置
 由每次发布从部署包同步到部署目录，无需手工复制；手工执行下文命令前，可从仓库 `deploy/`
 取得同名脚本。数据库必须已创建；外部 Redis
 必须可从 `app` 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
@@ -171,7 +168,7 @@ docker compose exec --interactive=false \
   node /app/services/unified-runtime/ensure-operations-epoch.mjs
 ```
 
-自动部署必须关闭一次性 `app` 容器的 stdin。发布脚本运行在 SSH 会话或 systemd 中；若保留
+自动部署必须关闭一次性 `app` 容器的 stdin。发布脚本运行在 SSH 会话中；若保留
 Compose 默认的交互输入，迁移容器可能读取调用方输入，导致只完成迁移却未启动服务。
 
 自动部署先校验 `CRON_SECRET`，备份、安装并验证版本化 Nginx 配置，再以 digest 拉取
@@ -190,7 +187,7 @@ API 和健康入口 smoke，之后才记录发布成功。恢复迁移前数据�
 
 停服前，流水线会原子写入 `release-state/deployment-attempt.env`，记录上一版 Compose、镜像
 元数据和 Nginx 备份。若 SSH、runner 或宿主机在迁移边界前硬中断，下一次运行会先按该账本
-幂等恢复上一版，再继续发布（站内更新器被中断时同理）。资产迁移前会原子写入
+幂等恢复上一版，再继续发布。资产迁移前会原子写入
 `release-state/migration-in-progress.env`；该 marker 一旦存在就是权威状态，即使 `.env` 或
 Compose 恰好只完成一半提升，后续运行也只允许用新候选镜像前向续跑，不会启动旧 schema
 镜像。两个状态文件只有在联合健康检查和公网 smoke 全部通过后才一起删除。
@@ -241,7 +238,6 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 - `DEPLOY_PASSWORD`：SSH 登录密码，必须使用高强度随机密码并仅保存在 GitHub Secret 中。
 - `GHCR_PAT`（可选）：仅当 GHCR 包为私有时用于目标机 `docker login`，至少需要
   `read:packages`；PAT 创建者必须与 `GHCR_USERNAME` 一致。GHCR 包公开时留空即可匿名拉取。
-  站内更新器不使用该 Secret，私有包场景需目标机 root 已预先 `docker login ghcr.io`。
 
 启用 S3 模式时，生产备份身份不放在 GitHub Secrets。优先给目标机绑定只允许指定前缀的
 实例角色；否则在目标机配置专用 AWS profile，并把 profile 名写入
@@ -255,13 +251,12 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 
 目标机 SSH 服务必须允许密码认证；Workflow runner 会自动安装 `sshpass`。为与 FluxCode
 保持一致，流水线设置 `StrictHostKeyChecking=no` 和 `UserKnownHostsFile=/dev/null`，不校验
-服务器主机指纹。部署账号需要具备目标目录写权限、Docker 执行权限，以及写入
-`/etc/systemd/system` 与 `/var/lib/fluxmedia` 的权限（安装站内更新器），通常为 `root`。
+服务器主机指纹。部署账号需要具备目标目录写权限与 Docker 执行权限，通常为 `root`。
 
 如果部署账号不是 `root`，必须将 `DEPLOY_PATH` 改为该账号可写的绝对路径。
 
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/fluxmedia`。服务器
-上的真实 `.env` 由运维持久维护；每次发布从部署包同步候选 Compose、部署脚本、更新器和
+上的真实 `.env` 由运维持久维护；每次发布从部署包同步候选 Compose、部署脚本和
 版本化 Nginx 站点配置，并把 `.env` 中的 `FLUXMEDIA_APP_IMAGE_REF` 更新为 manifest 中的完整
 digest 引用，同时记录 `FLUXMEDIA_RELEASE_TAG`。部署命令停止旧应用并排空数据库连接后，通过候选统一镜像执行
 只读门禁、备份、恰好一次迁移和后置校验，再启动新 `app`。首次从旧四服务拓扑升级时，
@@ -273,81 +268,11 @@ Compose。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 主机必须支持 amd64；ARM 开发机上的根 Compose 会明确使用 amd64 模拟运行。
 
 推送合规版本 tag 只触发 Release 流水线构建镜像并创建带部署包的 GitHub Release，不会
-自动部署生产。生产发布由站内“系统更新”页或手动运行 Deploy Production 完成，版本号必须
+自动部署生产。生产发布只能通过手动运行 Deploy Production 完成，版本号必须
 符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`，且该版本必须由新 Release 流水线
 发布（旧流水线创建的 Release 没有部署包）。新容器的四个内部进程未全部通过联合健康检查时，
 发布保持维护状态并记录备份存储类型、artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或
 启动旧应用。
 
-## 站内系统更新器
-
-站内“系统更新”页（`/dashboard/admin/system-updates`）仅向 `super_admin` 开放。Nginx 对
-`/api/admin/system-updates` 使用精确匹配并转发到 Next.js，其余业务 API 仍进入 Go。仓库公开，
-应用匿名读取最新稳定 Release，不需要任何 GitHub token。
-
-工作方式：
-
-1. 超管点击更新后，`app` 把请求写入容器内 `/app/system-update/requests/update-request.json`。
-   Compose 把宿主机 `/var/lib/fluxmedia/system-update/requests` 可写挂载到该目录，把
-   `/var/lib/fluxmedia/system-update/status` 只读挂载到 `/app/system-update/status`。
-2. 宿主机 `fluxmedia-system-update.path` 检测到请求文件，启动 root oneshot
-   `fluxmedia-system-update.service`，执行部署目录中的 `system-update-runner.sh`。
-3. runner 把请求移入 root 私有目录后解析，只接受严格高于当前 `FLUXMEDIA_RELEASE_TAG` 的
-   稳定版本 `vX.Y.Z`；随后用 `fetch-release-bundle.sh` 下载并校验部署包，执行
-   `apply-release.sh`，并确认发布输出包含 `deployment_completed=true` 与匹配 manifest 的
-   `deployed_image_ref`。
-4. 执行过程中持续写入 `status/status.json`（`state`、`phase`、`error`、`logTail` 等），页面
-   轮询展示。`app` 容器重启期间站点短暂不可用，恢复后页面继续显示结果。
-
-失败时 `status.json` 的 `error` 为以下错误码之一：`invalid_request`、`invalid_version`、
-`current_version_unknown`（`.env` 缺少 `FLUXMEDIA_RELEASE_TAG`）、`version_not_newer`、
-`download_failed`、`deploy_failed`（含部署锁被 Actions 占用）、`deploy_evidence_missing`、
-`runner_interrupted`。
-
-目录布局（由 `install-system-updater.sh` 创建，每一级都拒绝符号链接）：
-
-| 路径 | 所有者与权限 | 用途 |
-|---|---|---|
-| `/var/lib/fluxmedia/system-update/status/` | root，`755` | `status.json`，只读挂载给 `app` |
-| `/var/lib/fluxmedia/system-update/requests/` | 镜像运行用户，`700` | `app` 唯一可写处，只放更新请求 |
-| `/var/lib/fluxmedia/system-update/processing/` | root，`700` | runner 取走请求后的私有副本 |
-| `/var/lib/fluxmedia/system-update/logs/` | root，`700` | 每次更新的完整日志，保留最近 20 份 |
-| `/var/lib/fluxmedia/system-update/work/` | root，`700` | 下载与解包的临时目录 |
-
-### 启用与引导
-
-更新器不需要单独配置：`deploy-release.sh` 在每次发布的停服前阶段调用
-`install-system-updater.sh`，幂等创建上述目录，渲染并安装
-`/etc/systemd/system/fluxmedia-system-update.{path,service}`，启用并启动 path 单元。
-
-新服务器或从旧流水线升级的现有服务器，首次启用时对一个由新 Release 流水线发布的版本手动
-运行一次 Deploy Production 即可；之后可直接在站内点击更新。无法使用 Actions 时，可在服务器上
-以 root 手工完成同一次引导发布（`vX.Y.Z` 替换为目标版本，`fetch-release-bundle.sh` 与
-`read-release-manifest.sh` 取自仓库 `deploy/` 并放在同一目录）：
-
-```bash
-bash ./fetch-release-bundle.sh vX.Y.Z /tmp/fluxmedia-release
-bash /tmp/fluxmedia-release/bundle/apply-release.sh \
-  --deploy-path /root/fluxmedia \
-  --bundle-dir /tmp/fluxmedia-release/bundle
-rm -rf /tmp/fluxmedia-release
-```
-
-更新器安装完成后，运维也可以不经站内页面，直接以 root 手动运行 runner（同样只接受高于
-当前版本的稳定版本，并写入同一状态文件与日志）：
-
-```bash
-bash /root/fluxmedia/system-update-runner.sh --deploy-path /root/fluxmedia --version vX.Y.Z
-```
-
-### 状态与日志
-
-```bash
-systemctl status fluxmedia-system-update.path
-journalctl -u fluxmedia-system-update.service --since today
-cat /var/lib/fluxmedia/system-update/status/status.json
-sudo ls -t /var/lib/fluxmedia/system-update/logs/
-```
-
-完整发布日志只保存在 root 私有的 `logs/` 目录；页面只展示 `status.json` 中截断后的日志尾部。
-排障时不要把完整日志或 `.env` 粘贴到工单或聊天记录。
+回滚时手动运行 Deploy Production，输入仍带部署包且镜像仍存在于 GHCR 的旧版本。若迁移已经
+开始，必须先按上文确认数据库备份恢复、资产回滚与 `legacy-startup` 门禁。

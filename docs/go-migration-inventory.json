@@ -25,14 +25,6 @@
       "source": "apps/web/src/app/api/admin/site-branding/logo/route.ts"
     },
     {
-      "path": "/api/admin/system-updates",
-      "methods": [
-        "GET",
-        "POST"
-      ],
-      "source": "apps/web/src/app/api/admin/system-updates/route.ts"
-    },
-    {
       "path": "/api/admin/videos/reconciliation",
       "methods": [
         "GET",

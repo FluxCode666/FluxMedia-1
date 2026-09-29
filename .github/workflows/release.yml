@@ -2,12 +2,11 @@
 #
 # 使用方式：推送符合 SemVer 的 Git tag（例如 v0.31.0）自动执行质量门、构建 GHCR
 # 统一镜像，并发布带部署包的 GitHub Release；也可在同名 tag 上手动重跑。
-# 本流水线不接触生产服务器。生产发布有两条入口，均消费这里产出的 Release 部署包：
-#   - 站内超管“系统更新”页面：宿主机 systemd 更新器从公开 Release 下载并发布；
-#   - Deploy Production 流水线：运维手动选择版本经 SSH 发布。
+# 本流水线不接触生产服务器。生产发布由 Deploy Production 流水线手动选择版本，
+# 下载这里产出的 Release 部署包后经 SSH 发布。
 # Release 资产：
 #   - fluxmedia-release.env：版本、提交、镜像 digest 与部署包 SHA-256；
-#   - fluxmedia-deploy.tar.gz：Compose、Nginx、部署脚本与站内更新器。
+#   - fluxmedia-deploy.tar.gz：Compose、Nginx 与部署脚本。
 name: Release
 
 on:
@@ -108,7 +107,7 @@ jobs:
       - name: Test deployment release recovery policy
         run: bash deploy/release-recovery-policy.test.sh
 
-      - name: Test release bundle and in-site system updater
+      - name: Test release bundle
         run: bash deploy/release-bundle.test.sh
 
       - name: Test backend entrypoint command forwarding
@@ -369,7 +368,7 @@ jobs:
             if [[ "${VERSION}" =~ -(alpha|beta|rc)\.[0-9]+$ ]]; then
               release_flags+=(--prerelease)
             fi
-            # gh 先建草稿、上传资产后再公开：站内更新器不会看到缺少部署包的 Release。
+            # gh 先建草稿、上传资产后再公开：Deploy Production 不会看到缺少部署包的 Release。
             gh release create "${VERSION}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "FluxMedia ${VERSION}" \
@@ -382,5 +381,5 @@ jobs:
             echo "- Release：[FluxMedia ${VERSION}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION})"
             echo "- 统一应用镜像：\`${APP_IMAGE}@${APP_DIGEST}\`"
             echo "- 提交：\`${GITHUB_SHA}\`"
-            echo "- 生产发布：站内超管系统更新页面，或手动运行 Deploy Production。"
+            echo "- 生产发布：手动运行 Deploy Production。"
           } >> "${GITHUB_STEP_SUMMARY}"

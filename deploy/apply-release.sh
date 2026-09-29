@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # 在目标服务器上落地一个已校验的 FluxMedia Release 部署包并执行生产发布。
 #
-# 使用方：
-#   - .github/workflows/deploy-production.yml：scp 部署包到 incoming 目录后经 SSH 调用
-#   - system-update-runner.sh：站内系统更新从 GitHub Release 下载部署包后调用
+# 使用方：.github/workflows/deploy-production.yml（scp 部署包到 incoming 目录后经 SSH 调用）。
 # 参数：--deploy-path DIR --bundle-dir DIR
 # 行为：
 #   1. 严格解析部署包内 release-manifest.env，得到镜像 digest、版本与提交。
-#   2. 持有 deploy_path/release-state/deploy.lock，保证 Actions 与站内更新互斥。
+#   2. 持有 deploy_path/release-state/deploy.lock，保证同一时间只有一个部署在执行。
 #   3. 逐个“临时文件 + rename”原子放置部署文件，避免覆盖正在执行的脚本。
 #   4. 调用本部署包自带的 deploy-release.sh；其标准输出即部署安全证据。
 # 失败模式：锁被占用、manifest 非法或文件缺失时在任何服务变更前退出。
@@ -25,11 +23,6 @@ readonly STAGED_FILES=(
   deploy-release.sh
   apply-release.sh
   read-release-manifest.sh
-  fetch-release-bundle.sh
-  system-update-runner.sh
-  install-system-updater.sh
-  fluxmedia-system-update.service
-  fluxmedia-system-update.path
 )
 
 fail() {

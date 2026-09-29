@@ -6,8 +6,8 @@
 # 产物（写入 DIR）：
 #   fluxmedia-deploy.tar.gz  扁平部署包，文件名即目标服务器 deploy_path 中的文件名
 #   fluxmedia-release.env    manifest：版本、提交、镜像 digest 与部署包 SHA-256
-# 部署包是生产部署文件的唯一清单：Actions 手动部署与站内更新器都只使用它，
-# 保证两条路径落地完全相同的脚本、Compose 与 Nginx 配置。
+# 部署包是生产部署文件的唯一清单：Deploy Production 只使用它落地脚本、Compose 与
+# Nginx 配置，保证发布内容与 Release 版本一一对应。
 
 set -euo pipefail
 
@@ -25,11 +25,6 @@ readonly BUNDLE_FILES=(
   "deploy-release.sh:deploy-release.sh"
   "apply-release.sh:apply-release.sh"
   "read-release-manifest.sh:read-release-manifest.sh"
-  "fetch-release-bundle.sh:fetch-release-bundle.sh"
-  "system-update-runner.sh:system-update-runner.sh"
-  "install-system-updater.sh:install-system-updater.sh"
-  "systemd/fluxmedia-system-update.service:fluxmedia-system-update.service"
-  "systemd/fluxmedia-system-update.path:fluxmedia-system-update.path"
 )
 
 fail() {

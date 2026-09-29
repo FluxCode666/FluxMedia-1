@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 生产部署使用的单行 dotenv 值读取器。
-# 使用方：deploy-release.sh 与 system-update-runner.sh（目标服务器）。
+# 使用方：deploy-release.sh（目标服务器）。
 # 只解析指定键，不 source/eval 配置内容或输出其他值。
 
 set -euo pipefail

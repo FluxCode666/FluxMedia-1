@@ -2,7 +2,7 @@
 # FluxMedia 生产发布执行器：在目标服务器上把一个已发布版本切换为线上运行版本。
 #
 # 使用方：
-#   - apply-release.sh（由 GitHub Actions Deploy Production 与站内系统更新器共同调用）。
+#   - apply-release.sh（由 GitHub Actions Deploy Production 调用）。
 # 参数：<app_image> <app_digest> <image_tag> <deploy_path> <git_sha>
 # 前置：deploy_path 中已由 apply-release.sh 原子放置同一 Release 部署包内的全部文件
 # （docker-compose.next.yml、备份/门禁/恢复脚本、Nginx 配置与路由 smoke）。
@@ -49,10 +49,6 @@ if [ ! -f release-recovery-policy.sh ]; then
 fi
 if [ ! -f fluxmedia.conf ] || [ ! -f smoke-production-routing.sh ]; then
   echo "目标服务器缺少 Nginx 配置或公网路由 smoke 脚本。" >&2
-  exit 1
-fi
-if [ ! -f install-system-updater.sh ]; then
-  echo "目标服务器缺少站内系统更新器安装脚本。" >&2
   exit 1
 fi
 
@@ -619,13 +615,6 @@ fi
 # production service is stopped.
 prepare_video_input_migration_state
 
-# 站内系统更新器的请求/状态目录是候选 Compose 的 bind mount 源，必须在任何
-# app 容器启动前以镜像运行用户准备好；此时仍处于可恢复的停服前阶段。
-bash ./install-system-updater.sh \
-  --deploy-path "${deploy_path}" \
-  --app-uid "${app_uid}" \
-  --app-gid "${app_gid}"
-
 echo "进入维护状态并停止旧应用服务。"
 if [ "${previous_layout}" = "legacy" ]; then
   previous_services=(web backend script-runtime media-processing)
@@ -689,7 +678,7 @@ release_credits_ledger_digest="$(
 )"
 
 echo "执行数据库迁移。"
-# 迁移容器不得继承调用方 stdin（SSH 会话或 systemd），否则可能吞掉后续
+# 迁移容器不得继承调用方 stdin（SSH 会话），否则可能吞掉后续
 # web 启动与健康检查命令，并让未完成的部署被误判为成功。
 if ! active_compose run --rm --no-deps --interactive=false \
   -e GO_BACKEND_SKIP_MIGRATION=false app /backend --migrate </dev/null; then

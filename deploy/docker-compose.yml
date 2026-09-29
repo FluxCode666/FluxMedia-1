@@ -50,10 +50,6 @@ services:
       - "${BIND_HOST:-127.0.0.1}:${GO_BACKEND_PORT:-3001}:8080"
     volumes:
       - /root/docker-data/fluxmedia:/app/storage
-      # 站内系统更新：app 只读宿主机更新器状态，只能向 requests 写入更新请求；
-      # 真正的发布由宿主机 systemd 更新器以 root 执行（见 install-system-updater.sh）。
-      - /var/lib/fluxmedia/system-update/status:/app/system-update/status:ro
-      - /var/lib/fluxmedia/system-update/requests:/app/system-update/requests
     healthcheck:
       test: ["CMD", "node", "/app/services/unified-runtime/healthcheck.mjs"]
       interval: 30s
