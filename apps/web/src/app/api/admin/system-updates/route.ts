@@ -3,14 +3,27 @@ import { getServerSession } from "@repo/shared/auth/server";
 import { NextResponse } from "next/server";
 import {
   canUpdateTo,
-  dispatchProductionDeployment,
   getCurrentReleaseVersion,
   getLatestGitHubRelease,
+  type LatestRelease,
 } from "@/features/system-updates/github-release";
+import {
+  isUpdateInProgress,
+  readHostUpdaterState,
+  requestHostUpdate,
+} from "@/features/system-updates/host-updater";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
+
+/**
+ * 站内系统更新（仅超级管理员）。
+ * GET：当前版本、最新稳定 Release 与宿主机更新器状态；Release 读取失败时仍返回
+ *      更新器状态，保证更新过程中页面可以持续展示进度。`?refresh=1` 跳过 Release 缓存。
+ * POST：校验目标版本后写入更新请求，由宿主机更新器异步执行，返回 202。
+ */
+export async function GET(request: Request) {
   const session = await getServerSession();
   if (!session?.user || session.user.banned) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -19,25 +32,28 @@ export async function GET() {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  try {
-    const release = await getLatestGitHubRelease();
-    const currentVersion = getCurrentReleaseVersion();
-    return NextResponse.json(
-      {
-        currentVersion,
-        currentVersionKnown: currentVersion !== "unknown",
-        latestRelease: release,
-        updateAvailable: canUpdateTo(currentVersion, release.version),
-        canDeploy: Boolean(process.env.FLUXMEDIA_GITHUB_ACTIONS_TOKEN?.trim()),
-      },
-      { headers: { "Cache-Control": "no-store, max-age=0" } }
-    );
-  } catch {
-    return NextResponse.json(
-      { error: "release_unavailable" },
-      { status: 502, headers: { "Cache-Control": "no-store, max-age=0" } }
-    );
-  }
+  const refresh = new URL(request.url).searchParams.has("refresh");
+  const [releaseResult, updater] = await Promise.all([
+    getLatestGitHubRelease({ refresh }).then(
+      (release): LatestRelease | null => release,
+      () => null
+    ),
+    readHostUpdaterState(),
+  ]);
+  const currentVersion = getCurrentReleaseVersion();
+  return NextResponse.json(
+    {
+      currentVersion,
+      currentVersionKnown: currentVersion !== "unknown",
+      latestRelease: releaseResult,
+      releaseError: releaseResult ? null : "release_unavailable",
+      updateAvailable: releaseResult
+        ? canUpdateTo(currentVersion, releaseResult.version)
+        : false,
+      updater: { ...updater, busy: isUpdateInProgress(updater) },
+    },
+    { headers: NO_STORE }
+  );
 }
 
 export async function POST(request: Request) {
@@ -68,32 +84,47 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
+  const updater = await readHostUpdaterState();
+  if (!updater.available) {
+    return NextResponse.json(
+      { error: "updater_not_installed" },
+      { status: 503 }
+    );
+  }
+  if (isUpdateInProgress(updater)) {
+    return NextResponse.json({ error: "update_in_progress" }, { status: 409 });
+  }
+
+  let release: LatestRelease;
   try {
-    const release = await getLatestGitHubRelease();
-    const currentVersion = getCurrentReleaseVersion();
-    if (
-      requestedVersion !== release.version ||
-      !canUpdateTo(currentVersion, release.version)
-    ) {
-      return NextResponse.json(
-        { error: "release_not_deployable" },
-        { status: 409 }
-      );
-    }
-    const deployment = await dispatchProductionDeployment(release.version);
-    return NextResponse.json({
-      dispatched: true,
+    // 发起更新前强制刷新，避免基于 5 分钟前的缓存判断。
+    release = await getLatestGitHubRelease({ refresh: true });
+  } catch {
+    return NextResponse.json({ error: "release_unavailable" }, { status: 502 });
+  }
+  const currentVersion = getCurrentReleaseVersion();
+  if (
+    requestedVersion !== release.version ||
+    !release.deployable ||
+    !canUpdateTo(currentVersion, release.version)
+  ) {
+    return NextResponse.json(
+      { error: "release_not_deployable" },
+      { status: 409 }
+    );
+  }
+
+  try {
+    const { requestId } = await requestHostUpdate({
       version: release.version,
-      ...deployment,
+      requestedBy: session.user.id,
     });
-  } catch (error) {
-    const message =
-      error instanceof Error &&
-      error.message.includes("token is not configured")
-        ? "dispatch_not_configured"
-        : "dispatch_failed";
-    const status = message === "dispatch_not_configured" ? 503 : 502;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { queued: true, version: release.version, requestId },
+      { status: 202 }
+    );
+  } catch {
+    return NextResponse.json({ error: "request_failed" }, { status: 500 });
   }
 }
 
