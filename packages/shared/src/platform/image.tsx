@@ -41,6 +41,7 @@ const FILL_STYLE: CSSProperties = {
 const Image = forwardRef<HTMLImageElement, ImageProps>(function Image(
   {
     src,
+    alt,
     width,
     height,
     fill,
@@ -60,6 +61,7 @@ const Image = forwardRef<HTMLImageElement, ImageProps>(function Image(
     <img
       ref={ref}
       src={resolved.src}
+      alt={alt}
       width={fill ? undefined : (width ?? resolved.width)}
       height={fill ? undefined : (height ?? resolved.height)}
       loading={priority ? "eager" : (loading ?? "lazy")}

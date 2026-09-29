@@ -63,3 +63,7 @@ export async function requestGoBackendJson<T>(
   const response = await requestGoBackendResponse(path, init);
   return (await response.json().catch(() => null)) as T;
 }
+
+/** 过渡期 Action 适配层尚未建模的 Go 响应体；调用方按需读取字段。 */
+// biome-ignore lint/suspicious/noExplicitAny: 旧 Action 返回值直接透传给页面，类型待逐个端点收窄。
+export type UntypedGoBackendJson = any;

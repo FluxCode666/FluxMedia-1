@@ -129,14 +129,18 @@ export function PaginationControls({
         <PaginationItem className="sm:hidden">
           <span
             aria-current="page"
-            aria-label={formatPaginationPageLabel(
-              currentPageLabelTemplate,
-              viewModel.page
-            )}
             className="flex h-9 min-w-20 items-center justify-center px-2 text-sm tabular-nums"
           >
-            {mobilePageLabel ??
-              `${viewModel.page} / ${viewModel.totalPages}`}
+            <span className="sr-only">
+              {formatPaginationPageLabel(
+                currentPageLabelTemplate,
+                viewModel.page
+              )}
+            </span>
+            <span aria-hidden="true">
+              {mobilePageLabel ??
+                `${viewModel.page} / ${viewModel.totalPages}`}
+            </span>
           </span>
         </PaginationItem>
 

@@ -208,7 +208,7 @@ export function runSupervisor(
           stdio: spec.stdio ?? "inherit",
           shell: false,
         });
-      } catch (error) {
+      } catch {
         logger.error?.(`failed to start ${spec.name}`);
         beginShutdown("SIGTERM", true);
         break;
