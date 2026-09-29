@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 发布门禁账本摘要的严格读取器。
-# 使用方：deploy-production.yml 的质量门与远程生产部署脚本。
+# 使用方：release.yml 的质量门与目标服务器上的 deploy-release.sh。
 # 只接受标准输入中唯一一个小写 SHA-256 evidence，拒绝缺失、非法或重复值。
 
 set -euo pipefail

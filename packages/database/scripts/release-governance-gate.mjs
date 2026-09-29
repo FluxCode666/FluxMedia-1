@@ -1,7 +1,7 @@
 /**
  * 生产迁移的只读 PostgreSQL 门禁。
  *
- * 使用方：deploy-production.yml 在停止旧 Web 后执行 drain/preflight，并在迁移后
+ * 使用方：deploy/deploy-release.sh 在停止旧 Web 后执行 drain/preflight，并在迁移后
  * 执行 postcheck。脚本只输出非敏感计数与状态，不输出连接串、行内容或凭据。
  */
 import { createHash } from "node:crypto";

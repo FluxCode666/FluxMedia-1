@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 生产部署失败后的纯恢复决策。
-# 使用方：deploy-production.yml 的 EXIT trap；不读取配置、不操作 Docker 或数据库。
+# 使用方：deploy-release.sh 的 EXIT trap；不读取配置、不操作 Docker 或数据库。
 # 关键依赖：调用方在任何写迁移前准确记录旧 Web 是否原本处于运行状态。
 
 set -euo pipefail

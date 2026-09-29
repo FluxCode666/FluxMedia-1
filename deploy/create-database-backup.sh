@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 生产数据库迁移前备份入口。
-# 使用方：deploy-production.yml 在目标服务器上执行 preflight/create。
+# 使用方：deploy-release.sh 在目标服务器上执行 preflight/create。
 # 完整 S3 配置使用版本化加密远端备份，未配置 S3 时回退到部署目录内的持久化本地备份。
 
 set -euo pipefail
