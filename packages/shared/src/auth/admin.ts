@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { redirect } from "../platform/navigation";
 
 import { canAccessAdminArea, normalizeUserRole } from "./roles";
 import { getServerSession } from "./server";

@@ -30,9 +30,9 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import Link from "@repo/shared/platform/link";
+import { notFound, redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
 import { loadPaginationConfig } from "@/features/pagination/server";

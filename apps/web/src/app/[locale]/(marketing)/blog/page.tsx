@@ -1,6 +1,6 @@
 import { siteConfig } from "@repo/shared/config";
 import { Separator } from "@repo/ui/components/separator";
-import type { Metadata } from "next";
+import type { Metadata } from "@repo/shared/platform/metadata";
 import { BreadcrumbJsonLd } from "@/components/seo/json-ld";
 import { loadBlogIndexPageData } from "@/features/content/content-index-page-data";
 import {

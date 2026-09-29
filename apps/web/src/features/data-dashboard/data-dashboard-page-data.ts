@@ -9,7 +9,7 @@ import type {
   DataDashboardOutput,
 } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 import type { Principal } from "@repo/shared/uol";
 
 /** 首屏与 action 共用的当前用户和未经二次解释的 strict 日期输入。 */

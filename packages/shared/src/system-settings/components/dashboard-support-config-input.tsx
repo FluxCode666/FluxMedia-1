@@ -4,7 +4,6 @@
  * SystemSettingsPanel 在编辑 DASHBOARD_SUPPORT_CONFIG 时使用本组件。组件只维护
  * 表单草稿并向父级回传 JSON，最终可信校验仍由 system-settings 写入边界负责。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";

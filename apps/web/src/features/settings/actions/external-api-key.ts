@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * API 密钥管理 Server Actions 薄传输适配器。
  *
@@ -10,7 +8,7 @@
  */
 import { protectedAction } from "@repo/shared/safe-action";
 import { z } from "zod";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 import type { ExternalApiKeyListItem, ExternalApiKeySummary } from "@/features/external-api/key-management-service";
 

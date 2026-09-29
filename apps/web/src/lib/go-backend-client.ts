@@ -4,12 +4,12 @@ export type GoApiError = {
   details?: unknown;
 };
 
-/** Same-origin JSON client for the Go backend. Next only rewrites /api/go. */
+/** Same-origin JSON client for Go endpoints that wrap successful payloads in `data`. */
 export async function requestGoJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
-  const response = await fetch(`/api/go${path}`, {
+  const response = await fetch(path, {
     ...init,
     headers,
     credentials: "same-origin",

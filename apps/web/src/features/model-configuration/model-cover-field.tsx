@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 模型配置编辑弹窗的封面选择与 3:2 本地预览字段。
  *
@@ -123,7 +121,6 @@ export function ModelCoverField({
       <div className="overflow-hidden rounded-lg border bg-muted/30">
         <div className="aspect-[3/2] w-full">
           {renderSource ? (
-            // biome-ignore lint/performance/noImgElement: blob 预览和运行时存储 URL 需要原生错误回退。
             <img
               src={renderSource}
               alt={`${category === "image" ? "图像" : "视频"}模型封面预览`}

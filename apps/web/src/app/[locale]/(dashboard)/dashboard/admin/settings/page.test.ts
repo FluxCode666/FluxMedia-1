@@ -31,8 +31,8 @@ vi.mock("@repo/shared/auth/server", () => ({
 vi.mock("@repo/shared/time-zone/server", () => ({
   getUserTimeZone: mocks.getUserTimeZone,
 }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("next-intl/server", () => ({ getLocale: mocks.getLocale }));
+vi.mock("@repo/shared/platform/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("@repo/shared/platform/intl", () => ({ getLocale: mocks.getLocale }));
 vi.mock("./admin-settings-tabs", () => ({
   AdminSettingsTabs: mocks.settingsTabs,
 }));

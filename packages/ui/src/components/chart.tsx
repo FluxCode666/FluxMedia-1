@@ -4,7 +4,6 @@
  * 使用方：需要主题色、响应式容器、统一浮窗和图例的业务图表。配置由调用方代码
  * 声明，不接收外部输入；颜色通过局部 CSS 变量注入并随明暗主题切换。
  */
-"use client";
 
 import * as React from "react";
 import type { TooltipValueType } from "recharts";

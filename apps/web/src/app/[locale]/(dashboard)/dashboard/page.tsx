@@ -12,8 +12,8 @@ import {
   type DashboardSupportConfig,
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
 } from "@repo/shared/support/dashboard-config";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { DashboardAccountSupport } from "@/features/dashboard/components/dashboard-account-support";
 import { DashboardAnalyticsPanel } from "@/features/dashboard/components/dashboard-analytics-panel";
 import { DashboardAnalyticsUnavailable } from "@/features/dashboard/components/dashboard-analytics-pending";

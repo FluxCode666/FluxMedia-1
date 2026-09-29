@@ -11,11 +11,13 @@ import { Footer, Header } from "@/features/marketing/components";
 /**
  * 渲染非首页营销页面的共享站点框架。
  *
+ * 声明为 async：路由运行时只展开异步布局返回的树，异步的 Footer 才能在渲染前就绪。
+ *
  * @param children - 当前营销子路由的服务端页面内容。
  * @returns 带营销 Header 与独立 Footer 的纵向布局。
  * @sideEffects 无。
  */
-export default function MarketingLayout({
+export default async function MarketingLayout({
   children,
 }: {
   children: React.ReactNode;

@@ -6,8 +6,8 @@
  */
 import { Button } from "@repo/ui/components/button";
 import { ArrowUpRight } from "lucide-react";
-import Image from "next/image";
-import { getTranslations } from "next-intl/server";
+import Image from "@repo/shared/platform/image";
+import { getTranslations } from "@repo/shared/platform/intl";
 
 import { Link } from "@/i18n/routing";
 

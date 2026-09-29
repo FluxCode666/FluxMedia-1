@@ -5,8 +5,6 @@
  * 当前页面的余额展示。对话、Agent、waterfall、PPT、PSD 与会话持久化不属于本页面。
  */
 
-"use client";
-
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import {
   Tabs,
@@ -14,7 +12,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@repo/ui/components/tabs";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "@repo/shared/platform/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 

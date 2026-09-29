@@ -1,13 +1,14 @@
 /**
  * 已登录控制台路由组的公共布局。
  *
- * 负责首屏会话、角色、侧栏与创作运行时；查询暂不可用时降级为空侧栏会话，让子页面
- * 显示可重试状态，而不是由布局抛出包含服务端堆栈的错误页。
+ * 负责登录守卫、首屏会话、角色、侧栏与创作运行时；未登录时跳转登录页并带回跳地址，
+ * 查询暂不可用时降级为空侧栏会话，让子页面显示可重试状态，而不是由布局抛出错误页。
  */
 // 直接从各模块导入(不经 barrel index.ts):barrel re-export 多个卡片组件,经它导入会把
 // 这些组件及其依赖一并拖进每页必载的公共 bundle(tree-shaking 被 barrel 破坏)。
 
 import { getServerSession } from "@repo/shared/auth/server";
+import { getLoadingPath, redirect } from "@repo/shared/platform/navigation";
 import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { logError } from "@repo/shared/logger";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
@@ -20,12 +21,10 @@ import { CreateRuntimeProvider } from "@/features/image-generation/create-runtim
 import { tryRecordDashboardWebVisit } from "@/features/operations-dashboard/dashboard-web-visit";
 import { DashboardWebVisitRecorder } from "@/features/operations-dashboard/web-visit-recorder";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 type InitialDashboardState = {
   session: CurrentSession;
   recordedAppDate: string | null;
+  signedOut: boolean;
 };
 
 /** 读取侧栏首屏会话并记录访问；统计故障不改变会话或阻断页面。 */
@@ -33,7 +32,7 @@ async function loadInitialDashboardState(): Promise<InitialDashboardState> {
   try {
     const serverSession = await getServerSession();
     if (!serverSession?.user?.id) {
-      return { session: null, recordedAppDate: null };
+      return { session: null, recordedAppDate: null, signedOut: true };
     }
     const role = normalizeUserRole((serverSession.user as { role?: string | null }).role);
     const visit = await tryRecordDashboardWebVisit(serverSession.user.id, role);
@@ -48,6 +47,7 @@ async function loadInitialDashboardState(): Promise<InitialDashboardState> {
         },
       },
       recordedAppDate: visit?.appDate ?? null,
+      signedOut: false,
     };
   } catch (error) {
     const reason = getDashboardLoadFailureReason(error);
@@ -66,17 +66,22 @@ async function loadInitialDashboardState(): Promise<InitialDashboardState> {
         category: isTimeout ? "database-timeout" : "auth-session-unavailable",
       }
     );
-    return { session: null, recordedAppDate: null };
+    return { session: null, recordedAppDate: null, signedOut: false };
   }
 }
 
 /** 渲染控制台公共侧栏与主内容容器。 */
 export default async function DashboardLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
+  params: Promise<{ locale: string }>;
 }) {
-  const initialState = await loadInitialDashboardState();
+  const [{ locale }, initialState] = await Promise.all([params, loadInitialDashboardState()]);
+  if (initialState.signedOut) {
+    redirect(`/${locale}/sign-in?callbackUrl=${encodeURIComponent(getLoadingPath())}`);
+  }
 
   return (
     <SidebarProvider>

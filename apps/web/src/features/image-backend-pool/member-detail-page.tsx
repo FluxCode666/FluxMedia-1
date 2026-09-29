@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 供应商账号详情页。
  *
@@ -11,7 +9,7 @@ import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contr
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { ArrowLeft } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 

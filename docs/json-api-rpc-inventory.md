@@ -1,5 +1,7 @@
 # Next.js RPC 与 JSON 接口清单
 
+> 2026-09-29：Web 已改为 Go 内嵌的 Vite SPA，`/api/go/*` 转发与 Server Action 传输均已不复存在；以下扫描结果仅作历史记录。
+
 本次扫描通过 TypeScript 导入关系识别浏览器端实际调用的 `next-safe-action`。仓库当前有 25 个 Server Action 文件、112 个导出；其中 79 个导出被客户端组件导入。服务端页面调用和 Better Auth 自带的 JSON 请求没有计入浏览器 RPC。
 
 ## 已转换为 Go JSON
@@ -22,4 +24,4 @@
 
 ## 本地配置
 
-开发环境把 `GO_BACKEND_URL=http://localhost:8080` 写入根环境，Next.js 与 Go 等进程仍可分别启动。生产 Compose 则由单个 `app` 容器监管 Next.js、Go、QuickJS 和图片处理四个进程，Web 进程通过 `http://127.0.0.1:8080` 访问 Go。前端请求始终使用 `/api/go/...`，因此浏览器不会直接连接 Redis 或 PostgreSQL。
+开发环境把 `GO_BACKEND_URL=http://localhost:8080` 写入根环境，Vite 页面服务把后端路径代理到 Go。生产 Compose 由单个 `app` 容器监管 Go、QuickJS 和图片处理三个进程，页面是 Go 内嵌的 SPA，与 API 同源，浏览器不会直接连接 Redis 或 PostgreSQL。

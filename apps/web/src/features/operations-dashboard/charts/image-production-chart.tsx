@@ -5,7 +5,6 @@
  * Area：每个可见桶从地板竖起一根发丝，顶边轮廓串联峰值；pre_epoch 留空，
  * 完整桶由键盘导航和等价表格提供。
  */
-"use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import {

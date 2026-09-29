@@ -4,10 +4,9 @@
  * 使用方：DataDashboardPanel、AdminDataDashboardPanel。四张 Recharts 图表形成独立客户端 chunk；等高骨架
  * 维持报告网格空间，Server Component 不直接引入图表和视频切换运行时。
  */
-"use client";
 
-import dynamic from "next/dynamic";
-import { useTranslations } from "next-intl";
+import dynamic from "@repo/shared/platform/dynamic";
+import { useTranslations } from "use-intl";
 import type { ComponentProps } from "react";
 
 import type { DataDashboardCharts } from "./data-dashboard-charts";

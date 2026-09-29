@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 统一媒体后端号池 Server Actions。
  *
@@ -36,9 +34,9 @@ import {
   imageSizeConfigInputSchema,
   type ImageSizeConfigInput,
 } from "@repo/shared/image-backend/image-size-config";
-import { revalidatePath } from "next/cache";
+import { revalidatePath } from "@repo/shared/platform/cache";
 import { z } from "zod";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 import type { BackendMemberAdminSummary } from "./member-service";
 import { backendMemberExportDocumentSchema } from "./member-transfer";
 

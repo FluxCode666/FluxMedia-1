@@ -1,9 +1,10 @@
 /** Runtime settings come from the Go service; this module only adapts shared frontend contracts. */
-import { requestGoBackendJson, requestGoBackendInternalJson } from '../http/go-backend';
+import { requestGoBackendJson } from '../http/go-backend';
+import { requestGoBackendInternalJson } from '../http/go-backend-internal';
 import { parseModelMarketplaceConfig } from '../model-marketplace';
 import type { VideoBillingModelPricingDescriptor } from '../video-generation/video-pricing';
 import { GENERATIONS_BUCKET_SETTING_KEY, SYSTEM_ASSETS_BUCKET_SETTING_KEY, parseRuntimeStorageBucketConfig } from '../storage/bucket-config';
-import { type SettingKey, type SettingDefinition } from './definitions';
+import type { SettingKey, SettingDefinition } from './definitions';
 import { resolveSiteLogoUrl, type SiteBranding } from './site-branding';
 import { normalizeVideoModelBillingSettings, type VideoModelBillingSettings } from './video-billing-settings';
 export {

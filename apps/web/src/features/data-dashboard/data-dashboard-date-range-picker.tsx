@@ -4,7 +4,6 @@
  * 使用方：两个数据看板 Panel。触发器只展示已应用范围，弹层维护由父组件持久化的草稿；
  * 选择日期或快捷范围不查询，只有点击应用才提交最多 30 天的完整范围。
  */
-"use client";
 
 import {
   DATA_DASHBOARD_MAX_DAYS,
@@ -24,7 +23,7 @@ import {
 import { cn } from "@repo/ui/utils";
 import { differenceInCalendarDays, format } from "date-fns";
 import { CalendarRange, Check } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useMemo, useState } from "react";
 
 import {

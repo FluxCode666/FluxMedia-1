@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 模型配置管理读取的 Server Action 薄适配器。
  *
@@ -12,7 +10,7 @@ import {
   modelConfigurationListInputSchema,
 } from "@repo/shared/model-marketplace";
 import { imageBackendPoolViewerAction } from "@repo/shared/safe-action";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /**
  * 读取当前管理员可见的规范化模型配置快照。

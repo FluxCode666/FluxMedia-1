@@ -1,6 +1,4 @@
-"use client";
-
-import dynamic from "next/dynamic";
+import dynamic from "@repo/shared/platform/dynamic";
 import { useState } from "react";
 import { ImageCard } from "@/features/image-generation/components/image-card";
 import type { LightboxGeneration } from "@/features/image-generation/components/image-lightbox";

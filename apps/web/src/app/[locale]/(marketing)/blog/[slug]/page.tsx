@@ -2,8 +2,8 @@
 // 否则它会污染首页等所有营销页、压垮 Header 响应式导航)。
 import "fumadocs-ui/style.css";
 import { siteConfig } from "@repo/shared/config";
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { notFound } from "@repo/shared/platform/navigation";
 import { ArticleJsonLd, BreadcrumbJsonLd } from "@/components/seo/json-ld";
 import { Link } from "@/i18n/routing";
 import { getAllBlogSlugs, getBlogPost } from "@/lib/source";

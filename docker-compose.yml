@@ -57,11 +57,8 @@ services:
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
         NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-FluxMedia}
         NEXT_PUBLIC_PAYMENT_PROVIDER: ${NEXT_PUBLIC_PAYMENT_PROVIDER:-none}
-        NEXT_PUBLIC_ASSET_PREFIX: ${NEXT_PUBLIC_ASSET_PREFIX:-}
         NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
-        BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-        GO_BACKEND_URL: http://127.0.0.1:8080
     restart: unless-stopped
     init: true
     # Keep local credentials byte-for-byte intact; passwords may contain `$`.
@@ -102,11 +99,13 @@ services:
       LOCAL_STORAGE_PATH: /app/storage
       APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}
       TZ: UTC
+    # Go backend 在同一端口提供内嵌的 Web 页面与 API。
     ports:
-      - "${WEB_PORT:-3000}:3000"
-      - "${GO_BACKEND_PORT:-3001}:8080"
+      - "${WEB_PORT:-3000}:8080"
     volumes:
       - app-storage:/app/storage
+      # 站内更新的版本目录、state.json 与更新前数据库备份。
+      - app-releases:/app/releases
     depends_on:
       postgres:
         condition: service_healthy
@@ -151,3 +150,4 @@ volumes:
   postgres-data:
   redis-data:
   app-storage:
+  app-releases:

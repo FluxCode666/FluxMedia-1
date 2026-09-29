@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 全局状态页的 server actions。
  *
@@ -9,7 +7,7 @@
  */
 
 import { adminAction } from "@repo/shared/safe-action";
-import { updateTag } from "next/cache";
+import { updateTag } from "@repo/shared/platform/cache";
 
 import { GLOBAL_STATUS_CACHE_TAG } from "./cache-tag";
 

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 全局状态手动刷新按钮。
  *
@@ -10,7 +8,7 @@
 
 import { Button } from "@repo/ui/components/button";
 import { RefreshCw } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { toast } from "sonner";
 
 import { useRouter } from "@/i18n/routing";

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 首页 SLA 可见性的最小管理员 client island。
  *
@@ -8,8 +6,8 @@
  */
 import { Button } from "@repo/ui/components/button";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
+import { useTranslations } from "use-intl";
+import { useAction } from "@repo/shared/platform/use-action";
 import { toast } from "sonner";
 
 import { updateMarketingSlaStatusVisibilityAction } from "@/features/marketing/actions/sla-status";

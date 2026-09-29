@@ -7,7 +7,7 @@ import {
   defaultModelFiles,
 } from "./healthcheck.mjs";
 
-test("checks all four internal services and all media models", async () => {
+test("checks every internal service and all media models", async () => {
   const requests = [];
   const accessedFiles = [];
   await checkUnifiedHealth({

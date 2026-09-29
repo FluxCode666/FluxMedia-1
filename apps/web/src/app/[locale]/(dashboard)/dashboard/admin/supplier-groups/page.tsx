@@ -6,8 +6,8 @@
  */
 import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 
 import { BackendGroupAdminPanel } from "@/features/image-backend-pool/backend-group-admin-panel";
 import { loadPaginationConfig } from "@/features/pagination/server";

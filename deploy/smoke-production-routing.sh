@@ -21,7 +21,8 @@ for base_url in "$@"; do
   headers_path="${tmp_dir}/${host}.headers"
   page_path="${tmp_dir}/${host}.html"
   api_path="${tmp_dir}/${host}.api.json"
-  compat_api_path="${tmp_dir}/${host}.compat-api.json"
+  asset_headers_path="${tmp_dir}/${host}.asset.headers"
+  private_api_path="${tmp_dir}/${host}.private-api.json"
 
   page_status="$(
     curl --silent --show-error --location --max-time 30 --retry 3 \
@@ -41,17 +42,31 @@ for base_url in "$@"; do
     exit 1
   fi
 
+  # The embedded Vite build references hashed assets under /static/.
   asset_path="$(
-    grep -Eo '/_next/static/[^"[:space:]<>]+\.(js|css)' "${page_path}" \
+    grep -Eo '/static/[^"[:space:]<>]+\.(js|css)' "${page_path}" \
       | head -n 1 || true
   )"
   if [ -z "${asset_path}" ]; then
-    printf '%s homepage did not reference a Next.js static asset\n' \
+    printf '%s homepage did not reference a web build asset\n' \
       "${origin}" >&2
     exit 1
   fi
-  curl --fail --silent --show-error --max-time 30 --retry 3 \
-    --output /dev/null "${origin}${asset_path}"
+  asset_status="$(
+    curl --silent --show-error --max-time 30 --retry 3 \
+      --dump-header "${asset_headers_path}" --output /dev/null \
+      --write-out '%{http_code}' "${origin}${asset_path}"
+  )"
+  if [ "${asset_status}" != "200" ]; then
+    printf '%s web asset %s returned HTTP %s\n' \
+      "${origin}" "${asset_path}" "${asset_status}" >&2
+    exit 1
+  fi
+  if grep -Eiq '^content-type:[[:space:]]*text/html' "${asset_headers_path}"; then
+    printf '%s web asset %s was answered with HTML\n' \
+      "${origin}" "${asset_path}" >&2
+    exit 1
+  fi
 
   api_status="$(
     curl --silent --show-error --max-time 30 --retry 3 \
@@ -67,21 +82,16 @@ for base_url in "$@"; do
     exit 1
   fi
 
-  # The browser JSON client uses this prefix so Next.js can proxy to Go in
-  # local development. Production Nginx must strip it before proxying to Go.
-  compat_api_status="$(
+  # A private API must reject anonymous callers instead of falling through to
+  # the web application shell.
+  private_api_status="$(
     curl --silent --show-error --max-time 30 --retry 3 \
-      --output "${compat_api_path}" --write-out '%{http_code}' \
-      "${origin}/api/go/api/user/credits"
+      --output "${private_api_path}" --write-out '%{http_code}' \
+      "${origin}/api/user/credits"
   )"
-  if [ "${compat_api_status}" != "401" ]; then
-    printf '%s compatibility API smoke returned HTTP %s\n' \
-      "${origin}" "${compat_api_status}" >&2
-    exit 1
-  fi
-  if grep -Fq 'route_not_migrated' "${compat_api_path}"; then
-    printf '%s compatibility API reached the Go fallback route\n' \
-      "${origin}" >&2
+  if [ "${private_api_status}" != "401" ]; then
+    printf '%s private API smoke returned HTTP %s\n' \
+      "${origin}" "${private_api_status}" >&2
     exit 1
   fi
 

@@ -4,7 +4,6 @@
  * 使用方是 `/models` Server Component；生产路径读取 Better Auth 会话，为登录用户构造
  * 真实 Principal，匿名访问继续使用 system Principal。失败统一收窄为 unavailable。
  */
-import "server-only";
 
 import {
   type ModelMarketplacePublicItem,
@@ -12,7 +11,7 @@ import {
 } from "@repo/shared/model-marketplace";
 import { z } from "zod";
 
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 模型广场页面显式区分成功空目录与依赖不可用。 */
 export type ModelMarketplacePageData =

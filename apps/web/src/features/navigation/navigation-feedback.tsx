@@ -4,11 +4,10 @@
  * 使用方：locale 根布局。组件在内部链接点击或浏览器前进/后退时监听导航意图，优先让
  * App Router 的 loading.tsx 展示页面骨架；只有等待超过阈值时才显示顶部进度兜底。
  */
-"use client";
 
 import { Progress } from "@repo/ui/components/progress";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { usePathname, useSearchParams } from "@repo/shared/platform/navigation";
+import { useTranslations } from "use-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NAVIGATION_FEEDBACK_START_EVENT } from "./navigation-feedback-event";
 import { decideNavigationFeedback } from "./navigation-feedback-policy";

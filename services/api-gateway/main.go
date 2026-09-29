@@ -63,6 +63,7 @@ type config struct {
 	cronSecret              string
 	internalPrincipalSecret string
 	storagePath             string
+	webDistDir              string
 }
 
 type backend struct {
@@ -77,6 +78,8 @@ type backend struct {
 	logger           *slog.Logger
 	mediaWorker      *mediaWorker
 	maintenance      *maintenanceScheduler
+	updates          *systemUpdater
+	web              *webApp
 }
 
 func main() {
@@ -135,6 +138,32 @@ func main() {
 		server.close()
 		os.Exit(1)
 	}
+	// The first super admin used to be created by the Next.js startup hook; Go now
+	// owns startup, and a fresh self-use deployment closes public sign-up.
+	adminCtx, adminCancel := context.WithTimeout(ctx, time.Minute)
+	if _, reason, adminErr := server.ensureSelfUseSuperAdmin(adminCtx); adminErr != nil {
+		server.logger.Error("self-use super admin bootstrap failed", "error", adminErr)
+	} else if reason == "credentials_not_configured" {
+		server.logger.Warn("self-use mode has no super admin; set FLUXMEDIA_SUPER_ADMIN_EMAIL and FLUXMEDIA_SUPER_ADMIN_PASSWORD")
+	}
+	adminCancel()
+	// Deployments used to run a separate gate for this; doing it at startup also
+	// covers self-hosted Compose and releases switched by the in-site updater.
+	epochCtx, epochCancel := context.WithTimeout(ctx, time.Minute)
+	if _, _, _, epochErr := server.ensureOperationsEpoch(epochCtx, "backend-startup"); epochErr != nil {
+		server.logger.Warn("operations analytics epoch is not initialized", "error", epochErr)
+	}
+	epochCancel()
+	web, webErr := server.loadWebApp()
+	if webErr != nil {
+		server.logger.Error("web application build unavailable; backend will not start", "error", webErr)
+		server.close()
+		os.Exit(1)
+	}
+	server.web = web
+	if web == nil {
+		server.logger.Warn("web application is not embedded; only backend routes are served")
+	}
 	server.mediaWorker = server.startMediaWorker(ctx)
 	server.maintenance = server.startMaintenanceScheduler(ctx)
 
@@ -190,7 +219,13 @@ func newBackend(ctx context.Context, cfg config, logger *slog.Logger) (*backend,
 		db.Close()
 		return nil, fmt.Errorf("ping redis: %w", err)
 	}
-	return &backend{config: cfg, db: db, redis: client, logger: logger}, nil
+	return &backend{
+		config:  cfg,
+		db:      db,
+		redis:   client,
+		logger:  logger,
+		updates: newSystemUpdater(os.Getenv, cfg.databaseURL, logger),
+	}, nil
 }
 
 func (b *backend) close() {
@@ -315,6 +350,7 @@ func loadConfig(getenv func(string) (string, bool)) (config, error) {
 		cronSecret:              getString(getenv, "CRON_SECRET", ""),
 		internalPrincipalSecret: getString(getenv, "GO_INTERNAL_PRINCIPAL_SECRET", ""),
 		storagePath:             getString(getenv, "LOCAL_STORAGE_PATH", "/app/storage"),
+		webDistDir:              getString(getenv, "FLUXMEDIA_WEB_DIST", ""),
 	}, nil
 }
 
@@ -337,10 +373,9 @@ func (b *backend) handler() http.Handler {
 	return stripGoCompatibilityPrefix(core)
 }
 
-// The browser client keeps /api/go as a same-origin compatibility prefix.
-// Nginx normally removes it before reaching Go, but a standalone Next rewrite
-// or an older reverse-proxy rule may forward the prefix unchanged. Normalize it
-// at the backend boundary so that both paths reach the exact same handlers.
+// Older browser clients called the backend through a same-origin /api/go
+// compatibility prefix. Normalize it at the backend boundary so cached pages
+// from a previous release still reach the exact same handlers.
 func stripGoCompatibilityPrefix(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -354,7 +389,9 @@ func stripGoCompatibilityPrefix(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		clone := r.Clone(r.Context())
+		// Mark the request so a stripped path never falls through to the web
+		// application: the prefix is reserved for backend JSON routes.
+		clone := r.Clone(context.WithValue(r.Context(), goCompatibilityPrefixKey{}, true))
 		clone.URL.Path = stripped
 		if clone.URL.RawPath != "" {
 			if clone.URL.RawPath == "/api/go" {
@@ -392,13 +429,14 @@ func (b *backend) router() *http.ServeMux {
 	b.registerAdminAgentTokenRoutes(mux)
 	b.registerAdminAgentRoutes(mux)
 	b.registerContentRoutes(mux)
+	b.registerSystemUpdateRoutes(mux)
 	mux.HandleFunc("GET /healthz", b.handleHealth)
 	mux.HandleFunc("GET /readyz", b.handleReady)
 	// Keep the conventional short probes as aliases for deployments whose
 	// ingress still checks /health or /ready.
 	mux.HandleFunc("GET /health", b.handleHealth)
 	mux.HandleFunc("GET /ready", b.handleReady)
-	mux.HandleFunc("/", b.handleNotMigrated)
+	mux.HandleFunc("/", b.handleFallback)
 	return mux
 }
 
@@ -427,8 +465,8 @@ func (b *backend) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *backend) handleNotMigrated(w http.ResponseWriter, r *http.Request) {
-	// Returning an explicit response prevents an accidental fallback to Next.js.
-	// Each route is implemented in Go before it is registered here.
+	// Unknown backend routes answer with explicit JSON instead of the web
+	// application shell. Each route is implemented in Go before it is registered.
 	writeJSONError(w, http.StatusNotImplemented, "route_not_migrated", "This backend route has not been implemented in Go yet.")
 	b.logger.WarnContext(r.Context(), "unimplemented backend route", "method", r.Method, "path", safeLogPath(r.URL.Path), "request_id", requestID(r))
 }

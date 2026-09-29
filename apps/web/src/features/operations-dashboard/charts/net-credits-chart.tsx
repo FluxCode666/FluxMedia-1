@@ -5,7 +5,6 @@
  * 因为净积分允许正负且长跨度时密度高；F2/F3 的连续轮廓会弱化零线两侧的
  * 方向语义，而运营 dashboard 需要三秒快读，所以以逐桶正负波形诚实编码。
  */
-"use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import {

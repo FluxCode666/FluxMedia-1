@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 统一媒体后端分组管理面板。
  *
@@ -13,8 +11,8 @@ import { buildPaginationHref } from "@repo/shared/pagination/url-adapter";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import { useAction } from "next-safe-action/hooks";
+import { useSearchParams } from "@repo/shared/platform/navigation";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 

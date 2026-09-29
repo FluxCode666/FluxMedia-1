@@ -1,160 +1,82 @@
 /**
  * 日志模块
  *
- * 使用 Pino 实现结构化日志
- * 支持 Axiom 云日志服务（可选）
- * 未配置时回退到 console 输出
- *
- * 环境变量:
- * - AXIOM_TOKEN: Axiom API Token（可选）
- * - AXIOM_DATASET: Axiom 数据集名称（可选，默认 "gpt2image"）
- * - APP_TIME_ZONE: 运维可读时间戳的 IANA 展示时区（可选，默认 UTC）
+ * 前端日志统一走浏览器 console，保留原结构化调用方式（对象 + 消息）。
+ * 服务端日志由 Go backend 与各 Node runtime 自行输出，不再经过这里。
  */
 
-import pino from "pino";
+type LogLevel = "debug" | "info" | "warn" | "error";
+type LogFn = {
+  (message: string): void;
+  (data: Record<string, unknown> | undefined, message?: string): void;
+};
 
-import { createPinoTimestamp } from "./timestamp";
+export type Logger = {
+  debug: LogFn;
+  info: LogFn;
+  warn: LogFn;
+  error: LogFn;
+  child: (context: Record<string, unknown>) => Logger;
+};
 
-// ============================================
-// 配置检查
-// ============================================
+const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
-/**
- * 检查是否为生产环境
- */
-function isProduction(): boolean {
-  return process.env.NODE_ENV === "production";
+/** 生产环境只输出 warn 及以上，避免在用户控制台刷屏。 */
+const minimumLevel: LogLevel = process.env.NODE_ENV === "production" ? "warn" : "debug";
+
+const REDACTED_KEYS = new Set(["password", "token", "apikey", "secret", "authorization", "cookie", "sign"]);
+
+/** 纵深防御：即便误传敏感字段，也在日志层做脱敏。 */
+function redact(value: unknown, depth = 0): unknown {
+  if (!value || typeof value !== "object" || depth > 3) return value;
+  if (value instanceof Error) return value;
+  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      REDACTED_KEYS.has(key.toLowerCase()) ? "[REDACTED]" : redact(item, depth + 1),
+    ])
+  );
 }
 
-// ============================================
-// Logger 创建
-// ============================================
-
-/**
- * 创建 Logger 实例
- *
- * 日志级别:
- * - production: info 及以上
- * - development: debug 及以上
- *
- * 输出目标:
- * - 配置了 Axiom: 发送到 Axiom + console
- * - 未配置 Axiom: 仅 console（开发环境美化输出）
- */
-function createLogger(): pino.Logger {
-  const level = isProduction() ? "info" : "debug";
-
-  // 基础配置
-  const baseOptions: pino.LoggerOptions = {
-    level,
-    base: {
-      env: process.env.NODE_ENV,
-      service: "gpt2image",
-    },
-    timestamp: createPinoTimestamp(process.env.APP_TIME_ZONE),
-    // 纵深防御：即便未来误传敏感字段，也在日志层做脱敏。
-    redact: {
-      paths: [
-        "password",
-        "*.password",
-        "token",
-        "*.token",
-        "apiKey",
-        "*.apiKey",
-        "secret",
-        "*.secret",
-        "authorization",
-        "*.authorization",
-        "creem-signature",
-        "*.creem-signature",
-        "*.sign",
-        "req.headers.authorization",
-        "req.headers.cookie",
-        "headers.authorization",
-        "headers.cookie",
-      ],
-      censor: "[REDACTED]",
-    },
+function createLogger(context: Record<string, unknown>): Logger {
+  const write =
+    (level: LogLevel): LogFn =>
+    (first: string | Record<string, unknown> | undefined, message?: string) => {
+      if (LEVEL_ORDER[level] < LEVEL_ORDER[minimumLevel]) return;
+      const data = typeof first === "string" ? undefined : first;
+      const text = typeof first === "string" ? first : (message ?? "");
+      const payload = redact({ ...context, ...data });
+      const hasPayload = Object.keys(payload as Record<string, unknown>).length > 0;
+      if (hasPayload) console[level](text, payload);
+      else console[level](text);
+    };
+  return {
+    debug: write("debug"),
+    info: write("info"),
+    warn: write("warn"),
+    error: write("error"),
+    child: (childContext) => createLogger({ ...context, ...childContext }),
   };
-
-  // 开发环境：美化输出
-  if (!isProduction()) {
-    try {
-      return pino({
-        ...baseOptions,
-        transport: {
-          target: "pino-pretty",
-          options: {
-            colorize: true,
-            translateTime: "SYS:standard",
-            ignore: "pid,hostname",
-          },
-        },
-      });
-    } catch {
-      // pino-pretty 不可用时降级
-      return pino(baseOptions);
-    }
-  }
-
-  // 生产环境：结构化 JSON 输出到 stdout
-  // 注: pino transport（@axiomhq/pino）在 Turbopack 打包后无法工作
-  // 因为 transport 使用 worker_threads 按字符串路径动态加载模块
-  // 生产环境日志收集建议通过外部采集（如 Axiom 的 Vercel Integration 或 log drain）
-  return pino(baseOptions);
 }
-
-// ============================================
-// Logger 实例（单例）
-// ============================================
 
 /**
  * 全局 Logger 实例
  */
-export const logger = createLogger();
-
-// ============================================
-// 便捷方法
-// ============================================
+export const logger = createLogger({});
 
 /**
  * 创建带上下文的子 Logger
  *
  * @example
  * ```ts
- * const log = createContextLogger({ userId: "123", requestId: "abc" });
+ * const log = createContextLogger({ userId: "123" });
  * log.info("User action");
  * ```
  */
-export function createContextLogger(
-  context: Record<string, unknown>
-): pino.Logger {
+export function createContextLogger(context: Record<string, unknown>): Logger {
   return logger.child(context);
 }
-
-/**
- * 创建请求级别的 Logger
- *
- * @example
- * ```ts
- * const log = createRequestLogger(request);
- * log.info("Processing request");
- * ```
- */
-export function createRequestLogger(request: Request): pino.Logger {
-  const url = new URL(request.url);
-
-  return logger.child({
-    requestId: crypto.randomUUID(),
-    method: request.method,
-    path: url.pathname,
-    userAgent: request.headers.get("user-agent")?.slice(0, 100),
-  });
-}
-
-// ============================================
-// 类型化日志辅助
-// ============================================
 
 /**
  * 业务事件类型
@@ -181,17 +103,8 @@ export type BusinessEvent =
 
 /**
  * 记录业务事件
- *
- * @example
- * ```ts
- * logEvent("user.signup", { userId: "123", provider: "github" });
- * logEvent("payment.checkout.completed", { userId: "123", amount: 9.99 });
- * ```
  */
-export function logEvent(
-  event: BusinessEvent,
-  data?: Record<string, unknown>
-): void {
+export function logEvent(event: BusinessEvent, data?: Record<string, unknown>): void {
   logger.info({ event, ...data }, `Event: ${event}`);
 }
 
@@ -207,22 +120,9 @@ export function logEvent(
  * }
  * ```
  */
-export function logError(
-  error: unknown,
-  context?: Record<string, unknown>
-): void {
+export function logError(error: unknown, context?: Record<string, unknown>): void {
   if (error instanceof Error) {
-    logger.error(
-      {
-        err: {
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-        },
-        ...context,
-      },
-      error.message
-    );
+    logger.error({ err: error, ...context }, error.message);
   } else {
     logger.error({ err: error, ...context }, "Unknown error");
   }
@@ -238,42 +138,6 @@ export function logWarn(message: string, data?: Record<string, unknown>): void {
 /**
  * 记录调试信息（仅开发环境）
  */
-export function logDebug(
-  message: string,
-  data?: Record<string, unknown>
-): void {
+export function logDebug(message: string, data?: Record<string, unknown>): void {
   logger.debug(data, message);
 }
-
-// ============================================
-// API 响应日志
-// ============================================
-
-/**
- * 记录 API 响应
- */
-export function logApiResponse(
-  request: Request,
-  response: Response,
-  duration: number
-): void {
-  const url = new URL(request.url);
-  const level =
-    response.status >= 500 ? "error" : response.status >= 400 ? "warn" : "info";
-
-  logger[level](
-    {
-      method: request.method,
-      path: url.pathname,
-      status: response.status,
-      duration,
-    },
-    `${request.method} ${url.pathname} ${response.status} ${duration}ms`
-  );
-}
-
-// ============================================
-// 导出类型
-// ============================================
-
-export type { Logger } from "pino";

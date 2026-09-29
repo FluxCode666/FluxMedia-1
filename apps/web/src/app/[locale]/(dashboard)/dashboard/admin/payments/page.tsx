@@ -16,8 +16,8 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { CalendarDays, CircleDollarSign, ReceiptText } from "lucide-react";
-import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 
 import { getAdminPaymentOverviewAction } from "@/features/payment/admin/actions";
 import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-format";

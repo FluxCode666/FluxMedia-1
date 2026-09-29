@@ -4,7 +4,6 @@
  * 使用方：DataDashboardCharts。柱高对应单日净积分，让普通用户直接比较各日用量，
  * 不把积分表现为累计余额或管理端密度图。
  */
-"use client";
 
 import type { DataDashboardBucket } from "@repo/shared/analytics/contracts";
 import {

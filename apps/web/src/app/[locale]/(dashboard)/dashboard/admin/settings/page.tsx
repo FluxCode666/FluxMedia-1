@@ -7,8 +7,8 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
  * 使用方是本地化 dashboard 路由；页面先读取实时角色，只把高敏系统设置页交给超管。
  * 真实读写仍由各 Action/UOL 重复授权。
  */
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { AdminSettingsTabs } from "./admin-settings-tabs";
 
 /**

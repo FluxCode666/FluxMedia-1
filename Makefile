@@ -14,7 +14,7 @@ help:
 	@printf '%s\n' \
 		'make dev-infra-up       启动本地 PostgreSQL/Redis 容器' \
 		'make dev-migrate        执行数据库迁移' \
-		'make dev-frontend       启动 Next.js 页面开发服务（3000）' \
+		'make dev-frontend       启动 Vite 页面开发服务（3000，后端请求代理到 8080）' \
 		'make dev-backend        启动 Go backend（8080）' \
 		'make dev-script-runtime 启动私有 QuickJS 脚本运行时（8090）' \
 		'make dev-media-processing-runtime 启动私有图像计算运行时（8091）' \

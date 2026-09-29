@@ -1,12 +1,10 @@
-"use client";
-
 import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { StorageThumbnail } from "@repo/shared/storage/storage-thumbnail";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Card } from "@repo/ui/components/card";
 import { Check, Clock, Download, ImageIcon } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale } from "use-intl";
 import { generateDownloadFilename } from "@/lib/download-filename";
 
 export interface ImageCardProps {

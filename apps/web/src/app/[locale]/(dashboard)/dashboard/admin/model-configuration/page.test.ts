@@ -28,8 +28,8 @@ vi.mock("@repo/shared/auth/roles", () => ({
 vi.mock("@repo/shared/auth/server", () => ({
   getServerSession: mocks.getServerSession,
 }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("next-intl/server", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("@repo/shared/platform/intl", () => ({
   getLocale: mocks.getLocale,
   getTranslations: vi.fn(async () => (key: string) => key),
 }));

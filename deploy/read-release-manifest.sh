@@ -5,7 +5,9 @@
 # apply-release.sh（落地前复核）。
 # 参数：<manifest_path> [expected_release_tag]
 # 输出：按固定顺序打印 RELEASE_TAG、GIT_SHA、APP_IMAGE、APP_DIGEST、BUNDLE_SHA256
-# 五行 KEY=value；任何缺失、重复、未知键或格式非法都以非零退出且不输出任何值。
+# 五行 KEY=value；带站内更新应用包的 Release 再追加 APP_BUNDLE_SHA256 与
+# PLATFORM_FINGERPRINT（两者必须同时出现）。任何缺失、重复、未知键或格式非法都以
+# 非零退出且不输出任何值。
 # 为什么不 source：manifest 来自网络下载，按 shell 执行会把远程内容变成 root 命令。
 
 set -euo pipefail
@@ -32,6 +34,8 @@ git_sha=""
 app_image=""
 app_digest=""
 bundle_sha256=""
+app_bundle_sha256=""
+platform_fingerprint=""
 
 while IFS= read -r line || [ -n "${line}" ]; do
   [ -n "${line}" ] || continue
@@ -44,6 +48,8 @@ while IFS= read -r line || [ -n "${line}" ]; do
     APP_IMAGE) [ -z "${app_image}" ] || fail "APP_IMAGE 重复"; app_image="${value}" ;;
     APP_DIGEST) [ -z "${app_digest}" ] || fail "APP_DIGEST 重复"; app_digest="${value}" ;;
     BUNDLE_SHA256) [ -z "${bundle_sha256}" ] || fail "BUNDLE_SHA256 重复"; bundle_sha256="${value}" ;;
+    APP_BUNDLE_SHA256) [ -z "${app_bundle_sha256}" ] || fail "APP_BUNDLE_SHA256 重复"; app_bundle_sha256="${value}" ;;
+    PLATFORM_FINGERPRINT) [ -z "${platform_fingerprint}" ] || fail "PLATFORM_FINGERPRINT 重复"; platform_fingerprint="${value}" ;;
     *) fail "未知键 ${key}" ;;
   esac
 done <"${manifest_path}"
@@ -53,6 +59,10 @@ done <"${manifest_path}"
 [[ "${app_image}" =~ ${IMAGE_PATTERN} ]] || fail "APP_IMAGE 非法"
 [[ "${app_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "APP_DIGEST 非法"
 [[ "${bundle_sha256}" =~ ^[0-9a-f]{64}$ ]] || fail "BUNDLE_SHA256 非法"
+if [ -n "${app_bundle_sha256}" ] || [ -n "${platform_fingerprint}" ]; then
+  [[ "${app_bundle_sha256}" =~ ^[0-9a-f]{64}$ ]] || fail "APP_BUNDLE_SHA256 非法"
+  [[ "${platform_fingerprint}" =~ ^[0-9a-f]{64}$ ]] || fail "PLATFORM_FINGERPRINT 非法"
+fi
 if [ -n "${expected_release_tag}" ] \
   && [ "${release_tag}" != "${expected_release_tag}" ]; then
   fail "RELEASE_TAG 与请求版本不一致"
@@ -63,3 +73,7 @@ printf 'GIT_SHA=%s\n' "${git_sha}"
 printf 'APP_IMAGE=%s\n' "${app_image}"
 printf 'APP_DIGEST=%s\n' "${app_digest}"
 printf 'BUNDLE_SHA256=%s\n' "${bundle_sha256}"
+if [ -n "${app_bundle_sha256}" ]; then
+  printf 'APP_BUNDLE_SHA256=%s\n' "${app_bundle_sha256}"
+  printf 'PLATFORM_FINGERPRINT=%s\n' "${platform_fingerprint}"
+fi

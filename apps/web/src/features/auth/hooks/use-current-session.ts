@@ -1,6 +1,4 @@
-"use client";
-
-import { usePathname } from "next/navigation";
+import { usePathname } from "@repo/shared/platform/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import type { AppUserRole } from "@repo/shared/auth/roles";
@@ -72,14 +70,18 @@ export function useCurrentSession(initialData?: CurrentSession) {
     const refreshOnVisible = () => {
       if (document.visibilityState === "visible") reload();
     };
+    // 首次加载也会触发 pageshow；只在从往返缓存恢复时刷新，避免取消刚发出的首个请求。
+    const refreshOnRestore = (event: PageTransitionEvent) => {
+      if (event.persisted) reload();
+    };
 
     window.addEventListener("focus", reload);
-    window.addEventListener("pageshow", reload);
+    window.addEventListener("pageshow", refreshOnRestore);
     document.addEventListener("visibilitychange", refreshOnVisible);
 
     return () => {
       window.removeEventListener("focus", reload);
-      window.removeEventListener("pageshow", reload);
+      window.removeEventListener("pageshow", refreshOnRestore);
       document.removeEventListener("visibilitychange", refreshOnVisible);
     };
   }, [reload]);

@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 钱包 Server Action 薄传输适配器。
  *
@@ -13,7 +11,7 @@ import type {
   WalletTopUpOptions,
 } from "./wallet-page-data";
 import { loadWalletPageData } from "./wallet-page-data";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 读取当前用户钱包余额快照。 */
 export const getMyWalletBalanceAction = protectedAction

@@ -8,7 +8,7 @@ import type { UsageSummaryOutput } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { WalletBalanceSnapshot } from "@repo/shared/credits/wallet-contract";
 import { logError } from "@repo/shared/logger";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
 

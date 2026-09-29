@@ -6,7 +6,8 @@ import { clearSystemSettingsCache, getAdminSystemSettingsSnapshot, getRuntimeSet
 // tests cover the remaining shared adapter and environment fallback contracts.
 const store = vi.hoisted(() => new Map<string, {key:string;value:unknown}>());
 const go = vi.hoisted(() => ({ read: vi.fn(), request: vi.fn() }));
-vi.mock("../http/go-backend", () => ({requestGoBackendInternalJson:go.read, requestGoBackendJson:go.request}));
+vi.mock("../http/go-backend", () => ({requestGoBackendJson:go.request}));
+vi.mock("../http/go-backend-internal", () => ({requestGoBackendInternalJson:go.read}));
 beforeEach(() => {
   go.read.mockReset().mockImplementation(async (path:string) => ({value:store.get(new URL(path,"http://go").searchParams.get("key")!)?.value ?? null}));
   go.request.mockReset().mockImplementation(async (_path:string,init:RequestInit) => {

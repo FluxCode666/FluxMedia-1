@@ -29,7 +29,7 @@ vi.mock("@repo/shared/auth/role-server", () => ({
   getUserRoleById: mocks.getUserRoleById,
 }));
 
-vi.mock("next-intl/server", () => ({
+vi.mock("@repo/shared/platform/intl", () => ({
   getLocale: mocks.getLocale,
   getTranslations: vi.fn(async () => (key: string) => key),
 }));

@@ -72,7 +72,7 @@ describe("StorageThumbnail", () => {
     vi.spyOn(Date, "now").mockReturnValue(12345);
     const image = renderThumbnail(signedSource);
     failImage(image);
-    const fallbackSource = image.getAttribute("src");
+    const fallbackSource = image.src;
     expect(fallbackSource).toBe(
       resolvedSource(
         "/api/storage/media/user/image.png?sig=a%2Bb%2Fc%3D&exp=9999999999&fm_fallback=9ix#preview"
@@ -82,7 +82,7 @@ describe("StorageThumbnail", () => {
     vi.spyOn(Date, "now").mockReturnValue(67890);
     failImage(image);
     failImage(image);
-    expect(image.getAttribute("src")).toBe(fallbackSource);
+    expect(image.src).toBe(fallbackSource);
   });
 
   it.each([

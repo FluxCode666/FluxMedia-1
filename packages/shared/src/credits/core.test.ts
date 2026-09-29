@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const internal = vi.hoisted(() => vi.fn());
-vi.mock("../http/go-backend", () => ({
-  requestGoBackendInternalJson: internal,
-  requestGoBackendJson: vi.fn(),
-}));
+vi.mock("../http/go-backend", () => ({ requestGoBackendJson: vi.fn() }));
+vi.mock("../http/go-backend-internal", () => ({ requestGoBackendInternalJson: internal }));
 
 import {
   consumeCredits,

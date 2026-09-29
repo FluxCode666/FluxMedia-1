@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 统一积分支付结果视图。
  *
@@ -26,9 +24,9 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import Image from "next/image";
-import { useLocale } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
+import Image from "@repo/shared/platform/image";
+import { useLocale } from "use-intl";
+import { useAction } from "@repo/shared/platform/use-action";
 import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
 

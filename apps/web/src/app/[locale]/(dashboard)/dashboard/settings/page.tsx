@@ -1,8 +1,8 @@
 import { getServerSession } from "@repo/shared/auth/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { SettingsProfileView } from "@/features/settings/components";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /**
  * 设置页面元数据

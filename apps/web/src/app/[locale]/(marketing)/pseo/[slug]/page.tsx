@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { notFound } from "@repo/shared/platform/navigation";
 
 import {
   PseoCta,

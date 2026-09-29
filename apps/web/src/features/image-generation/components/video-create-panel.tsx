@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 视频创作面板（自包含）。
  *
@@ -898,7 +896,6 @@ export function VideoCreatePanel({
                   }
                 >
                   {/* 历史缩略图使用本站已生成图。 */}
-                  {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
                   <img
                     src={item.imageUrl ?? ""}
                     alt="近期生成图片"

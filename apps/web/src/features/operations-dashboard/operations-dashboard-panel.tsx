@@ -5,7 +5,6 @@
  * 完整快照竞态、特殊状态、图表、同源明细与异步导出，任何失败都不会用半成品替换
  * 最近一次成功快照。
  */
-"use client";
 
 import type {
   OperationsDashboardQueryInput,
@@ -16,7 +15,7 @@ import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dash
 import { Button } from "@repo/ui/components/button";
 import { cn } from "@repo/ui/utils";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useRouter } from "@/i18n/routing";

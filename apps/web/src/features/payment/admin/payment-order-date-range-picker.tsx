@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 订单管理受控日期范围选择器。
  *
@@ -21,7 +19,7 @@ import {
 import { cn } from "@repo/ui/utils";
 import { differenceInCalendarDays, format } from "date-fns";
 import { CalendarRange, Check } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useMemo, useState } from "react";
 
 type PaymentOrderDateRangePickerProps = {

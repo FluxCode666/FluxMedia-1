@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 运营总览记录级核对 Sheet。
  *
@@ -18,7 +16,7 @@ import {
 } from "@repo/ui/components/sheet";
 import { cn } from "@repo/ui/utils";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getOperationsDetailAction } from "./actions";

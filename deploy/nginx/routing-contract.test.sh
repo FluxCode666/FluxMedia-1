@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verify that public pages remain on Next.js while application endpoints use Go.
+# Verify that the Go backend serves every public path, including the embedded
+# web application, and streaming endpoints keep their long-lived settings.
 
 set -euo pipefail
 
@@ -46,25 +47,21 @@ require_location_upstream() {
   fi
 }
 
-require_count 1 'upstream fluxmedia_web {'
 require_count 1 'upstream fluxmedia_backend {'
+require_count 0 'fluxmedia_web'
 require_count 0 'fluxmedia_gateway'
+require_count 0 '_next'
+require_count 0 '/api/go'
 
-require_location_upstream 'location /' 'fluxmedia_web' 2
-require_location_upstream 'location /_next/static/' 'fluxmedia_web' 2
-require_location_upstream 'location ^~ /api/go/' 'fluxmedia_backend' 2
-require_count 2 'rewrite ^/api/go(/.*)$ $1 break;'
+require_location_upstream 'location /' 'fluxmedia_backend' 2
 require_location_upstream \
   'location ~ ^/(?:api/)?(?:v1|v1beta)/' 'fluxmedia_backend' 2
 require_location_upstream \
   'location ~ ^/api/(?:images|videos|editable-file)/' \
   'fluxmedia_backend' 2
-require_location_upstream \
-  'location ~ ^/(?:api(?:/|$)|moderate$|r/|healthz$|readyz$|health$|ready$)' \
-  'fluxmedia_backend' 2
 
 # The two streaming locations in each HTTPS server must retain their long-lived
-# request settings after the upstream split.
+# request settings.
 require_count 4 'proxy_buffering off;'
 require_count 4 'proxy_request_buffering off;'
 require_count 4 'proxy_read_timeout 3600s;'

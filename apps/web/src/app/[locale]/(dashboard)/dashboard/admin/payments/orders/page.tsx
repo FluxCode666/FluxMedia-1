@@ -10,8 +10,8 @@ import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { Button } from "@repo/ui/components/button";
 import { ChartNoAxesCombined } from "lucide-react";
-import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 import { loadPaginationConfig } from "@/features/pagination/server";
 import {
   listAdminPaymentOrdersAction,

@@ -19,10 +19,10 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock("next-safe-action/hooks", () => ({
+vi.mock("@repo/shared/platform/use-action", () => ({
   useAction: () => ({ execute: mocks.execute, isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));

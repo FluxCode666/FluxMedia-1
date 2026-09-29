@@ -4,7 +4,6 @@
  * 使用方：OperationsDashboardPanel。组件创建三类完整导出、手动刷新/翻页记录、重试
  * 失败任务和准备受控下载；不自动轮询，完成通知通过当前管理员本地水位避免重复。
  */
-"use client";
 
 import {
   type OperationsDashboardQueryInput,
@@ -32,7 +31,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 

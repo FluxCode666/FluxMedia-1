@@ -1,6 +1,4 @@
-import "server-only";
-
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 type GenerationResponse = {
   id: string;

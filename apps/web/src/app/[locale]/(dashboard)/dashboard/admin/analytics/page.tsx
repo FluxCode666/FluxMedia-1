@@ -12,8 +12,8 @@ import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
 import { OperationError } from "@repo/shared/uol";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { AdminDataDashboardPanel } from "@/features/data-dashboard/admin-data-dashboard-panel";
 import { loadAdminDataDashboardPageData } from "@/features/data-dashboard/admin-data-dashboard-page-data";
@@ -25,7 +25,6 @@ import {
 } from "@/features/data-dashboard/admin-data-dashboard-query";
 import type { DataDashboardFailureStatus } from "@/features/data-dashboard/data-dashboard-state";
 
-export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Admin Data Dashboard | FluxMedia",

@@ -34,9 +34,9 @@ function loadRootEnvironment() {
       return false;
     }
   }
-  // The Next.js process is an API adapter only after the Go gateway is
-  // configured. Keep local commands in the migrated mode even when a
-  // developer's .env predates the Go migration and omits this variable.
+  // The Vite dev proxy and local maintenance scripts reach the Go backend
+  // through this URL. Keep a working default even when a developer's .env
+  // predates the Go migration and omits this variable.
   if (!process.env.GO_BACKEND_URL && !process.env.GO_BACKEND_INTERNAL_URL) {
     process.env.GO_BACKEND_URL = "http://127.0.0.1:8080";
   }

@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 管理端数据看板刷新与用户搜索 Server Action。
  *
@@ -15,8 +13,8 @@ import {
 import { logError } from "@repo/shared/logger";
 import { adminAction } from "@repo/shared/safe-action";
 import { OperationError } from "@repo/shared/uol";
-import { requestGoJson } from "@/server/go-backend-client";
-import { toGoOperationError } from "@/server/go-backend-operation-error";
+import { requestGoJson } from "@/lib/go-backend-request";
+import { toGoOperationError } from "@/lib/go-backend-operation-error";
 
 /** 客户端可区分且不携带数据库详情的刷新结果。 */
 export type AdminDataDashboardActionResult =

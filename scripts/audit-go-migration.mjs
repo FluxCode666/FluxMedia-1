@@ -1,5 +1,5 @@
 /** Inventory every HTTP route, server action, and operation requiring Go parity. */
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,11 +96,8 @@ function resolveSourceImport(from, specifier) {
 }
 const runtimeEntryFiles = [
   ...files("apps/web/src/app").filter((file) => /\.tsx?$/.test(file) && !/\.(test|spec)\./.test(file)),
-  "apps/web/src/instrumentation.ts",
-  "apps/web/src/proxy.ts",
-  "apps/web/src/middleware.ts",
-  "apps/web/src/server/uol-init.ts",
-  "apps/web/src/server/uol-bindings.ts",
+  ...files("apps/web/src/platform").filter((file) => /\.tsx?$/.test(file) && !/\.(test|spec)\./.test(file)),
+  "apps/web/src/main.tsx",
 ];
 const runtimeReachable = new Set();
 const pendingRuntimeFiles = [...runtimeEntryFiles];
@@ -125,7 +122,14 @@ while (pendingRuntimeFiles.length) {
   }
   visitDynamicImports(source);
 }
-const routes = files("apps/web/src/app")
+const output = resolve(root, "docs/go-migration-inventory.json");
+// The Next.js route handlers were removed when the web app became a static SPA.
+// Their public HTTP contract stays frozen in the committed inventory so the Go
+// route audit keeps proving every historical endpoint is still served.
+const frozenRoutes = existsSync(output)
+  ? JSON.parse(readFileSync(output, "utf8")).routes ?? []
+  : [];
+const discoveredRoutes = files("apps/web/src/app")
   .filter((p) => p.endsWith("/route.ts"))
   .map((file) => {
     const source = parse(file);
@@ -156,8 +160,11 @@ const routes = files("apps/web/src/app")
       methods: [...methods].sort(),
       source: file,
     };
-  })
-  .sort((a, b) => a.path.localeCompare(b.path));
+  });
+const routes = [
+  ...frozenRoutes.filter((route) => !discoveredRoutes.some((found) => found.path === route.path)),
+  ...discoveredRoutes,
+].sort((a, b) => a.path.localeCompare(b.path));
 const actions = [];
 const operations = [];
 const directDatabaseImports = [];
@@ -338,7 +345,6 @@ const inventory = {
   serverGoRequests,
   dynamicGoRequests,
 };
-const output = resolve(root, "docs/go-migration-inventory.json");
 if (process.argv.includes("--write"))
   writeFileSync(output, `${JSON.stringify(inventory, null, 2)}\n`);
 console.log(

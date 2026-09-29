@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 按金额积分充值的 Server Action 传输适配器。
  *
@@ -13,7 +11,7 @@ import { z } from "zod";
 
 import { protectedAction } from "@repo/shared/safe-action";
 
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 const topUpCheckoutSchema = z.object({
   clientRequestId: z.string().uuid(),

@@ -64,11 +64,35 @@ normalize_raw_credentials() {
   fi
 }
 
+# boot.mjs picks the release to run (the image or an in-site update staged on
+# the releases volume) and finishes a pending switch before the supervisor
+# starts. It prints allowlisted KEY=VALUE lines; any other output is ignored.
+select_release() {
+  boot_path="${UNIFIED_BOOT_PATH:-/app/services/unified-runtime/boot.mjs}"
+  if [ ! -f "$boot_path" ]; then
+    return 0
+  fi
+  boot_output="$("${UNIFIED_NODE_EXECUTABLE:-node}" "$boot_path")"
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      FLUXMEDIA_APP_ROOT | FLUXMEDIA_WEB_ROOT | GO_BACKEND_EXECUTABLE | UNIFIED_SUPERVISOR_PATH)
+        export "$key=$value"
+        ;;
+    esac
+  done <<BOOT_OUTPUT
+$boot_output
+BOOT_OUTPUT
+}
+
 normalize_raw_credentials
 
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
+
+select_release
 
 exec "${UNIFIED_NODE_EXECUTABLE:-node}" \
   "${UNIFIED_SUPERVISOR_PATH:-/app/services/unified-runtime/supervisor.mjs}"

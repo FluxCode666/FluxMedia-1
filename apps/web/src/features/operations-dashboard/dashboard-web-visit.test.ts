@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
 }));
 
-vi.mock("@/server/go-backend-client", () => ({
+vi.mock("@/lib/go-backend-request", () => ({
   requestGoJson: mocks.requestGoJson,
 }));
 vi.mock("@repo/shared/logger", () => ({ logWarn: mocks.logWarn }));

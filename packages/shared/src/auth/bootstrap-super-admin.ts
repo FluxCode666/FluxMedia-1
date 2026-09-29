@@ -1,5 +1,5 @@
 /** The Go gateway atomically bootstraps the first self-use administrator. */
-import { requestGoBackendInternalJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 
 export function bootstrapSelfUseSuperAdmin() {
   return requestGoBackendInternalJson<{ userId: string; success: boolean; reason?: string }>(

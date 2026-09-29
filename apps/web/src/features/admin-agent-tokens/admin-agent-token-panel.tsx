@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 管理员 agent 令牌管理面板。
  *
@@ -38,7 +36,7 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Copy, Loader2, RefreshCw } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale } from "use-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 

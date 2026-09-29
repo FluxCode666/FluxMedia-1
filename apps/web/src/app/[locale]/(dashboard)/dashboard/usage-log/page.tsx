@@ -4,7 +4,7 @@
  * 使用日志页面已并入使用记录；保留此无界面路由，避免旧书签和外部回链失效。
  */
 
-import { redirect } from "next/navigation";
+import { redirect } from "@repo/shared/platform/navigation";
 
 /** 将旧地址兼容迁移到当前语言的使用记录页。 */
 export default async function LegacyUsageLogPage({

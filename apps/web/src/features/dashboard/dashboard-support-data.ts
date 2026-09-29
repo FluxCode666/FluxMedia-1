@@ -10,7 +10,7 @@ import {
   type DashboardSupportConfig,
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
 } from "@repo/shared/support/dashboard-config";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** Dashboard 右侧公告卡所需的最小只读字段。 */
 export type DashboardAnnouncement = {

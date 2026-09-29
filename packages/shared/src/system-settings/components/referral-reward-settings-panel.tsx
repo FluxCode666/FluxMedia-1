@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 推广首充奖励专用设置面板。
  *
@@ -26,7 +24,7 @@ import {
 } from "@repo/ui/components/select";
 import { Switch } from "@repo/ui/components/switch";
 import { Loader2, Save, Trash2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "../../platform/use-action";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {

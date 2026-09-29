@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { getSnapshot } = vi.hoisted(() => ({ getSnapshot: vi.fn() }));
 const writeClipboardText = vi.fn<(text: string) => Promise<void>>();
 
-vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
+vi.mock("use-intl", () => ({ useLocale: () => "zh" }));
 vi.mock("../history-actions", () => ({
   getAdminHistoryRequestSnapshotAction: getSnapshot,
 }));

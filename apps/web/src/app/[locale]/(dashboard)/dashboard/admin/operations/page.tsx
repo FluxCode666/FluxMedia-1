@@ -7,8 +7,8 @@
 
 import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import type { Metadata } from "next";
-import { getLocale, getTranslations } from "next-intl/server";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 import { loadOperationsDashboardPageData } from "@/features/operations-dashboard/operations-dashboard-page-data";
 import { OperationsDashboardPanel } from "@/features/operations-dashboard/operations-dashboard-panel";
 import {
@@ -17,7 +17,6 @@ import {
 } from "@/features/operations-dashboard/operations-dashboard-query";
 import { redirect } from "@/i18n/routing";
 
-export const dynamic = "force-dynamic";
 
 /** 生成当前语言的运营总览 Metadata。 */
 export async function generateMetadata({

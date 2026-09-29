@@ -5,7 +5,7 @@
  * 并生成双语 canonical、Open Graph 与面包屑结构化数据。
  */
 import { siteConfig } from "@repo/shared/config";
-import type { Metadata } from "next";
+import type { Metadata } from "@repo/shared/platform/metadata";
 
 import { BreadcrumbJsonLd } from "@/components/seo/json-ld";
 import { ApiIntegrationDocs } from "@/features/docs/api-integration-docs";

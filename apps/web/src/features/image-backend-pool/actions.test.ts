@@ -46,11 +46,11 @@ vi.mock("@repo/shared/uol", () => ({
   invokeOperation: mocks.invokeOperation,
   OperationError: class OperationError extends Error {},
 }));
-vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@repo/shared/platform/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: mocks.ensureUolInitialized,
 }));
-vi.mock("@/server/go-backend-client", () => ({
+vi.mock("@/lib/go-backend-request", () => ({
   requestGoJson: mocks.requestGoJson,
 }));
 

@@ -4,8 +4,8 @@
  * 使用方是营销 Header、Footer、sitemap 与站外访问者；页面只消费公开 Go DTO，
  * 显式禁用 Full Route Cache，并区分空目录与依赖失败。
  */
-import type { Metadata } from "next";
-import { getTranslations } from "next-intl/server";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { getTranslations } from "@repo/shared/platform/intl";
 
 import { ModelMarketplaceBrowser } from "@/features/model-marketplace/model-marketplace-browser";
 import {
@@ -15,7 +15,6 @@ import {
 import { loadModelMarketplacePageData } from "@/features/model-marketplace/page-data";
 
 /** 运行时目录和展示开关必须逐请求读取，不能固化进 Full Route Cache。 */
-export const dynamic = "force-dynamic";
 
 /**
  * 生成当前语言的模型广场 SEO Metadata。

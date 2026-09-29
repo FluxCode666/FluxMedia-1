@@ -1,9 +1,7 @@
-"use client";
-
 import { Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
-import Link from "next/link";
-import { useLocale } from "next-intl";
-import { useSearchParams } from "next/navigation";
+import Link from "@repo/shared/platform/link";
+import { useLocale } from "use-intl";
+import { useSearchParams } from "@repo/shared/platform/navigation";
 import { useState } from "react";
 
 import { resetPassword } from "@repo/shared/auth/client";

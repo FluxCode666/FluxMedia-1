@@ -4,13 +4,15 @@ import { fileURLToPath } from "node:url";
 
 export const defaultHealthEndpoints = Object.freeze([
   {
-    name: "web",
-    url: "http://127.0.0.1:3000/",
-    accepts: (response) => response.status < 500,
-  },
-  {
     name: "backend",
     url: "http://127.0.0.1:8080/readyz",
+    accepts: (response) => response.ok,
+  },
+  {
+    // The backend answers 501 for pages when the binary was built without the
+    // embedded web application.
+    name: "web",
+    url: "http://127.0.0.1:8080/en",
     accepts: (response) => response.ok,
   },
   {

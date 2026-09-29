@@ -3,6 +3,7 @@
 # 覆盖：manifest 严格解析、部署包构建/下载/校验、路径穿越拒绝，以及 apply-release.sh
 # 落地部署包、调用 deploy-release.sh 与部署锁互斥。
 # 使用 file:// 下载源与桩 deploy-release.sh，不触碰 Docker 或数据库。
+# pipefail 下管道右侧不用 grep -q：提前退出会让左侧收到 SIGPIPE 而偶发失败。
 
 set -euo pipefail
 
@@ -39,7 +40,7 @@ write_manifest() {
 }
 write_manifest v1.2.3 "$(printf 'b%.0s' $(seq 1 64))"
 bash "${script_dir}/read-release-manifest.sh" "${manifest}" v1.2.3 \
-  | grep -qx 'APP_DIGEST='"${APP_DIGEST}" || fail "合法 manifest 应解析成功"
+  | grep -x 'APP_DIGEST='"${APP_DIGEST}" >/dev/null || fail "合法 manifest 应解析成功"
 expect_failure "版本不一致应拒绝" \
   bash "${script_dir}/read-release-manifest.sh" "${manifest}" v1.2.4
 printf 'EXTRA=1\n' >>"${manifest}"
@@ -51,6 +52,18 @@ expect_failure "非 GHCR 官方镜像应拒绝" \
 write_manifest '$(touch /tmp/pwned)' "$(printf 'b%.0s' $(seq 1 64))"
 expect_failure "命令替换版本号应拒绝" \
   bash "${script_dir}/read-release-manifest.sh" "${manifest}"
+write_manifest v1.2.3 "$(printf 'b%.0s' $(seq 1 64))"
+printf 'APP_BUNDLE_SHA256=%s\nPLATFORM_FINGERPRINT=%s\n' \
+  "$(printf 'c%.0s' $(seq 1 64))" "$(printf 'd%.0s' $(seq 1 64))" >>"${manifest}"
+bash "${script_dir}/read-release-manifest.sh" "${manifest}" v1.2.3 \
+  | grep -x "PLATFORM_FINGERPRINT=$(printf 'd%.0s' $(seq 1 64))" >/dev/null \
+  || fail "带应用包的 manifest 应解析成功"
+sed -i '/^PLATFORM_FINGERPRINT=/d' "${manifest}"
+expect_failure "应用包 SHA-256 与平台指纹缺一应拒绝" \
+  bash "${script_dir}/read-release-manifest.sh" "${manifest}"
+printf 'PLATFORM_FINGERPRINT=not-a-hash\n' >>"${manifest}"
+expect_failure "非法平台指纹应拒绝" \
+  bash "${script_dir}/read-release-manifest.sh" "${manifest}"
 
 # ---------- 构建与下载 ----------
 releases="${test_dir}/releases"
@@ -61,7 +74,7 @@ export FLUXMEDIA_RELEASE_BASE_URL="file://${releases}"
 
 fetched="${test_dir}/fetched"
 bash "${script_dir}/fetch-release-bundle.sh" v1.2.3 "${fetched}" \
-  | grep -qx "RELEASE_TAG=v1.2.3" || fail "下载应输出 manifest"
+  | grep -x "RELEASE_TAG=v1.2.3" >/dev/null || fail "下载应输出 manifest"
 for required in docker-compose.next.yml fluxmedia.conf deploy-release.sh \
   apply-release.sh read-release-manifest.sh release-manifest.env; do
   [ -f "${fetched}/bundle/${required}" ] || fail "部署包缺少 ${required}"
@@ -73,6 +86,20 @@ staged_list="$(
 )"
 bundle_list="$(tar -tzf "${releases}/v1.2.3/fluxmedia-deploy.tar.gz" | sort)"
 [ "${staged_list}" = "${bundle_list}" ] || fail "apply-release 清单与部署包不一致"
+
+printf 'app bundle' >"${test_dir}/app.tar.gz"
+bash "${script_dir}/build-release-bundle.sh" \
+  --output "${test_dir}/with-app" --version v1.2.3 --git-sha "${GIT_SHA}" \
+  --app-image "${APP_IMAGE}" --app-digest "${APP_DIGEST}" \
+  --app-bundle "${test_dir}/app.tar.gz" \
+  --platform-fingerprint "$(printf 'e%.0s' $(seq 1 64))" >/dev/null
+grep -x "APP_BUNDLE_SHA256=$(sha256_of "${test_dir}/app.tar.gz")" \
+  "${test_dir}/with-app/fluxmedia-release.env" >/dev/null \
+  || fail "manifest 应记录应用包 SHA-256"
+expect_failure "只传应用包不传指纹应拒绝" bash "${script_dir}/build-release-bundle.sh" \
+  --output "${test_dir}/half" --version v1.2.3 --git-sha "${GIT_SHA}" \
+  --app-image "${APP_IMAGE}" --app-digest "${APP_DIGEST}" \
+  --app-bundle "${test_dir}/app.tar.gz"
 
 expect_failure "非空目标目录应拒绝" \
   bash "${script_dir}/fetch-release-bundle.sh" v1.2.3 "${fetched}"
@@ -113,7 +140,7 @@ grep -qx "${APP_IMAGE} ${APP_DIGEST} v1.2.3 ${deploy_path} ${GIT_SHA}" \
 [ -f "${deploy_path}/docker-compose.next.yml" ] || fail "候选 Compose 未落地"
 [ "$(stat -c %a "${deploy_path}/deploy-release.sh")" = "750" ] \
   || fail "部署脚本权限应为 750"
-if ls -A "${deploy_path}" | grep -q '\.staging\.'; then
+if ls -A "${deploy_path}" | grep '\.staging\.' >/dev/null; then
   fail "不应残留 staging 文件"
 fi
 

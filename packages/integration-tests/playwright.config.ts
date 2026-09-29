@@ -1,7 +1,7 @@
 /**
  * 运营总览专用 Playwright 配置。
  *
- * 职责：强制隔离 PostgreSQL/Redis、启动本机 Next.js、建立真实角色会话，并把桌面、
+ * 职责：强制隔离 PostgreSQL/Redis、构建 Web SPA 并由本机 Go backend 同源提供、建立真实角色会话，并把桌面、
  * 390px、axe 与 reduced-motion 场景留在显式命令中，不加入普通 turbo test。
  */
 
@@ -55,8 +55,10 @@ export default defineConfig({
     toHaveScreenshot: { animations: "disabled", caret: "hide" },
   },
   webServer: {
-    command: `node node_modules/next/dist/bin/next dev --turbopack --port ${environment.port}`,
-    cwd: resolve(repositoryRoot, "apps/web"),
+    // 与生产一致：先构建 SPA，再由 Go backend 在同一端口提供页面与 API。
+    command:
+      "pnpm --filter @repo/web build && cd services/api-gateway && go run .",
+    cwd: repositoryRoot,
     env: {
       ...inheritedEnvironment,
       ...buildOperationsWebEnvironment(environment),

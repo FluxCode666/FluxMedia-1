@@ -4,7 +4,7 @@
  * 使用方：支付宝二维码下单、易支付与 Creem 的成功回跳。
  * 页面只负责承载客户端轮询视图；订单归属校验和积分履约均在服务端完成。
  */
-import type { Metadata } from "next";
+import type { Metadata } from "@repo/shared/platform/metadata";
 import { Suspense } from "react";
 
 import CreditPaymentResultLoading from "./loading";

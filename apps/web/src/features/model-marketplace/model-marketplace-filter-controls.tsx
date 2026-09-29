@@ -4,12 +4,11 @@
  * 使用方是模型广场客户端浏览器；类别与厂商均消费公开 DTO 派生状态，品牌图标复用
  * 模型广场第一方资产，不自行猜测或请求第三方资源。
  */
-"use client";
 
 import type { ModelMarketplaceIconKey } from "@repo/shared/model-marketplace";
 import { Label } from "@repo/ui/components/label";
 import { RadioGroup, RadioGroupItem } from "@repo/ui/components/radio-group";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 
 import { ModelBrandIcon } from "./model-brand-icon";
 import {

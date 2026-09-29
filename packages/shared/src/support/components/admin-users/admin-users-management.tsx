@@ -4,7 +4,6 @@
  * 职责：提供用户检索、账户运维、审核策略管理与管理员审计视图；所有写操作
  * 委托给 support Server Actions，组件只负责权限感知的交互和结果展示。
  */
-"use client";
 
 import {
   Avatar,
@@ -76,7 +75,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "../../../platform/navigation";
 import {
   useCallback,
   useEffect,

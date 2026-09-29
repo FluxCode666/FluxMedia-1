@@ -6,7 +6,7 @@
  */
 import type { ModelMarketplaceIconKey } from "@repo/shared/model-marketplace";
 import { cn } from "@repo/ui/utils";
-import Image from "next/image";
+import Image from "@repo/shared/platform/image";
 
 import { getModelMarketplaceIconPath } from "./assets";
 

@@ -1,5 +1,3 @@
-"use client";
-
 import type { ApiVideoInputCapabilitiesByModel } from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
  * 供应商账号按模型配置输入与分辨率能力。

@@ -1,8 +1,6 @@
-"use server";
-
 import { updateProfileSchema } from "@/features/settings/schemas";
 import { protectedAction } from "@repo/shared/safe-action";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /**
  * 更新用户资料 Server Action

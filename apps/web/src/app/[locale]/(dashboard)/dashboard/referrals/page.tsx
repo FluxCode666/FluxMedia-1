@@ -2,10 +2,10 @@
 
 import { getServerSession } from "@repo/shared/auth/server";
 import type { ReferralRelationshipListOutput } from "@repo/shared/referrals/relationship-contract";
-import { redirect } from "next/navigation";
+import { redirect } from "@repo/shared/platform/navigation";
 import type { ReferralDashboardOutput } from "@/features/referrals/actions";
 import { ReferralDashboard } from "@/features/referrals/referral-dashboard";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /**
  * 渲染推广统计和独立关系明细页。

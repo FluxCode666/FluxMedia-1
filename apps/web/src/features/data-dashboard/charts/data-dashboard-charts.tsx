@@ -4,10 +4,9 @@
  * 使用方：DataDashboardChartsLazy。组件把同一快照映射为图片折线图、积分柱状图、
  * 视频可切换柱状图和任务构成环形图；通过 namespace 切换本人或管理员范围文案。
  */
-"use client";
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import { CreditsBarChart } from "./credits-bar-chart";
 import { ImageLineChart } from "./image-line-chart";

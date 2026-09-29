@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 单模型配置查看与编辑 Dialog。
  *

@@ -4,7 +4,6 @@
  * 使用方：OperationsDashboardPanel。自定义日历只维护本地草稿；应用后由父组件通过
  * UOL 刷新全页。日期不设最大跨度，但拒绝未来、反向和不完整范围。
  */
-"use client";
 
 import type {
   OperationsDashboardQueryInput,
@@ -25,7 +24,7 @@ import {
 } from "@repo/ui/components/popover";
 import { format } from "date-fns";
 import { CalendarRange } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useMemo, useState } from "react";
 
 type DateRangeDraft = { from: string; to: string };

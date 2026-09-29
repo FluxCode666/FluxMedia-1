@@ -4,14 +4,13 @@
  * 使用方：钱包购买区。组件复用现有带 clientRequestId 的充值 Action，快捷金额和
  * 手工输入最终都转换为最小货币单位；重复提交同一报价时复用同一幂等键。
  */
-"use client";
 
 import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import type { WalletTopUpOptions } from "@repo/shared/credits/wallet-contract";
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
 import { Loader2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";

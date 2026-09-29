@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * API 密钥管理页面主体。
  *
@@ -50,8 +48,8 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import Link from "next/link";
-import { useLocale, useTranslations } from "next-intl";
+import Link from "@repo/shared/platform/link";
+import { useLocale, useTranslations } from "use-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -453,15 +451,16 @@ export function ExternalApiKeySection({
       }));
       return;
     }
+    const updated = result.data;
     dispatchListAction({
       type: "mutation-succeeded",
       keyId,
       operation: "update-group",
-      item: preserveListItemApiKey(result.data, listState.items),
+      item: preserveListItemApiKey(updated, listState.items),
     });
     setGroupDrafts((current) => ({
       ...current,
-      [keyId]: result.data.generationGroupId || DEFAULT_GROUP_VALUE,
+      [keyId]: updated.generationGroupId || DEFAULT_GROUP_VALUE,
     }));
     finishRowMutation(keyId);
     toast.success(t("success.updated"));
@@ -487,16 +486,16 @@ export function ExternalApiKeySection({
       );
       return;
     }
+    const updated = result.data;
     dispatchListAction({
       type: "mutation-succeeded",
       keyId,
       operation: "update-quota",
-      item: preserveListItemApiKey(result.data, listState.items),
+      item: preserveListItemApiKey(updated, listState.items),
     });
     setQuotaDrafts((current) => ({
       ...current,
-      [keyId]:
-        result.data.creditLimit === null ? "" : String(result.data.creditLimit),
+      [keyId]: updated.creditLimit === null ? "" : String(updated.creditLimit),
     }));
     finishRowMutation(keyId);
     setQuotaDialogKeyId(null);

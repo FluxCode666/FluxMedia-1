@@ -3,8 +3,8 @@ import "fumadocs-ui/style.css";
 import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import { RootProvider } from "fumadocs-ui/provider/next";
-import { redirect } from "next/navigation";
+import { RootProvider } from "fumadocs-ui/provider/react-router";
+import { redirect } from "@repo/shared/platform/navigation";
 import type { ReactNode } from "react";
 
 import { Header } from "@/features/marketing/components";

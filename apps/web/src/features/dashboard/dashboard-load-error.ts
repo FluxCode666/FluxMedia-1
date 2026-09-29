@@ -8,6 +8,7 @@ import {
   isAuthSessionQueryUnavailableError,
   isDatabaseQueryTimeoutError,
 } from "@repo/shared/database-errors";
+import { GoBackendHttpError } from "@repo/shared/http/go-backend";
 import { OperationError } from "@repo/shared/uol/errors";
 
 export type DashboardLoadFailureReason =
@@ -25,6 +26,10 @@ export function getDashboardLoadFailureReason(
   error: unknown
 ): DashboardLoadFailureReason | null {
   if (error instanceof OperationError && error.code === "not_ready") {
+    return "not_ready";
+  }
+  // Go 统计读模型尚未回填完成时返回 503 NOT_READY，同样属于“准备中”。
+  if (error instanceof GoBackendHttpError && error.code === "NOT_READY") {
     return "not_ready";
   }
   if (isDatabaseQueryTimeoutError(error)) return "query_timeout";

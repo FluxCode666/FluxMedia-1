@@ -1614,5 +1614,86 @@
         "userFallback": "用户"
       }
     }
+  },
+  "SystemUpdates": {
+    "versionButton": "当前版本 {version}，查看版本与更新",
+    "newVersion": "有新版本可更新",
+    "title": "版本与更新",
+    "description": "从 GitHub Release 获取新版本，并在当前容器内完成安装。",
+    "currentVersion": "当前版本",
+    "latestVersion": "最新版本",
+    "imageVersion": "镜像版本 {version}",
+    "checking": "正在检查…",
+    "loadError": "无法读取更新状态，请稍后重试。",
+    "releaseNotes": "更新说明",
+    "viewRelease": "在 GitHub 查看",
+    "publishedAt": "发布于 {date}",
+    "noReleaseNotes": "此版本没有填写更新说明。",
+    "upToDate": "当前已是最新版本。",
+    "lastFailed": "上次更新到 {version} 失败（{date}）：{reason}",
+    "confirmMessage": "确认更新到 {version}？系统会先备份数据库，然后重启服务并执行数据库迁移，期间站点约有几分钟不可用。迁移无法自动回退，请避开业务高峰。",
+    "checkAgain": "重新检查",
+    "updateNow": "立即更新",
+    "starting": "正在提交…",
+    "updating": "更新中…",
+    "cancel": "取消",
+    "confirmUpdate": "确认更新",
+    "reloadNow": "立即刷新",
+    "progressTitle": "正在更新到 {version}",
+    "downloadProgress": "已下载 {percent}%",
+    "restartingHint": "服务正在重启，连接暂时中断属于正常现象，请勿关闭页面。",
+    "migratingHint": "正在执行数据库迁移，完成后会自动切换到新版本。",
+    "succeeded": "已更新到 {version}，页面即将刷新。",
+    "failed": "更新到 {version} 失败：{reason}",
+    "stillOnVersion": "系统仍在运行 {version}。",
+    "unknownOutcome": "无法确认本次更新结果，请刷新页面后查看当前版本。",
+    "warnings": {
+      "dashboard_backfill_failed": "新版本已上线，但仪表盘统计回填失败，部分历史统计可能暂不准确。"
+    },
+    "steps": {
+      "downloading": "下载应用包",
+      "verifying": "校验完整性",
+      "extracting": "解压新版本",
+      "backing_up": "备份数据库",
+      "restarting": "重启服务",
+      "migrating": "迁移数据库",
+      "done": "完成"
+    },
+    "blocked": {
+      "dev_build": "当前是开发构建，不支持站内更新。",
+      "unsupported_platform": "当前运行平台不是 linux/amd64，不支持站内更新。",
+      "unsupported_runtime": "当前不是在统一应用容器中运行，不支持站内更新。",
+      "backup_unavailable": "容器内缺少数据库备份工具，无法安全更新。",
+      "releases_dir_unavailable": "版本目录未挂载或不可写，无法下载新版本。",
+      "platform_changed": "新版本修改了运行环境（系统依赖、Compose 或 Nginx 配置），需要通过 Deploy Production 流水线发布。",
+      "unsupported_release": "该 Release 不是正式版本，不能站内安装。",
+      "bundle_missing": "该 Release 缺少站内更新应用包，请通过 Deploy Production 流水线发布。",
+      "bundle_too_large": "应用包超过大小上限，已拒绝下载。"
+    },
+    "releaseErrors": {
+      "release_not_found": "GitHub 上暂无可用的 Release。",
+      "github_rate_limited": "GitHub 接口请求过于频繁，请稍后重试。",
+      "github_unavailable": "暂时无法连接 GitHub，请稍后重试。",
+      "github_response_too_large": "GitHub 返回的数据过大，已停止读取。"
+    },
+    "errors": {
+      "download_failed": "下载应用包失败。",
+      "checksum_mismatch": "应用包校验失败，文件可能已损坏或被篡改。",
+      "extract_failed": "解压应用包失败。",
+      "bundle_invalid": "应用包内容不完整或版本不符。",
+      "platform_changed": "新版本需要不同的运行环境，请通过 Deploy Production 流水线发布。",
+      "releases_dir_unavailable": "版本目录不可写。",
+      "backup_failed": "数据库备份失败，已取消更新。",
+      "state_write_failed": "写入更新状态失败。",
+      "restart_failed": "请求重启服务失败。",
+      "update_failed": "更新失败，请稍后查看状态。",
+      "migration_failed": "数据库迁移失败，系统继续运行原版本，请查看容器日志。",
+      "release_invalid": "新版本文件校验失败，已回到原版本。",
+      "too_many_attempts": "新版本多次启动失败，已回到原版本。",
+      "release_changed": "最新版本已变化，请重新检查后再更新。",
+      "already_current": "当前已是该版本。",
+      "update_in_progress": "已有更新任务正在进行。",
+      "unknown": "发生未知错误。"
+    }
   }
 }

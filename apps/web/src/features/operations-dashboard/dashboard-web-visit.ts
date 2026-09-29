@@ -6,7 +6,7 @@
  */
 import { logWarn } from "@repo/shared/logger";
 import type { RecordWebVisitOutput } from "@repo/shared/operations-dashboard/facts-contracts";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /**
  * 为已验证 dashboard session 记录当日网页访问。

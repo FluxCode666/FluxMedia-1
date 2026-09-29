@@ -4,7 +4,6 @@
  * 使用方：首页专属布局、其他营销布局与文档布局。
  * 关键依赖：共享导航契约、当前会话、i18n Link、语言与主题切换组件。
  */
-"use client";
 
 import { ModeToggle } from "@repo/shared/components";
 import { mainNav } from "@repo/shared/config/nav";
@@ -16,7 +15,7 @@ import {
 import { Button } from "@repo/ui/components/button";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
 import { Menu } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useState } from "react";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useCurrentSession } from "@/features/auth/hooks/use-current-session";

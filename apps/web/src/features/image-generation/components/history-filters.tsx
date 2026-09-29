@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 使用记录页面的 URL 驱动筛选栏。
  *
@@ -23,7 +21,7 @@ import {
 } from "@repo/ui/components/select";
 import { cn } from "@repo/ui/utils";
 import { Check, ChevronsUpDown, Search, X } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale } from "use-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";

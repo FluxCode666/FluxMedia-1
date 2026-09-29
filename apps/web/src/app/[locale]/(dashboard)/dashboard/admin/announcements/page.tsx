@@ -8,8 +8,8 @@
 import { canAccessAdminArea, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { AdminAnnouncementsManagement } from "@/features/announcements/admin-announcements-management";
 import { loadAdminAnnouncementPage } from "@/features/announcements/announcement-page-data";
 import {

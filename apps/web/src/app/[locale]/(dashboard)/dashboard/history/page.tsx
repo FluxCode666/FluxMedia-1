@@ -7,8 +7,8 @@
 
 import { getCurrentUser } from "@repo/shared/auth/server";
 import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { HistoryClient } from "@/features/image-generation/components/history-client";
 import { HistoryFilters } from "@/features/image-generation/components/history-filters";
 import {

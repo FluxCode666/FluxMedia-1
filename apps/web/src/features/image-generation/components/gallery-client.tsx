@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 用户图库的自动追加、预览、批量操作与短期恢复容器。
  *
@@ -24,10 +22,10 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import dynamic from "next/dynamic";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useLocale } from "next-intl";
+import dynamic from "@repo/shared/platform/dynamic";
+import Link from "@repo/shared/platform/link";
+import { useRouter } from "@repo/shared/platform/navigation";
+import { useLocale } from "use-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {

@@ -1614,5 +1614,86 @@
         "userFallback": "User"
       }
     }
+  },
+  "SystemUpdates": {
+    "versionButton": "Current version {version}. View version and updates",
+    "newVersion": "A new version is available",
+    "title": "Version and updates",
+    "description": "Fetch new versions from GitHub Releases and install them inside the running container.",
+    "currentVersion": "Current version",
+    "latestVersion": "Latest version",
+    "imageVersion": "Image version {version}",
+    "checking": "Checking…",
+    "loadError": "Could not load the update status. Please try again later.",
+    "releaseNotes": "Release notes",
+    "viewRelease": "View on GitHub",
+    "publishedAt": "Published {date}",
+    "noReleaseNotes": "This release has no notes.",
+    "upToDate": "You are on the latest version.",
+    "lastFailed": "The last update to {version} failed ({date}): {reason}",
+    "confirmMessage": "Update to {version}? The database is backed up first, then the service restarts and runs database migrations. The site will be unavailable for a few minutes. Migrations cannot be rolled back automatically, so avoid peak hours.",
+    "checkAgain": "Check again",
+    "updateNow": "Update now",
+    "starting": "Submitting…",
+    "updating": "Updating…",
+    "cancel": "Cancel",
+    "confirmUpdate": "Confirm update",
+    "reloadNow": "Reload now",
+    "progressTitle": "Updating to {version}",
+    "downloadProgress": "{percent}% downloaded",
+    "restartingHint": "The service is restarting. A brief connection loss is expected; keep this page open.",
+    "migratingHint": "Running database migrations. The new version starts automatically when they finish.",
+    "succeeded": "Updated to {version}. Reloading the page…",
+    "failed": "Update to {version} failed: {reason}",
+    "stillOnVersion": "The system is still running {version}.",
+    "unknownOutcome": "The update result could not be confirmed. Reload the page to check the current version.",
+    "warnings": {
+      "dashboard_backfill_failed": "The new version is live, but the dashboard statistics backfill failed. Some historical statistics may be inaccurate for now."
+    },
+    "steps": {
+      "downloading": "Download bundle",
+      "verifying": "Verify integrity",
+      "extracting": "Extract new version",
+      "backing_up": "Back up database",
+      "restarting": "Restart service",
+      "migrating": "Migrate database",
+      "done": "Done"
+    },
+    "blocked": {
+      "dev_build": "This is a development build; in-app updates are not supported.",
+      "unsupported_platform": "The runtime platform is not linux/amd64; in-app updates are not supported.",
+      "unsupported_runtime": "The app is not running in the unified application container; in-app updates are not supported.",
+      "backup_unavailable": "The container has no database backup tool, so updating is not safe.",
+      "releases_dir_unavailable": "The releases directory is not mounted or not writable.",
+      "platform_changed": "This version changes the runtime environment (system packages, Compose, or Nginx config) and must be released through the Deploy Production workflow.",
+      "unsupported_release": "This release is not a stable version and cannot be installed in-app.",
+      "bundle_missing": "This release has no in-app update bundle. Use the Deploy Production workflow.",
+      "bundle_too_large": "The application bundle exceeds the size limit and was rejected."
+    },
+    "releaseErrors": {
+      "release_not_found": "No release is available on GitHub yet.",
+      "github_rate_limited": "GitHub rate limit reached. Please try again later.",
+      "github_unavailable": "GitHub is unreachable right now. Please try again later.",
+      "github_response_too_large": "GitHub returned too much data; reading was stopped."
+    },
+    "errors": {
+      "download_failed": "Downloading the application bundle failed.",
+      "checksum_mismatch": "The bundle checksum did not match; the file may be corrupted or tampered with.",
+      "extract_failed": "Extracting the application bundle failed.",
+      "bundle_invalid": "The application bundle is incomplete or has the wrong version.",
+      "platform_changed": "This version needs a different runtime environment. Use the Deploy Production workflow.",
+      "releases_dir_unavailable": "The releases directory is not writable.",
+      "backup_failed": "The database backup failed, so the update was cancelled.",
+      "state_write_failed": "Writing the update state failed.",
+      "restart_failed": "Requesting a service restart failed.",
+      "update_failed": "The update failed. Check the status again later.",
+      "migration_failed": "Database migration failed. The system keeps running the previous version; check the container logs.",
+      "release_invalid": "The new version failed verification; the previous version was restored.",
+      "too_many_attempts": "The new version failed to start repeatedly; the previous version was restored.",
+      "release_changed": "The latest version has changed. Check again before updating.",
+      "already_current": "This version is already installed.",
+      "update_in_progress": "An update is already in progress.",
+      "unknown": "An unknown error occurred."
+    }
   }
 }

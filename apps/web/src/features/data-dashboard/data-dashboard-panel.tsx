@@ -4,13 +4,12 @@
  * 使用方：`/dashboard/analytics`。组件区分日期草稿、已应用范围、最近有效快照和请求
  * 状态；只有最新成功请求能同时替换范围、指标、图表 DTO 和 URL。
  */
-"use client";
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { Button } from "@repo/ui/components/button";
 import { cn } from "@repo/ui/utils";
 import { RefreshCw, TriangleAlert } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { Link, useRouter } from "@/i18n/routing";

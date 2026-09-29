@@ -4,7 +4,6 @@
  * 使用方：应用内确定进度指标与全站导航反馈。基于 Radix Progress 提供可访问语义，
  * 并允许调用方单独定制轨道和指示条样式。
  */
-"use client";
 
 import * as ProgressPrimitive from "@radix-ui/react-progress";
 import * as React from "react";

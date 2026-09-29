@@ -4,7 +4,6 @@
  * 使用方：DataDashboardCharts。环形图只比较图片任务和视频任务两类成功任务，旁边的
  * 文本明细同时给出任务数和占比，避免颜色成为唯一信息来源。
  */
-"use client";
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import {
@@ -13,7 +12,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@repo/ui/components/chart";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { Cell, Pie, PieChart } from "recharts";
 
 import { DashboardChartCard } from "./dashboard-chart-card";

@@ -4,7 +4,6 @@
  * 使用方：DataDashboardCharts。查看者可在视频数量和成功视频秒数之间切换；切换只替换
  * 当前快照的展示序列，不重新请求数据或改变日期范围。
  */
-"use client";
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import {
@@ -14,7 +13,7 @@ import {
   ChartTooltipContent,
 } from "@repo/ui/components/chart";
 import { Tabs, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 

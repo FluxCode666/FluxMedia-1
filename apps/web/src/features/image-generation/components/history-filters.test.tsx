@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
 
-vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
+vi.mock("use-intl", () => ({ useLocale: () => "zh" }));
 vi.mock("@/i18n/routing", () => ({
   useRouter: () => ({ push }),
 }));

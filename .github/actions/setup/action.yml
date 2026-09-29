@@ -18,7 +18,7 @@ runs:
     - name: Install Node.js
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
-        node-version: "22" # 与 Dockerfile.web 的 node:22-alpine 对齐，保证本地/CI/生产一致
+        node-version: "22" # 与 Dockerfile.unified 的 node:22-slim 对齐，保证本地/CI/生产一致
         cache: "pnpm"
 
     # --frozen-lockfile：lockfile 与 package.json 不一致时直接报错，

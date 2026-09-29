@@ -4,7 +4,7 @@
  * 使用方：历史书签和尚未迁移的余额不足 CTA。购买能力已集中到钱包，本页不再
  * 挂载旧购买组件，也不触发订单或支付副作用。
  */
-import { redirect } from "next/navigation";
+import { redirect } from "@repo/shared/platform/navigation";
 
 type BuyCreditsPageProps = {
   params: Promise<{ locale: string }>;

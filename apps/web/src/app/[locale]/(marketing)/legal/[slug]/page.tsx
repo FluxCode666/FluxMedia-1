@@ -1,8 +1,8 @@
 // fumadocs CSS 仅法律文档正文的 .prose 排版需要,就近在本页引入(不要放进营销布局,
 // 否则它会污染首页等所有营销页、压垮 Header 响应式导航)。
 import "fumadocs-ui/style.css";
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { notFound } from "@repo/shared/platform/navigation";
 
 import { Link } from "@/i18n/routing";
 import { getAllLegalSlugs, getLegalDoc } from "@/lib/source";

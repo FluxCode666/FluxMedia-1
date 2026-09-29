@@ -4,11 +4,10 @@
  * 使用方：历史与支付订单列表。相邻页导航原子更新页序号和不透明 cursor；
  * 非相邻页清除旧 cursor，交由服务端的受控随机页读取处理。
  */
-"use client";
 
 import { getPaginationWindow } from "@repo/shared/pagination/state";
 import { CursorPaginationControls } from "@repo/ui/components/cursor-pagination-controls";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams } from "@repo/shared/platform/navigation";
 import { useEffect, useRef, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { usePathname, useRouter } from "@/i18n/routing";

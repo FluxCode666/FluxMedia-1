@@ -12,10 +12,6 @@
   历史详情验证实际输入图授权、callback 只含模式与数量，以及任务或账号删除后的持久清理。
   创作页已经验证两种输入模式切换会清空另一模式文件，账号池六操作、真实模型映射、无网络
   QuickJS、模型选择滚轮、HTTP Base URL、保存与手动重置状态也已有真实浏览器证据。
-- 构建 `Dockerfile.web` 的最终 runner 镜像并执行
-  `pnpm --filter @repo/web smoke:api-upstream-container`。本地已通过 production build、standalone
-  资产断言和 Node 22 Worker smoke；当前 Docker Hub 匿名鉴权端点 IPv6 连接超时，基础镜像
-  `node:22-slim` 尚未拉取，需网络恢复后重试或由 PR CI 的同一门禁完成。
 - 在维护窗口执行 `0060_unified_media_backend_pool.sql` 的目标库只读预检，确认旧 Web
   账号、有效租约/粘性绑定和不可恢复的视频任务为空；API、子池、关系和历史指标必须
   由迁移保留并转换。另须确认没有 Responses 型 API、非法模型元素或成员 ID 冲突；

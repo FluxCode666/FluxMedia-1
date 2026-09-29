@@ -24,7 +24,7 @@ const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
 }));
 
-vi.mock("next-intl", () => ({
+vi.mock("use-intl", () => ({
   useLocale: () => "zh-CN",
   useTranslations: () => (key: string) => key,
 }));

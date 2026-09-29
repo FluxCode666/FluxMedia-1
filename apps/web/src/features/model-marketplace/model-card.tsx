@@ -4,7 +4,6 @@
  * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示 3:2 封面、类别、
  * 品牌图标、可复制模型 ID、最低价格和视频输入摘要，不读取管理配置或用户权限。
  */
-"use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
 import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace";
@@ -17,8 +16,8 @@ import {
   TooltipTrigger,
 } from "@repo/ui/components/tooltip";
 import { Copy } from "lucide-react";
-import Image from "next/image";
-import { useTranslations } from "next-intl";
+import Image from "@repo/shared/platform/image";
+import { useTranslations } from "use-intl";
 import { useEffect, useState } from "react";
 
 import {

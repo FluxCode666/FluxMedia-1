@@ -4,7 +4,6 @@
  * 使用方：首页 Server Component。关键依赖以四个首阶段 loader 并行读取，并在确认
  * 登录用户后才读取角色；所有结果在离开本模块前收窄为公开、可序列化 DTO。
  */
-import "server-only";
 
 import { isAdminRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
@@ -16,7 +15,7 @@ import type {
   HomepageSlaVisibilityOutput,
 } from "@repo/shared/uol/operations";
 
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 首页视觉模型格子所需的最小公开字段。 */
 export type HomepageModelItem = {

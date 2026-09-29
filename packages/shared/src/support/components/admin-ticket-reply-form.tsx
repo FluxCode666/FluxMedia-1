@@ -1,7 +1,5 @@
-"use client";
-
 import { Loader2, Send } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "../../platform/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/components/button";

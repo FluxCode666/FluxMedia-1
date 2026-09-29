@@ -4,7 +4,7 @@
  * 使用方：仍保存旧 /dashboard/backend-help 地址的管理员书签。系统文档不再作为控制台
  * 页面展示，旧地址统一转到当前用户 API 文档，避免留下可访问的重复文档或 404。
  */
-import { redirect } from "next/navigation";
+import { redirect } from "@repo/shared/platform/navigation";
 
 /**
  * 将旧系统文档地址永久收敛到控制台 API 文档。

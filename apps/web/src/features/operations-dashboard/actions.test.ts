@@ -46,12 +46,12 @@ vi.mock("@repo/shared/safe-action", () => ({
   },
 }));
 
-vi.mock("@/server/go-backend-client", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/server/go-backend-client")>()),
+vi.mock("@/lib/go-backend-request", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/go-backend-request")>()),
   requestGoJson: mocks.requestGoJson,
 }));
 
-import { GoBackendRequestError } from "@/server/go-backend-client";
+import { GoBackendRequestError } from "@/lib/go-backend-request";
 
 vi.mock("./dashboard-web-visit", () => ({
   tryRecordDashboardWebVisit: mocks.tryRecordDashboardWebVisit,

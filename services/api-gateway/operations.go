@@ -4,6 +4,7 @@ package main
 // PostgreSQL so retries and downloads remain consistent across web processes.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -43,47 +44,55 @@ func (b *backend) handleEnsureOperationsEpoch(w http.ResponseWriter, r *http.Req
 	if initializedBy == "" || len(initializedBy) > 200 {
 		return invalid("initializedBy is required")
 	}
-	tx, err := b.db.Begin(r.Context())
+	appDate, startsAt, initialized, err := b.ensureOperationsEpoch(r.Context(), initializedBy)
 	if err != nil {
 		return err
 	}
-	defer rollback(tx)
-	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock($1)`, int64(6799527419)); err != nil {
-		return err
+	writeJSON(w, http.StatusOK, map[string]any{"appDate": appDate, "startsAt": startsAt.Format(time.RFC3339), "initialized": initialized})
+	return nil
+}
+
+// ensureOperationsEpoch records the first production day of the operations
+// dashboard exactly once. It runs at backend startup and behind the cron
+// endpoint used by the deployment gate; both paths are idempotent.
+func (b *backend) ensureOperationsEpoch(ctx context.Context, initializedBy string) (appDate string, startsAt time.Time, initialized bool, err error) {
+	tx, err := b.db.Begin(ctx)
+	if err != nil {
+		return "", time.Time{}, false, err
 	}
-	var appDate string
-	var startsAt time.Time
-	initialized := false
-	err = tx.QueryRow(r.Context(), `SELECT app_date,starts_at FROM operations_analytics_epoch WHERE id=1`).Scan(&appDate, &startsAt)
+	defer rollback(tx)
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(6799527419)); err != nil {
+		return "", time.Time{}, false, err
+	}
+	err = tx.QueryRow(ctx, `SELECT app_date,starts_at FROM operations_analytics_epoch WHERE id=1`).Scan(&appDate, &startsAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		tz, tzErr := b.settingString(r.Context(), "APP_TIME_ZONE", "UTC")
+		tz, tzErr := b.settingString(ctx, "APP_TIME_ZONE", "UTC")
 		if tzErr != nil {
-			return tzErr
+			return "", time.Time{}, false, tzErr
 		}
 		loc, tzErr := time.LoadLocation(tz)
 		if tzErr != nil {
-			return &apiError{http.StatusServiceUnavailable, "NOT_READY", "运营统计时区配置无效"}
+			return "", time.Time{}, false, &apiError{http.StatusServiceUnavailable, "NOT_READY", "运营统计时区配置无效"}
 		}
 		now := time.Now().UTC()
 		local := now.In(loc)
 		appDate = local.Format("2006-01-02")
 		startsAt = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc).UTC()
 		requestID := "operations-epoch-" + appDate
-		if _, err = tx.Exec(r.Context(), `INSERT INTO operations_analytics_epoch(id,app_date,starts_at,initialized_by,initialization_request_id,created_at) VALUES(1,$1,$2,$3,$4,$5)`, appDate, startsAt, initializedBy, requestID, now); err != nil {
-			return err
+		if _, err = tx.Exec(ctx, `INSERT INTO operations_analytics_epoch(id,app_date,starts_at,initialized_by,initialization_request_id,created_at) VALUES(1,$1,$2,$3,$4,$5)`, appDate, startsAt, initializedBy, requestID, now); err != nil {
+			return "", time.Time{}, false, err
 		}
-		if _, err = tx.Exec(r.Context(), `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after,metadata,created_at) VALUES($1,NULL,NULL,'operations.ensureCurrentEpoch','自动初始化运营总览生产统计起点',NULL,$2,$3,$4)`, newRequestID(), map[string]any{"appDate": appDate, "startsAt": startsAt.Format(time.RFC3339)}, map[string]any{"initializedBy": initializedBy, "requestId": requestID}, now); err != nil {
-			return err
+		if _, err = tx.Exec(ctx, `INSERT INTO admin_audit_log(id,admin_user_id,target_user_id,action,reason,before,after,metadata,created_at) VALUES($1,NULL,NULL,'operations.ensureCurrentEpoch','自动初始化运营总览生产统计起点',NULL,$2,$3,$4)`, newRequestID(), map[string]any{"appDate": appDate, "startsAt": startsAt.Format(time.RFC3339)}, map[string]any{"initializedBy": initializedBy, "requestId": requestID}, now); err != nil {
+			return "", time.Time{}, false, err
 		}
 		initialized = true
 	} else if err != nil {
-		return err
+		return "", time.Time{}, false, err
 	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return err
+	if err = tx.Commit(ctx); err != nil {
+		return "", time.Time{}, false, err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"appDate": appDate, "startsAt": startsAt.Format(time.RFC3339), "initialized": initialized})
-	return nil
+	return appDate, startsAt, initialized, nil
 }
 
 // handleOperationsProcessExportsJob is the Go-owned scheduler boundary. The

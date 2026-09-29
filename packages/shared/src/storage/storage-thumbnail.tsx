@@ -1,6 +1,4 @@
-"use client";
-
-import Image, { type ImageProps } from "next/image";
+import Image, { type ImageProps } from "../platform/image";
 import { useState } from "react";
 import { buildStorageThumbnailUrl } from "./image-url";
 

@@ -77,7 +77,7 @@ vi.mock("lucide-react", () => ({
   Shield: () => null,
   Users: () => null,
 }));
-vi.mock("next/link", () => ({
+vi.mock("@repo/shared/platform/link", () => ({
   default: ({
     children,
     href,
@@ -100,16 +100,16 @@ vi.mock("next/link", () => ({
     ),
   useLinkStatus: () => ({ pending: false }),
 }));
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   usePathname: () => "/zh/dashboard/admin/image-size-configs",
   useRouter: () => ({ push: vi.fn() }),
 }));
-vi.mock("next-intl", () => ({
+vi.mock("use-intl", () => ({
   useLocale: () => "zh",
   useTranslations: () => (key: string) =>
     key === "nav.imageSizeConfigurations" ? "图片尺寸配置" : key,
 }));
-vi.mock("next-safe-action/hooks", () => ({
+vi.mock("@repo/shared/platform/use-action", () => ({
   useAction: () => ({ execute: vi.fn(), result: { data: { count: 0 } } }),
 }));
 vi.mock("@/features/auth/hooks/use-current-session", () => ({

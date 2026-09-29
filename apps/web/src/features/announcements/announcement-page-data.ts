@@ -12,7 +12,7 @@ import type {
   UserAnnouncementListOutput,
 } from "@repo/shared/announcements/list-contract";
 import type { AppUserRole } from "@repo/shared/auth/roles";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 type AnnouncementPrincipalInput = {
   userId: string;

@@ -23,7 +23,7 @@ vi.mock("@repo/shared/safe-action", () => {
   return { imageBackendPoolViewerAction: builder };
 });
 
-vi.mock("@/server/go-backend-client", () => ({
+vi.mock("@/lib/go-backend-request", () => ({
   requestGoJson: mocks.requestGoJson,
 }));
 

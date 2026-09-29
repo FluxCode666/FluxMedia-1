@@ -23,10 +23,8 @@ import {
   unfreezeCreditsAccount,
 } from "../../credits/core";
 import { createRuntimeCreditPackagePurchaseCheckout } from "../../credits/purchase-checkout-runtime";
-import {
-  CREDIT_PACKAGE_PURCHASE_MAX_QUANTITY,
-  CreditPackagePurchaseCheckoutError,
-} from "../../credits/purchase-checkout-service";
+import { createPurchaseCheckoutInputSchema } from "../../credits/purchase-checkout-input";
+import { CreditPackagePurchaseCheckoutError } from "../../credits/purchase-checkout-service";
 import {
   usageEventDetailSchema,
   usageEventListOutputSchema,
@@ -864,21 +862,7 @@ export const refund = defineOperation({
 // ---------------------------------------------------------------------------
 // 21. credits.createPurchaseCheckout - 创建积分购买结账会话
 // ---------------------------------------------------------------------------
-/** 积分包购买的共享输入 schema，供 UOL 与 Server Action 使用同一约束。 */
-export const createPurchaseCheckoutInputSchema = z
-  .object({
-    packageId: z.string().min(1).describe("积分包 ID"),
-    clientRequestId: z.string().uuid().describe("客户端生成的幂等请求 ID"),
-    locale: z.enum(["en", "zh"]).describe("支付结果页语言"),
-    quantity: z
-      .number()
-      .int()
-      .min(1)
-      .max(CREDIT_PACKAGE_PURCHASE_MAX_QUANTITY)
-      .optional()
-      .describe("购买数量，省略时为 1"),
-  })
-  .strict();
+export { createPurchaseCheckoutInputSchema };
 
 export const createPurchaseCheckout = defineOperation({
   name: "credits.createPurchaseCheckout",

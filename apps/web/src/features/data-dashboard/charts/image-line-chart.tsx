@@ -4,7 +4,6 @@
  * 使用方：DataDashboardCharts。折线直接表达日期趋势，数据点和浮窗均由 shadcn Chart
  * 与 Recharts 提供，不包含管理端的装饰性 Lieflat 图元。
  */
-"use client";
 
 import type { DataDashboardBucket } from "@repo/shared/analytics/contracts";
 import {

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 统一媒体后端分组编辑表单。
  *
@@ -29,7 +27,7 @@ import {
 } from "@repo/ui/components/select";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 

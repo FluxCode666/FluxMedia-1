@@ -4,7 +4,6 @@
  * 使用方：BackendMemberFilterBar。组件把 Calendar 选择结果转换为视图模型使用的
  * YYYY-MM-DD 字符串，只更新父组件筛选草稿，不读取账号数据或触发服务端请求。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
 import {

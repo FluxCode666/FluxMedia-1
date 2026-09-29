@@ -4,8 +4,8 @@
  * 职责：校验管理员会话，读取会话中的角色与用户时区，并把角色能力传给
  * 用户管理工作台。页面不直接执行用户管理或审核策略写入。
  */
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import {
   canAccessAdminArea,
