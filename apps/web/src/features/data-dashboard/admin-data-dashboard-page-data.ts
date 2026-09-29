@@ -11,7 +11,7 @@ import type {
 } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { Principal } from "@repo/shared/uol";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 管理员首屏与 action 共用的 session 身份和 strict 日期输入。 */
 export type AdminDataDashboardPageDataInput = {

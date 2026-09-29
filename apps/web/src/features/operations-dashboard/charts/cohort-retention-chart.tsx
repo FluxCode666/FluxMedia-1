@@ -5,7 +5,6 @@
  * 注册日 × D1/D7/D30 构成矩阵，圆点面积以 sqrt(rate) 编码；真实零和无样本仍
  * 保留小点，未成熟与上线前以不同轮廓明确显示，并附完整等价表。
  */
-"use client";
 
 import type { CohortRetentionResult } from "@repo/shared/operations-dashboard/comparison";
 import {

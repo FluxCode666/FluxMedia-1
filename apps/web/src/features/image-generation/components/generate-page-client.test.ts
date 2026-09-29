@@ -30,7 +30,7 @@ const testHarness = vi.hoisted(() => ({
   toastError: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   useRouter: () => ({ replace: testHarness.replace }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));

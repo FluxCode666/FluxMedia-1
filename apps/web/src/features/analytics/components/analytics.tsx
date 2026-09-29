@@ -1,7 +1,5 @@
-"use client";
-
-import { GoogleAnalytics } from "@next/third-parties/google";
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
 
 import {
   COOKIE_CONSENT_CHANGE_EVENT,
@@ -59,4 +57,42 @@ export function Analytics() {
   }
 
   return <GoogleAnalytics gaId={gaId} />;
+}
+
+type GtagWindow = Window & { dataLayer?: unknown[]; gtag?: (...args: unknown[]) => void };
+
+/**
+ * 加载 gtag.js 并在路由切换时上报页面浏览。
+ *
+ * @param gaId - Google Analytics 衡量 ID。
+ * @sideEffects 首次挂载时向 document.head 注入 gtag 脚本；同一页面只注入一次。
+ */
+function GoogleAnalytics({ gaId }: { gaId: string }) {
+  const location = useLocation();
+
+  useEffect(() => {
+    const win = window as GtagWindow;
+    if (document.getElementById("ga-gtag")) return;
+    win.dataLayer = win.dataLayer ?? [];
+    win.gtag = function gtag() {
+      // biome-ignore lint/complexity/noArguments: gtag 协议要求推入 arguments 对象。
+      win.dataLayer?.push(arguments);
+    };
+    win.gtag("js", new Date());
+    win.gtag("config", gaId, { send_page_view: false });
+    const script = document.createElement("script");
+    script.id = "ga-gtag";
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`;
+    document.head.appendChild(script);
+  }, [gaId]);
+
+  useEffect(() => {
+    (window as GtagWindow).gtag?.("event", "page_view", {
+      page_location: window.location.href,
+      page_path: `${location.pathname}${location.search}`,
+    });
+  }, [location.pathname, location.search]);
+
+  return null;
 }

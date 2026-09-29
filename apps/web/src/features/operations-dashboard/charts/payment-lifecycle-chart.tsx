@@ -5,7 +5,6 @@
  * 每个阶段是一条横向 tick 队列，基线提供可比较长度，行尾保留精确数值；数量
  * 过大时一个 tick 代表自动计算的等量订单，避免伪造逐订单记录。
  */
-"use client";
 
 import type { OperationsPaymentLifecycleStage } from "@repo/shared/operations-dashboard/contracts";
 import { Button } from "@repo/ui/components/button";

@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 管理员 agent 令牌 Server Actions。
  *
@@ -15,7 +13,7 @@ import {
   type CreatedAdminAgentToken,
 } from "@repo/shared/uol/operations/admin-agent";
 import { z } from "zod";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 令牌列表页快照：令牌元数据与可签发的 scope 定义。 */
 export interface AdminAgentTokenList {

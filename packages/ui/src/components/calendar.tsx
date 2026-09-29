@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 基于 shadcn/ui 的日历组件。
  *

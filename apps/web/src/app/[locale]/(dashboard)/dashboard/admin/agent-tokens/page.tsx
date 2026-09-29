@@ -8,8 +8,8 @@
 import { isAdminRole, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
-import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 
 import { AdminAgentTokenPanel } from "@/features/admin-agent-tokens";
 

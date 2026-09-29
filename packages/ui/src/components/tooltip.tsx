@@ -4,7 +4,6 @@
  * 使用方是需要在悬停或键盘聚焦时补充短文本说明的业务界面；基于 Radix UI 保持
  * Portal、延迟、焦点和无障碍语义一致，视觉只使用现有主题 token。
  */
-"use client";
 
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 import * as React from "react";

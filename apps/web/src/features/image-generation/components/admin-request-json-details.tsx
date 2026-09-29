@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 全局使用记录详情中的真实请求 JSON 折叠区。
  *
@@ -14,7 +12,7 @@ import {
   CollapsibleTrigger,
 } from "@repo/ui/components/collapsible";
 import { ChevronRight } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale } from "use-intl";
 import {
   Component,
   type ErrorInfo,

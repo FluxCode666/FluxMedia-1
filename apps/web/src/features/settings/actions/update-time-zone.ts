@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 用户展示时区 Server Action 薄适配器。
  *
@@ -8,10 +6,10 @@
  */
 import { protectedAction } from "@repo/shared/safe-action";
 import { userTimeZoneSchema } from "@repo/shared/time-zone";
-import { revalidatePath } from "next/cache";
+import { revalidatePath } from "@repo/shared/platform/cache";
 import { z } from "zod";
 
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 const updateTimeZoneSchema = z.object({
   timeZone: userTimeZoneSchema,

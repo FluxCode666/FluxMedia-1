@@ -6,10 +6,8 @@ import type {
   creditsBatch,
   creditsTransaction,
 } from "@repo/database/schema";
-import {
-  requestGoBackendInternalJson,
-  requestGoBackendJson,
-} from "../http/go-backend";
+import { requestGoBackendJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 import type {
   CreditOperationContext,
   CreditOperationContextFallback,

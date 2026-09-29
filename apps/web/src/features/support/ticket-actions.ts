@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 客服工单分页的 Server Action 薄适配器。
  *
@@ -15,7 +13,7 @@ import {
   ticketListInputSchema,
   ticketMessageListInputSchema,
 } from "@repo/shared/support/ticket-list-contract";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 分页读取当前人工会话可见的工单。 */
 export const listTicketsAction = protectedAction

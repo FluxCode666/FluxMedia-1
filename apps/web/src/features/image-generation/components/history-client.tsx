@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 图片与视频使用记录的响应式列表容器。
  *
@@ -15,8 +13,8 @@ import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Clock, Film, ImageIcon, ImagePlus } from "lucide-react";
-import dynamic from "next/dynamic";
-import { useLocale } from "next-intl";
+import dynamic from "@repo/shared/platform/dynamic";
+import { useLocale } from "use-intl";
 import { useEffect, useState } from "react";
 import { UrlCursorPaginationControls } from "@/features/pagination/cursor-pagination-controls";
 import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";

@@ -7,7 +7,7 @@
  */
 
 import crypto from "node:crypto";
-import { requestGoBackendInternalJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 import { getBaseUrl } from "../config/payment";
 import {
   getRuntimeSettingSelect,

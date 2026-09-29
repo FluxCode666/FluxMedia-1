@@ -11,7 +11,7 @@ import type {
   OperationsExportTask,
 } from "@repo/shared/operations-dashboard/contracts";
 import { OperationError, type Principal } from "@repo/shared/uol";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 import {
   mapOperationsActionError,

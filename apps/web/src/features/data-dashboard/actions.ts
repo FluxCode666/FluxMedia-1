@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 用户数据看板刷新 Server Action 薄适配器。
  *
@@ -13,7 +11,7 @@ import {
 import { logError } from "@repo/shared/logger";
 import { protectedAction } from "@repo/shared/safe-action";
 import { OperationError } from "@repo/shared/uol";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 
 /** 客户端可区分且不携带服务端异常详情的刷新结果。 */

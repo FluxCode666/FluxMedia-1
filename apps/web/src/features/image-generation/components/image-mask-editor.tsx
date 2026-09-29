@@ -5,11 +5,9 @@
  * 区域保存为透明、其余区域为不透明黑色的 PNG，并交回现有蒙版上传链路复验。
  */
 
-"use client";
-
 import { Button } from "@repo/ui/components/button";
 import { Eraser, Loader2, Save } from "lucide-react";
-import Image from "next/image";
+import Image from "@repo/shared/platform/image";
 import { useEffect, useRef, useState } from "react";
 
 type MaskPoint = {

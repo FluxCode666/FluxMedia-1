@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 模型配置管理列表。
  *
@@ -85,7 +83,6 @@ function ModelCoverThumbnail({ entry }: { entry: ModelConfigurationEntry }) {
   return (
     <div className="aspect-[3/2] w-24 overflow-hidden rounded-md border bg-muted/40">
       {source ? (
-        // biome-ignore lint/performance/noImgElement: 运行时封面需要原生 onError 单次回退。
         <img
           src={source}
           alt=""

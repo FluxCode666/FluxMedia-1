@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 供应商适配版本历史弹窗。
  *
@@ -22,7 +20,7 @@ import {
 import { Label } from "@repo/ui/components/label";
 import { Textarea } from "@repo/ui/components/textarea";
 import { ChevronLeft, ChevronRight, History, Loader2 } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale } from "use-intl";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 

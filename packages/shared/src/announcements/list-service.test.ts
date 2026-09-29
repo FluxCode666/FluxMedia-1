@@ -1,9 +1,6 @@
 /** 公告 Go 适配器测试：验证请求转发与后端计数契约。 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const getAll = vi.fn(() => [{ name: "session", value: "token" }]);
-vi.mock("next/headers", () => ({ cookies: vi.fn(async () => ({ getAll })) }));
-
 import {
   markAllActiveAnnouncementsReadForUser,
   readAdminAnnouncementsPage,
@@ -13,10 +10,9 @@ import {
 describe("announcement Go adapter", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    getAll.mockClear();
   });
 
-  it("forwards user pagination with the current session cookie", async () => {
+  it("forwards user pagination through the same-origin session", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -33,8 +29,8 @@ describe("announcement Go adapter", () => {
       readUserAnnouncementsPage("user-1", { page: 2, pageSize: 20 })
     ).resolves.toMatchObject({ page: 2 });
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/announcements?page=2&pageSize=20"),
-      expect.objectContaining({ headers: expect.any(Headers) })
+      "/api/announcements?page=2&pageSize=20",
+      expect.objectContaining({ credentials: "same-origin" })
     );
   });
 

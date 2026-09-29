@@ -1,5 +1,3 @@
-"use client";
-
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -26,7 +24,7 @@ import {
 } from "@repo/ui/components/tabs";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Database, Download, Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "../../platform/use-action";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";

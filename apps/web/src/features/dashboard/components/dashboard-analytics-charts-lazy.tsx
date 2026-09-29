@@ -1,12 +1,10 @@
-"use client";
-
 /**
  * 控制台模型占比图表的懒加载入口。
  *
  * Recharts 只形成一个客户端异步块；等高骨架避免首次加载时页面跳动，Server
  * Component 不会直接引入图表运行时。
  */
-import dynamic from "next/dynamic";
+import dynamic from "@repo/shared/platform/dynamic";
 import type { ComponentProps } from "react";
 
 import type { ModelUsageDistributionChart } from "./dashboard-analytics-charts";

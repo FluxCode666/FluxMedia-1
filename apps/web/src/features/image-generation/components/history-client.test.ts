@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   historyVideoDialog: vi.fn((_props: unknown) => null),
 }));
 
-vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
+vi.mock("use-intl", () => ({ useLocale: () => "zh" }));
 vi.mock("./history-filters", () => ({
   HistoryFilters: () => createElement("div", { "data-testid": "filters" }),
 }));
@@ -27,7 +27,7 @@ vi.mock("@/i18n/routing", () => ({
   usePathname: () => "/dashboard/history",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 

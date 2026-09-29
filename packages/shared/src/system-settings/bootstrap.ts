@@ -1,4 +1,4 @@
-import { requestGoBackendInternalJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 
 let bootstrap: Promise<unknown> | undefined;
 

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 自定义模型创建 Dialog。
  *

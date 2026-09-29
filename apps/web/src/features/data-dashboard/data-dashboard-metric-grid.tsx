@@ -4,7 +4,6 @@
  * 使用方：DataDashboardPanel、AdminDataDashboardPanel。所有数值来自同一快照；组件
  * 只格式化并按 namespace 切换本人或管理员所选范围文案，不重新计算统计口径。
  */
-"use client";
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { formatCredits } from "@repo/shared/credits/format";
@@ -32,7 +31,7 @@ import {
   Image,
   Info,
 } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 type DataDashboardMetricGridProps = {
   snapshot: DataDashboardOutput;

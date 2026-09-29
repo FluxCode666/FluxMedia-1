@@ -4,11 +4,10 @@
  * 使用方：payment-overview-chart-lazy。收入按完成日和币种绘制在左轴，全部状态充值
  * 订单按创建日绘制在右轴；完整文字图例与隐藏数据表确保信息不只依赖颜色表达。
  */
-"use client";
 
 import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import type { AdminPaymentOverviewOutput } from "@repo/shared/payment/admin-contract";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useRef, useState } from "react";
 import {
   CartesianGrid,

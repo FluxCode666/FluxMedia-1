@@ -231,6 +231,25 @@ prepare_video_input_migration_state() {
   fi
   install -d -m 700 \
     -o "${app_uid}" -g "${app_gid}" "${deploy_path}/state"
+  # 站内更新的版本目录与更新前备份，由应用用户独占写入。
+  releases_path=/root/docker-data/fluxmedia-releases
+  if [ -L "${releases_path}" ]; then
+    echo "站内更新目录不能是符号链接，拒绝挂载。" >&2
+    return 1
+  fi
+  install -d -m 750 -o "${app_uid}" -g "${app_gid}" "${releases_path}"
+}
+
+# Deploy Production 以本次镜像为准。重新部署的镜像恰好是站内更新的基础镜像
+# 时（例如回滚），boot.mjs 仍会认可卷内版本，因此越过迁移边界后撤下站内更新
+# 记录；改名保留便于人工排查，卷内旧版本目录由下一次站内更新清理。迁移边界
+# 之前失败会恢复上一版应用，那时仍需沿用卷内版本，所以不能更早撤下。
+retire_in_site_update_state() {
+  state_file="${releases_path}/state.json"
+  if [ -f "${state_file}" ]; then
+    mv -f "${state_file}" "${releases_path}/state.superseded-${image_tag}.json"
+    echo "已撤下站内更新记录，本次以镜像 ${image_tag} 为准。"
+  fi
 }
 
 # 统计迁移只创建 building 状态；必须使用新 Web 镜像补齐事实、汇总并零差异
@@ -281,14 +300,11 @@ for required_key in DATABASE_URL BETTER_AUTH_SECRET REDIS_HOST REDIS_PASSWORD CR
 done
 bind_host="$(read_env_value BIND_HOST)"
 bind_host="${bind_host:-127.0.0.1}"
-web_port="$(read_env_value WEB_PORT)"
-web_port="${web_port:-3000}"
 backend_port="$(read_env_value GO_BACKEND_PORT)"
 backend_port="${backend_port:-3001}"
 if [ "${bind_host}" != "127.0.0.1" ] \
-  || [ "${web_port}" != "3000" ] \
   || [ "${backend_port}" != "3001" ]; then
-  echo "生产 .env 的 BIND_HOST/WEB_PORT/GO_BACKEND_PORT 必须为 127.0.0.1/3000/3001。" >&2
+  echo "生产 .env 的 BIND_HOST/GO_BACKEND_PORT 必须为 127.0.0.1/3001。" >&2
   exit 1
 fi
 
@@ -593,7 +609,6 @@ if [ "${resolved_image}" != "${app_ref}" ]; then
   echo "候选 Compose 未解析为本次 digest 固定镜像，拒绝部署。" >&2
   exit 1
 fi
-install_nginx_configuration
 
 if ! candidate_compose pull app; then
   exit 1
@@ -614,6 +629,11 @@ fi
 # Validate the non-root image user and storage permissions before any
 # production service is stopped.
 prepare_video_input_migration_state
+
+# 新配置把全部页面交给 Go backend，而旧版 backend 不含 Web 页面；紧贴停服
+# 安装可把旧应用在新路由下服务页面的窗口压到最短。reload 失败时应用仍在
+# 运行，可原子恢复原配置。
+install_nginx_configuration
 
 echo "进入维护状态并停止旧应用服务。"
 if [ "${previous_layout}" = "legacy" ]; then
@@ -664,6 +684,7 @@ bash ./create-database-backup.sh \
 # 都只能保持维护并前向恢复，绝不重新启动旧 schema 镜像。
 write_migration_marker
 migration_started=true
+retire_in_site_update_state
 set_env_value FLUXMEDIA_APP_IMAGE_REF "${app_ref}"
 set_env_value FLUXMEDIA_RELEASE_TAG "${image_tag}"
 activate_compose_file docker-compose.next.yml
@@ -724,7 +745,7 @@ for attempt in $(seq 1 30); do
       "${app_container_id}"
   )"
   if [ "${app_health_status}" = "healthy" ]; then
-    echo "统一应用四个内部进程均已通过健康检查。"
+    echo "统一应用三个内部进程均已通过健康检查。"
     bash ./smoke-production-routing.sh \
       https://media.flux-code.cc https://media.fluxhall.cc
     application_stopped=false

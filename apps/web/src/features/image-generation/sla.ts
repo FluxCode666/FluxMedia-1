@@ -1,5 +1,3 @@
-import "server-only";
-
 import { db } from "@repo/database";
 import { generation } from "@repo/database/schema";
 import { desc, inArray } from "drizzle-orm";

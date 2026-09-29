@@ -2,45 +2,17 @@
  * 公告列表的 Go 后端适配器。
  *
  * 公告的筛选、分页、已读状态和管理员统计由 Go/PostgreSQL 负责；这里仅保留
- * 领域契约的传输适配，避免生产路径再次直接导入 Next Drizzle 数据库。
+ * 领域契约的传输适配；浏览器同源请求自动携带会话 Cookie。
  */
-import { cookies } from "next/headers";
-
 import type {
   AdminAnnouncementListOutput,
   UserAnnouncementListOutput,
 } from "./list-contract";
 import type { AdminAnnouncementPageRequest } from "./list-service-core";
 import type { PaginationState } from "../pagination/state";
+import { requestGoBackendJson } from "../http/go-backend";
 
-const goBase = () =>
-  (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
-
-async function requestGo<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const cookieHeader = (await cookies())
-    .getAll()
-    .map((cookie) => `${cookie.name}=${cookie.value}`)
-    .join("; ");
-  const headers = new Headers(init.headers);
-  if (init.body && !headers.has("content-type")) {
-    headers.set("content-type", "application/json");
-  }
-  if (cookieHeader) headers.set("cookie", cookieHeader);
-  const response = await fetch(`${goBase()}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
-  const payload = (await response.json().catch(() => null)) as
-    | (T & { error?: { message?: string } })
-    | null;
-  if (!response.ok) {
-    throw new Error(
-      payload?.error?.message || `Go backend request failed (${response.status})`
-    );
-  }
-  return payload as T;
-}
+const requestGo = <T>(path: string, init: RequestInit = {}) => requestGoBackendJson<T>(path, init);
 
 /** 读取当前用户的公告分页。userId 仅用于保持既有领域函数签名。 */
 export async function readUserAnnouncementsPage(

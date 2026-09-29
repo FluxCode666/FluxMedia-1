@@ -1,4 +1,4 @@
-import { requestGoBackendInternalJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 import { SETTING_DEFINITION_BY_KEY, type SettingKey } from "./definitions";
 
 // 托管块的哨兵标记。BEGIN..END 之间的内容由本模块独占管理，

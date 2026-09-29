@@ -10,7 +10,7 @@ const runtimeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/server/go-backend-client", () => ({
+vi.mock("@/lib/go-backend-request", () => ({
   requestGoJson: runtimeMocks.requestGoJson,
 }));
 

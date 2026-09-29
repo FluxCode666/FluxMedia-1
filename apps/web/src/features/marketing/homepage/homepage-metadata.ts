@@ -5,7 +5,7 @@
  * 集成，不读取或写入运行时模型 ID，也不承载订阅、积分或定价信息。
  */
 import { siteConfig } from "@repo/shared/config";
-import type { Metadata } from "next";
+import type { Metadata } from "@repo/shared/platform/metadata";
 
 /** 首页 SEO 支持的语言。 */
 export type HomepageMetadataLocale = "en" | "zh";

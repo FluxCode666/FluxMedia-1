@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 注册表单与安全回跳消费组件。
  *
@@ -23,8 +21,8 @@ import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Separator } from "@repo/ui/components/separator";
 import { Eye, EyeOff, Mail } from "lucide-react";
-import Link from "next/link";
-import { useLocale, useTranslations } from "next-intl";
+import Link from "@repo/shared/platform/link";
+import { useLocale, useTranslations } from "use-intl";
 import { useState } from "react";
 import { toast } from "sonner";
 

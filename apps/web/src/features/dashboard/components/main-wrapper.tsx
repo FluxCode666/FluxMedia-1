@@ -1,9 +1,7 @@
-"use client";
-
 import { cn } from "@repo/ui/utils";
 import { Menu, PanelLeft, PanelLeftClose } from "lucide-react";
-import { usePathname } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { usePathname } from "@repo/shared/platform/navigation";
+import { useTranslations } from "use-intl";
 import { useSidebar } from "@/features/dashboard/context";
 
 /**

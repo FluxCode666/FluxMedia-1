@@ -5,7 +5,6 @@
  * 填写原因后设置或清除用户覆盖。使用方为管理员用户详情页；写入统一通过
  * setUserModerationPolicyAction 进入 UOL，组件本身不持有权限或持久化逻辑。
  */
-"use client";
 
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";

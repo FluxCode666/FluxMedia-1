@@ -1,8 +1,7 @@
-"use server";
-import { cookies } from "next/headers";
+import { requestGoBackendJson } from "../http/go-backend";
 import { adminAction, protectedAction } from "../safe-action";
 import { announcementIdSchema, createAnnouncementSchema, updateAnnouncementSchema } from "./schemas";
-async function go<T>(path:string, init:RequestInit={}):Promise<T>{const base=(process.env.GO_BACKEND_URL||"http://127.0.0.1:8080").replace(/\/$/u,"");const cookie=(await cookies()).getAll().map(c=>`${c.name}=${c.value}`).join("; ");const headers=new Headers(init.headers);if(init.body&&!headers.has("content-type"))headers.set("content-type","application/json");if(cookie)headers.set("cookie",cookie);const r=await fetch(base+path,{...init,headers,cache:"no-store"});const p=await r.json().catch(()=>null) as T & {error?:{message?:string}};if(!r.ok)throw new Error(p?.error?.message||`请求失败 (${r.status})`);return p;}
+const go = <T>(path: string, init: RequestInit = {}) => requestGoBackendJson<T>(path, init);
 export async function countUnreadAnnouncementsForUser(_userId:string){const x=await go<{count:number}>("/api/announcements/unread-count");return x.count??0;}
 export async function markAnnouncementIdsReadForUser(_userId:string, ids:string[]){let n=0;for(const id of Array.from(new Set(ids)).filter(Boolean)){await go("/api/announcements/read",{method:"POST",body:JSON.stringify({id})});n++;}return n;}
 export const getMyUnreadAnnouncementCountAction=protectedAction.metadata({action:"announcements.getMyUnreadCount"}).action(async()=>go<{count:number}>("/api/announcements/unread-count"));

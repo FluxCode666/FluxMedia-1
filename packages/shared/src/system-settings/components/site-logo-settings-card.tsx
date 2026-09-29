@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 网站 Logo 专用设置卡片。
  *
@@ -17,8 +15,8 @@ import {
 } from "@repo/ui/components/card";
 import { Label } from "@repo/ui/components/label";
 import { Loader2, RotateCcw, Save } from "lucide-react";
-import Image from "next/image";
-import { useAction } from "next-safe-action/hooks";
+import Image from "../../platform/image";
+import { useAction } from "../../platform/use-action";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 

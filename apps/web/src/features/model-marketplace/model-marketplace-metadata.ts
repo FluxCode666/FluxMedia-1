@@ -5,7 +5,7 @@
  * 双语 alternates，不读取运行时目录或固定具体模型名。
  */
 import { siteConfig } from "@repo/shared/config";
-import type { Metadata } from "next";
+import type { Metadata } from "@repo/shared/platform/metadata";
 
 /** 模型广场 SEO 支持的路由语言。 */
 export type ModelMarketplaceMetadataLocale = "en" | "zh";

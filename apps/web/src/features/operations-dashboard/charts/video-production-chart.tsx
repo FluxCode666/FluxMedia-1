@@ -5,7 +5,6 @@
  * Lollipop：每个可见桶保留全高日历发丝、从数值点垂下的 stem 与 lollipop 圆点；
  * Tabs 只切换同一快照口径，不改变范围或重新请求。
  */
-"use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import { Button } from "@repo/ui/components/button";

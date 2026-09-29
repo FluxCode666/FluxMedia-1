@@ -8,7 +8,7 @@
 import { createHmac } from "node:crypto";
 import { type GalleryListOutput, galleryListOutputSchema } from "@repo/shared/image-generation/gallery-contract";
 import { type SQL, sql } from "drizzle-orm";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 import type { GalleryListQuery, GalleryListRow, GalleryRepository } from "./gallery-service";
 
 /** 构造严格小于卡片排序键的下一页谓词。 */

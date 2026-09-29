@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 管理端模型配置页签的读取、筛选与 Dialog 编排组件。
  *
@@ -30,7 +28,7 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { AlertTriangle, Loader2, Plus, RefreshCw, Search } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams } from "@repo/shared/platform/navigation";
 import {
   type FormEvent,
   useCallback,

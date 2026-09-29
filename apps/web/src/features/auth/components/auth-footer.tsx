@@ -1,9 +1,7 @@
-"use client";
-
 import { CookieSettingsDialog } from "@repo/shared/components";
 import { siteConfig } from "@repo/shared/config";
-import Link from "next/link";
-import { useTranslations } from "next-intl";
+import Link from "@repo/shared/platform/link";
+import { useTranslations } from "use-intl";
 
 /**
  * Auth 页面底部组件

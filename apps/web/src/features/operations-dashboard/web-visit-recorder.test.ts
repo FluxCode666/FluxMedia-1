@@ -22,7 +22,7 @@ const actionHarness = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("next-safe-action/hooks", () => ({
+vi.mock("@repo/shared/platform/use-action", () => ({
   useAction: (
     _action: unknown,
     callbacks: NonNullable<typeof actionHarness.callbacks>

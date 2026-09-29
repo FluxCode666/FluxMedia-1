@@ -9,7 +9,7 @@ import type {
   BlogPostListOutput,
   PseoPageListOutput,
 } from "@repo/shared/uol/operations/content";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 读取公开博客索引分页。 */
 export async function loadBlogIndexPageData(input: {

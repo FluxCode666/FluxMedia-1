@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 网站 Logo 地址编辑器。
  *
@@ -8,7 +6,7 @@
  * 关键依赖：站点品牌纯契约与共享 Input；不读取数据库或发起保存请求。
  */
 import { Input } from "@repo/ui/components/input";
-import Image from "next/image";
+import Image from "../../platform/image";
 import { useMemo, useState } from "react";
 
 import { DEFAULT_SITE_LOGO_URL, siteLogoUrlSchema } from "../site-branding";

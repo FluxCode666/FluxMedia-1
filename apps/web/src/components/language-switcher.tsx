@@ -1,5 +1,3 @@
-"use client";
-
 import { Button } from "@repo/ui/components/button";
 import {
   DropdownMenu,
@@ -8,8 +6,8 @@ import {
   DropdownMenuTrigger,
 } from "@repo/ui/components/dropdown-menu";
 import { Globe } from "lucide-react";
-import { useParams } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
+import { useParams } from "@repo/shared/platform/navigation";
+import { useLocale, useTranslations } from "use-intl";
 import { useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { usePathname, useRouter } from "@/i18n/routing";
@@ -46,9 +44,6 @@ export function LanguageSwitcher() {
     startTransition(() => {
       requestNavigationFeedback();
       router.replace(
-        // @ts-expect-error -- TypeScript will validate that only known `params`
-        // are used in combination with a given `pathname`. Since the two will
-        // always match for the current route, we can skip runtime checks.
         { pathname, params },
         { locale: newLocale }
       );

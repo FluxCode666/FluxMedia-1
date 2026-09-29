@@ -4,8 +4,8 @@
  * 使用方：`/[locale]` 首页；专属 Route Group 保证布局不附加营销共享 Footer。
  * 关键依赖：首页安全数据装配器与连续 Server Component 内容。
  */
-import type { Metadata } from "next";
-import { getTranslations } from "next-intl/server";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { getTranslations } from "@repo/shared/platform/intl";
 import { HomePageJsonLd } from "@/components/seo/json-ld";
 import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import { HomepageContent } from "@/features/marketing/homepage/homepage-content";
@@ -16,7 +16,6 @@ import {
 } from "@/features/marketing/homepage/homepage-metadata";
 import { loadHomepagePageData } from "@/features/marketing/homepage/homepage-page-data";
 
-export const dynamic = "force-dynamic";
 
 /**
  * 生成当前首页 Metadata。

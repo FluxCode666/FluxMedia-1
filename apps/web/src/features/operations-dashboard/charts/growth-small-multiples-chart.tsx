@@ -5,7 +5,6 @@
  * Hairline Line 的日历地板、发丝折线和逐点圆点；每条序列独立缩放，避免四种
  * 不同量级互相压扁，同时以完整表格保留可比较事实。
  */
-"use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import {

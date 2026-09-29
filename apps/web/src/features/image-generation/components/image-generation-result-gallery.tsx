@@ -6,7 +6,7 @@
  */
 
 import { Loader2 } from "lucide-react";
-import Image from "next/image";
+import Image from "@repo/shared/platform/image";
 
 type ImageGenerationResultGalleryProps = {
   busy: boolean;

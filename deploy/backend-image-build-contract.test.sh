@@ -80,7 +80,6 @@ if [ "${build_action_count}" -ne 1 ]; then
 fi
 
 for old_dockerfile in \
-  Dockerfile.web \
   Dockerfile.api-gateway \
   Dockerfile.api-upstream-script-runtime \
   Dockerfile.media-processing-runtime; do

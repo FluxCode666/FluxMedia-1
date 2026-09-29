@@ -5,8 +5,8 @@
  * 不再加载账单、交易记录、价格趋势或任何支付履约逻辑。
  */
 import { getServerSession } from "@repo/shared/auth/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { resolveLegacyBillingRedirect } from "@/features/billing/billing-page-data";
 

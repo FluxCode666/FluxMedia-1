@@ -1,5 +1,3 @@
-"use client";
-
 import { formatCredits } from "@repo/shared/credits/format";
 import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
@@ -15,10 +13,10 @@ import {
   Send,
   Trash2,
 } from "lucide-react";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useLocale } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
+import Image from "@repo/shared/platform/image";
+import { useRouter } from "@repo/shared/platform/navigation";
+import { useLocale } from "use-intl";
+import { useAction } from "@repo/shared/platform/use-action";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { deleteGenerationAction } from "@/features/image-generation/actions";

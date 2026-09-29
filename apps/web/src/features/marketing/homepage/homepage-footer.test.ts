@@ -7,7 +7,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("next/image", () => ({
+vi.mock("@repo/shared/platform/image", () => ({
   default: (props: Record<string, unknown>) => {
     const { unoptimized: _unoptimized, ...imageProps } = props;
     return createElement("img", imageProps);

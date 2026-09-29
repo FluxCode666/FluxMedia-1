@@ -5,8 +5,8 @@
  * 保留在 /docs/system。
  */
 import { getServerSession } from "@repo/shared/auth/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { ApiIntegrationDocs } from "@/features/docs/api-integration-docs";
 import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";

@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * Dashboard 网页访问事实 Server Action。
  *
@@ -23,8 +21,8 @@ import {
 } from "./action-result";
 import { tryRecordDashboardWebVisit } from "./dashboard-web-visit";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
-import { requestGoJson } from "@/server/go-backend-client";
-import { toGoOperationError } from "@/server/go-backend-operation-error";
+import { requestGoJson } from "@/lib/go-backend-request";
+import { toGoOperationError } from "@/lib/go-backend-operation-error";
 
 /** 客户端可安全消费的访问记录结果，不携带内部异常详情。 */
 export type RecordDashboardWebVisitActionResult =

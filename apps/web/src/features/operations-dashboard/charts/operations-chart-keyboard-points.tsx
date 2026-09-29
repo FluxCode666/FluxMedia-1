@@ -4,7 +4,6 @@
  * 使用方：所有时间序列图。可见图形允许视觉降采样，但此控件逐桶保留完整
  * 真实数据；聚焦或触摸按钮会更新相邻状态说明，真实值点击还可把完整桶交给下钻。
  */
-"use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import { cn } from "@repo/ui/utils";

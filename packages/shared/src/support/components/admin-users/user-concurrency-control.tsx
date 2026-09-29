@@ -4,7 +4,6 @@
  * 职责：展示系统默认、用户覆盖、生效并发及全局媒体参数，并允许有权限的管理员
  * 填写原因后设置或清空用户覆盖。写入统一通过 UOL，不在组件中直接访问数据库。
  */
-"use client";
 
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";

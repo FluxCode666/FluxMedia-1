@@ -1,5 +1,3 @@
-"use client";
-
 import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
  * 统一媒体后端成员编辑表单。
@@ -28,7 +26,7 @@ import {
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Loader2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 

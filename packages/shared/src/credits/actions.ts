@@ -1,19 +1,10 @@
-"use server";
-import { cookies } from "next/headers";
 import { z } from "zod";
 import { protectedAction } from "../safe-action";
-import { createPurchaseCheckoutInputSchema } from "../uol/operations/credits";
+import { createPurchaseCheckoutInputSchema } from "./purchase-checkout-input";
 import { createRuntimeCreditPackagePurchaseCheckout } from "./purchase-checkout-runtime";
 import type { RuntimeCreditPackage } from "./packages";
 import { requestGoBackendJson } from "../http/go-backend";
-async function go<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
-  const cookie = (await cookies()).getAll().map(c => `${c.name}=${c.value}`).join("; ");
-  const headers = new Headers(init.headers); if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json"); if (cookie) headers.set("cookie", cookie);
-  const res = await fetch(`${base}${path}`, { ...init, headers, cache: "no-store" });
-  const payload = await res.json().catch(() => null) as T & { error?: { message?: string } };
-  if (!res.ok) throw new Error(payload?.error?.message || `请求失败 (${res.status})`); return payload;
-}
+const go = <T>(path: string, init: RequestInit = {}) => requestGoBackendJson<T>(path, init);
 const withCredits = (name: string) => protectedAction.metadata({ action: `credits.${name}` });
 export const grantRegistrationBonus = withCredits("grantRegistrationBonus").schema(z.object({})).action(async () => go<{ success: boolean; alreadyGranted: boolean; granted: boolean }>("/api/credits/registration-bonus", { method: "POST" }));
 export const getMyCreditsBalance = withCredits("getMyCreditsBalance").action(async () => { const b = await go<any>("/api/credits/balance?registrationBonus=1"); return { balance: b.balance, totalEarned: b.totalEarned, totalSpent: b.totalSpent, status: b.status }; });

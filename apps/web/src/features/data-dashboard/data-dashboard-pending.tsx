@@ -4,12 +4,11 @@
  * 使用方：用户端与管理端 Panel 在尚无有效快照时渲染。组件不构造零值或空图表，避免把
  * not_ready、timeout、会话过期和服务故障伪装成真实无数据。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
 import { Card, CardContent } from "@repo/ui/components/card";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 
 import { Link } from "@/i18n/routing";
 

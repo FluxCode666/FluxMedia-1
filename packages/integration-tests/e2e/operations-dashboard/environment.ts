@@ -18,6 +18,7 @@ const OPERATIONS_E2E_STORAGE_PATH = resolve(
   "../../test-results/operations-dashboard/storage"
 );
 const OPERATIONS_E2E_STORAGE_BUCKET = "operations-e2e";
+const WEB_DIST_PATH = resolve(import.meta.dirname, "../../../../apps/web/dist");
 
 /** 浏览器夹具覆盖的四种真实用户角色。 */
 export const OPERATIONS_E2E_USERS = {
@@ -129,10 +130,10 @@ export function getOperationsAuthStatePath(
 }
 
 /**
- * 将专用连接转换为 Next.js Web 进程环境。
+ * 将专用连接转换为 SPA 构建与 Go backend 进程环境。
  *
  * @param environment 已验证的 E2E 配置。
- * @returns 强制覆盖数据库、Redis、认证 URL 和调度器开关的环境变量。
+ * @returns 强制覆盖数据库、Redis、认证 URL、监听端口和调度器开关的环境变量。
  */
 export function buildOperationsWebEnvironment(
   environment: OperationsE2EEnvironment
@@ -142,7 +143,10 @@ export function buildOperationsWebEnvironment(
     DATABASE_URL: environment.databaseUrl,
     BETTER_AUTH_SECRET: environment.betterAuthSecret,
     BETTER_AUTH_URL: environment.baseUrl,
+    BETTER_AUTH_TRUSTED_ORIGINS: environment.baseUrl,
     NEXT_PUBLIC_APP_URL: environment.baseUrl,
+    GO_BACKEND_BIND: `127.0.0.1:${environment.port}`,
+    FLUXMEDIA_WEB_DIST: WEB_DIST_PATH,
     // WHY：显式清空开发环境的启动超管，防止其污染只允许固定夹具用户的隔离库。
     FLUXMEDIA_SUPER_ADMIN_EMAIL: "",
     FLUXMEDIA_SUPER_ADMIN_PASSWORD: "",

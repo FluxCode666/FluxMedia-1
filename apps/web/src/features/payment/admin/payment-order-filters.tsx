@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 充值订单 URL 驱动筛选器。
  *
@@ -27,7 +25,7 @@ import {
 } from "@repo/ui/components/select";
 import { cn } from "@repo/ui/utils";
 import { Check, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";

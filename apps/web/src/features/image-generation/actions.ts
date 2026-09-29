@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 图片生成与媒体删除 Server Action 薄适配器。
  *
@@ -13,7 +11,7 @@ import {
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import { protectedAction } from "@repo/shared/safe-action";
 import { z } from "zod";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,

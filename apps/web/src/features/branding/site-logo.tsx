@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 全站统一 Logo 图片组件。
  *
@@ -8,7 +6,7 @@
  * 关键依赖：Next Image；使用 unoptimized 让浏览器直接跟随动态 307 重定向。
  */
 import { cn } from "@repo/ui/utils";
-import Image from "next/image";
+import Image from "@repo/shared/platform/image";
 
 /**
  * 渲染当前网站 Logo。

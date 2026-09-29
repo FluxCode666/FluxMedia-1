@@ -1,5 +1,5 @@
 /** Referral attribution and rewards are persisted and settled atomically by Go. */
-import { requestGoBackendInternalJson } from "../http/go-backend";
+import { requestGoBackendInternalJson } from "../http/go-backend-internal";
 import type { ReferralRewardConfig } from "./config";
 import { normalizeReferralCode } from "./contract";
 import { REFERRAL_CODE_COOKIE } from "./cookie";

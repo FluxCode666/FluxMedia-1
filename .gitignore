@@ -25,6 +25,9 @@ node_modules/
 
 # production
 /build
+# Vite SPA 产物与 Go embed 拷贝（构建时生成）
+apps/web/dist/
+services/api-gateway/webui/dist/
 
 # misc
 .DS_Store

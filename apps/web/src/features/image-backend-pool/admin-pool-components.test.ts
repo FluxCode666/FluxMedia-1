@@ -18,10 +18,10 @@ const panelMocks = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
 }));
 
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   useSearchParams: () => panelMocks.searchParams,
 }));
-vi.mock("next-safe-action/hooks", () => ({
+vi.mock("@repo/shared/platform/use-action", () => ({
   useAction: () => ({
     execute: panelMocks.execute,
     executeAsync: vi.fn(async () => ({})),

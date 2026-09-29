@@ -4,7 +4,6 @@
  * 使用方：管理端支付概览页。组件维护尚未应用的日期范围，使用 Calendar、Popover
  * 与 Button 完成选择，只有点击应用后才以白名单 URL 触发服务端重新聚合。
  */
-"use client";
 
 import { ADMIN_PAYMENT_OVERVIEW_MAX_DAYS } from "@repo/shared/payment/admin-contract";
 import { Button } from "@repo/ui/components/button";
@@ -21,7 +20,7 @@ import {
 import { cn } from "@repo/ui/utils";
 import { differenceInCalendarDays, format } from "date-fns";
 import { CalendarRange, Check } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";

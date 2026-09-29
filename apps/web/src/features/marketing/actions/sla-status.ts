@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 首页 SLA 展示开关的 Server Action 薄适配器。
  *
@@ -9,7 +7,7 @@
 import { logger } from "@repo/shared/logger";
 import { ActionUserError, protectedAction } from "@repo/shared/safe-action";
 import { z } from "zod";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 首页 SLA 展示开关的已校验传输输入。 */
 export type MarketingSlaVisibilityUpdateInput = { enabled: boolean };

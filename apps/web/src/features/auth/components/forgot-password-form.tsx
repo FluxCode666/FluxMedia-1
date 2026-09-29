@@ -1,8 +1,6 @@
-"use client";
-
 import { KeyRound, Loader2, Mail } from "lucide-react";
-import Link from "next/link";
-import { useLocale } from "next-intl";
+import Link from "@repo/shared/platform/link";
+import { useLocale } from "use-intl";
 import { useState } from "react";
 
 import { Button } from "@repo/ui/components/button";

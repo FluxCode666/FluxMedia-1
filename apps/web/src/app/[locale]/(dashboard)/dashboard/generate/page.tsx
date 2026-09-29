@@ -7,12 +7,12 @@
  */
 import { getCurrentUser } from "@repo/shared/auth/server";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import { GeneratePageClient } from "@/features/image-generation/components/generate-page-client";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 type GeneratePageData = {
   balance: number;

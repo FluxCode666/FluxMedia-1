@@ -32,15 +32,14 @@ import {
   Server,
   Video,
 } from "lucide-react";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
 import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
 import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 import { RefreshStatusButton } from "./refresh-status-button";
 
-export const dynamic = "force-dynamic";
 
 const ERROR_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 const ERROR_PAGINATION_NAMES = createPaginationUrlParamNames("error");

@@ -1,30 +1,18 @@
 import { Providers } from "@repo/shared/components";
 import { siteConfig } from "@repo/shared/config";
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { NextIntlClientProvider } from "next-intl";
-import { getMessages } from "next-intl/server";
-import { Suspense } from "react";
+import { getLocale, getMessages } from "@repo/shared/platform/intl";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { Suspense, useEffect } from "react";
 import { Toaster } from "sonner";
+import { IntlProvider } from "use-intl";
 import { Analytics } from "@/features/analytics";
 import { CookieConsent } from "@/features/marketing/components/cookie-consent";
 import { NavigationFeedback } from "@/features/navigation/navigation-feedback";
-import { routing } from "@/i18n/routing";
-
-import "@repo/ui/globals.css";
-
-/**
- * 生成静态参数
- * 为每个支持的语言生成静态页面
- */
-export function generateStaticParams() {
-  return routing.locales.map((locale) => ({ locale }));
-}
 
 /**
  * 生成 metadata(站点级 + hreflang)
  *
- * WHY 合并在此:本文件即根布局(app/ 下无独立 layout.tsx),
+ * WHY 合并在此:本文件即最顶层布局,
  * 站点级 metadata 与按 locale 的 alternates 必须在同一处产出。
  */
 export async function generateMetadata({
@@ -79,54 +67,44 @@ export async function generateMetadata({
   };
 }
 
+/** 让 <html lang> 跟随路由语言，供读屏与浏览器翻译识别。 */
+function DocumentLanguage({ locale }: { locale: string }) {
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+  return null;
+}
+
 /**
- * 根布局(兼 locale 布局)
- *
- * WHY html 在此渲染:lang 属性必须跟随路由 locale(此前根布局硬编码
- * lang="en",中文页面语言标签错误,影响 SEO 与读屏)。app/ 下不再有
- * layout.tsx,本文件是最顶层布局,html/body 由此输出。
+ * 语言布局（应用最顶层布局）。
  *
  * 功能:
- * - 验证语言参数有效性
- * - html lang 按 locale 输出;suppressHydrationWarning 供 next-themes 换肤
- * - body 全站衬线字体(font-serif,见 @repo/ui/globals.css 字体栈)
- * - 提供国际化上下文 (NextIntlClientProvider)
+ * - 语言参数由路由运行时校验，不支持的语言在进入本布局前已渲染 404
+ * - html lang 按 locale 同步
+ * - 提供国际化上下文 (IntlProvider)
  * - 包装 Providers (主题等)
  * - 全局组件 (CookieConsent, Toaster)
  */
 export default async function LocaleLayout({
   children,
-  params,
 }: {
   children: React.ReactNode;
   params: Promise<{ locale: string }>;
 }) {
-  // 获取语言参数
-  const { locale } = await params;
-
-  // 验证语言是否有效
-  if (!routing.locales.includes(locale as "en" | "zh")) {
-    notFound();
-  }
-
-  // 获取翻译消息
-  const messages = await getMessages();
+  const [locale, messages] = await Promise.all([getLocale(), getMessages()]);
 
   return (
-    <html lang={locale} suppressHydrationWarning>
-      <body className="font-serif antialiased">
-        <NextIntlClientProvider messages={messages}>
-          <Providers>
-            <Suspense fallback={null}>
-              <NavigationFeedback />
-            </Suspense>
-            {children}
-            <CookieConsent />
-            <Toaster richColors position="top-right" />
-            <Analytics />
-          </Providers>
-        </NextIntlClientProvider>
-      </body>
-    </html>
+    <IntlProvider locale={locale} messages={messages} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}>
+      <DocumentLanguage locale={locale} />
+      <Providers>
+        <Suspense fallback={null}>
+          <NavigationFeedback />
+        </Suspense>
+        {children}
+        <CookieConsent />
+        <Toaster richColors position="top-right" />
+        <Analytics />
+      </Providers>
+    </IntlProvider>
   );
 }

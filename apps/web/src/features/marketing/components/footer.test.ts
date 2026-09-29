@@ -7,7 +7,7 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("next-intl/server", () => ({ getLocale: async () => "zh" }));
+vi.mock("@repo/shared/platform/intl", () => ({ getLocale: async () => "zh" }));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children, href }: { children: ReactNode; href: string }) =>
     createElement("a", { "data-i18n-link": "", href }, children),

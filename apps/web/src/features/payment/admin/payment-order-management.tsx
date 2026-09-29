@@ -1,5 +1,3 @@
-"use client";
-
 import { calculateTotalPages } from "@repo/shared/pagination/state";
 /**
  * 管理端充值订单列表容器。
@@ -12,7 +10,7 @@ import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { cn } from "@repo/ui/utils";
 import { CircleDollarSign, ReceiptText } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { UrlCursorPaginationControls } from "@/features/pagination/cursor-pagination-controls";
 import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
 import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";

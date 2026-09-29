@@ -1,5 +1,3 @@
-"use client";
-
 import { Button } from "@repo/ui/components/button";
 import {
   Collapsible,
@@ -16,7 +14,7 @@ import {
 import { Switch } from "@repo/ui/components/switch";
 import { cn } from "@repo/ui/utils";
 import { ChevronDown } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   COOKIE_CONSENT_CHANGE_EVENT,

@@ -4,7 +4,6 @@
  * 使用方：OperationsDashboardPanel。组件展示按币种分开的已履约充值收入、两种付费
  * 转化以及按 fulfilled_at/币种核对的订单入口；阶段图由 lieflat-charts 子组件注入。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
 import {
@@ -14,7 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import type { ReactNode } from "react";
 
 import { formatPaymentAmount } from "@/features/payment/payment-display-format";

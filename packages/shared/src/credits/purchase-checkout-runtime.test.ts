@@ -1,24 +1,23 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("next/headers", () => ({ headers: async () => new Headers({ cookie: "better-auth.session_token=real-session" }) }));
 import { createRuntimeCreditPackagePurchaseCheckout } from "./purchase-checkout-runtime";
 
 const fetchGo = vi.fn();
 const input = { userId: "forged-body-user", packageId: "starter", clientRequestId: "6b7d1204-3f43-4da7-b2b5-b7540927e462", locale: "zh", quantity: 2 } as const;
-beforeEach(() => { fetchGo.mockReset(); vi.stubGlobal("fetch", fetchGo); vi.stubEnv("GO_BACKEND_URL", "http://backend.test"); });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+beforeEach(() => { fetchGo.mockReset(); vi.stubGlobal("fetch", fetchGo); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 it.each([
   { url: "https://checkout.example/session", orderId: "order-1" },
   { url: "https://epay.example/submit.php", orderId: "order-1", params: { sign: "signed" }, method: "POST" },
-])("forwards the Go checkout union and authenticates with the cookie", async (output) => {
+])("forwards the Go checkout union through the same-origin session", async (output) => {
   fetchGo.mockResolvedValue(Response.json(output));
   await expect(createRuntimeCreditPackagePurchaseCheckout(input)).resolves.toEqual(output);
   const [url, init] = fetchGo.mock.calls[0] as [string, RequestInit];
-  expect(url).toBe("http://backend.test/api/credits/purchase-checkout");
+  expect(url).toBe("/api/credits/purchase-checkout");
   expect(init.method).toBe("POST");
   expect(init.cache).toBe("no-store");
-  expect(new Headers(init.headers).get("cookie")).toBe("better-auth.session_token=real-session");
+  expect(init.credentials).toBe("same-origin");
   expect(JSON.parse(String(init.body))).toEqual({ packageId: input.packageId, clientRequestId: input.clientRequestId, locale: "zh", quantity: 2 });
 });
 

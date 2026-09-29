@@ -1,5 +1,3 @@
-"use client";
-
 import { formatCredits } from "@repo/shared/credits/format";
 import type { ReferralRelationshipListOutput } from "@repo/shared/referrals/relationship-contract";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
@@ -14,8 +12,8 @@ import {
 } from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Copy, Gift, Loader2, Users } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
+import { useLocale, useTranslations } from "use-intl";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * API 上游脚本无网络测试器。
  *
@@ -10,7 +8,7 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 import { Button } from "@repo/ui/components/button";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useState } from "react";
 
 import { testApiUpstreamAdapterAction } from "./actions";

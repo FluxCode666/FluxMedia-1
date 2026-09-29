@@ -46,10 +46,12 @@ services:
       MEDIA_IMAGE_WORKER_CONCURRENCY: ${MEDIA_IMAGE_WORKER_CONCURRENCY:-4}
       MEDIA_VIDEO_WORKER_CONCURRENCY: ${MEDIA_VIDEO_WORKER_CONCURRENCY:-4}
     ports:
-      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
       - "${BIND_HOST:-127.0.0.1}:${GO_BACKEND_PORT:-3001}:8080"
     volumes:
       - /root/docker-data/fluxmedia:/app/storage
+      # 站内更新解压的版本目录、state.json 与更新前数据库备份。换镜像后
+      # boot.mjs 会以镜像为准并清理卷内旧版本，备份保留最近 3 份。
+      - /root/docker-data/fluxmedia-releases:/app/releases
     healthcheck:
       test: ["CMD", "node", "/app/services/unified-runtime/healthcheck.mjs"]
       interval: 30s

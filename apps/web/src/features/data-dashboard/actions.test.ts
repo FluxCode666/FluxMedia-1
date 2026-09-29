@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const { requestGoJson } = vi.hoisted(() => ({ requestGoJson: vi.fn() }));
-vi.mock("@/server/go-backend-client", () => ({ requestGoJson }));
+vi.mock("@/lib/go-backend-request", () => ({ requestGoJson }));
 vi.mock("@repo/shared/safe-action", () => ({
   protectedAction: {
     metadata: () => ({

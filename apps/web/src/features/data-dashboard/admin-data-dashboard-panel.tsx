@@ -4,7 +4,6 @@
  * 使用方：`/dashboard/admin/analytics`。日期范围、快照竞态和失败保留行为与用户看板
  * 保持一致，并增加名称/邮箱用户筛选；数据通过管理员 UOL Action 刷新。
  */
-"use client";
 
 import type {
   AdminDataDashboardInput,
@@ -27,7 +26,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useRouter } from "@/i18n/routing";

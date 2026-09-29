@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 系统设置 Server Actions。
  *
@@ -7,7 +5,6 @@
  * 和设置数据均由 Go 后端持有，避免 Next Server Action 重新读取角色或数据库。
  */
 
-import { cookies } from "next/headers";
 import { z } from "zod";
 
 import {
@@ -19,6 +16,7 @@ import { ActionUserError, protectedAction } from "../../safe-action";
 import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
 import type { getAdminSystemSettingsSnapshot } from "../index";
 import { siteLogoUrlSchema } from "../site-branding";
+import { requestGoBackendJson } from "../../http/go-backend";
 
 const globalModerationPolicyInputSchema = z
   .object({
@@ -49,29 +47,8 @@ const settingUpdateSchema = z.object({
   clear: z.boolean().optional(),
 });
 
-async function requestGo<T>(path: string, body?: unknown, method = "GET"): Promise<T> {
-  const base = (process.env.GO_BACKEND_URL || "http://127.0.0.1:8080").replace(/\/$/u, "");
-  const cookieHeader = (await cookies())
-    .getAll()
-    .map((cookie) => `${cookie.name}=${cookie.value}`)
-    .join("; ");
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      ...(cookieHeader ? { cookie: cookieHeader } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    cache: "no-store",
-  });
-  const payload = (await response.json().catch(() => null)) as T & {
-    error?: { message?: string };
-  };
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || "请求失败，请稍后重试");
-  }
-  return payload;
-}
+const requestGo = <T>(path: string, body?: unknown, method = "GET") =>
+  requestGoBackendJson<T>(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 
 export const getSystemSettingsAction = protectedAction
   .metadata({ action: "system-settings.get" })

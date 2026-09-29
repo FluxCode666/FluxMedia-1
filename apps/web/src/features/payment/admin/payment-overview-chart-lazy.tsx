@@ -1,12 +1,10 @@
-"use client";
-
 /**
  * 支付概览 Recharts 懒加载入口。
  *
  * 使用方：支付概览 Server Component。图表运行时形成独立客户端块，等高骨架避免
  * 软导航期间布局跳动。
  */
-import dynamic from "next/dynamic";
+import dynamic from "@repo/shared/platform/dynamic";
 import type { ComponentProps } from "react";
 
 import type { PaymentOverviewChart } from "./payment-overview-chart";

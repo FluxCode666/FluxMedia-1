@@ -7,7 +7,7 @@ const runtimeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@repo/shared/logger", () => ({ logger: { error: runtimeMocks.loggerError } }));
-vi.mock("@/server/go-backend-client", () => ({ requestGoJson: runtimeMocks.requestGoJson }));
+vi.mock("@/lib/go-backend-request", () => ({ requestGoJson: runtimeMocks.requestGoJson }));
 vi.mock("@repo/shared/safe-action", () => {
   class ActionUserError extends Error {
     constructor(message: string) { super(message); this.name = "ActionUserError"; }

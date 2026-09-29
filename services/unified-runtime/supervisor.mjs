@@ -59,12 +59,9 @@ export function defaultProcessSpecs(environment = process.env) {
       command: environment.GO_BACKEND_EXECUTABLE || "/backend",
       args: [],
       cwd: appRoot,
-    },
-    {
-      name: "web",
-      command: node,
-      args: [environment.UNIFIED_WEB_ENTRYPOINT || `${appRoot}/apps/web/server.js`],
-      cwd: appRoot,
+      // The in-site updater signals this process once the next release is
+      // staged; the container restart policy then boots the new release.
+      env: { FLUXMEDIA_SUPERVISOR_PID: String(process.pid) },
     },
     {
       name: "script-runtime",
@@ -110,7 +107,8 @@ function processIsRunning(child, state) {
 }
 
 /**
- * Supervise the four application processes as direct children. Process specs
+ * Supervise the three application processes as direct children. The Go
+ * backend also serves the embedded web application. Process specs
  * and lifecycle dependencies are injectable so signal and failure semantics
  * can be tested without starting the production services.
  */

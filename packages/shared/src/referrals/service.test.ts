@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock("../http/go-backend", () => ({ requestGoBackendInternalJson: request }));
+vi.mock("../http/go-backend-internal", () => ({ requestGoBackendInternalJson: request }));
 
 import { REFERRAL_CODE_COOKIE } from "./cookie";
 import {

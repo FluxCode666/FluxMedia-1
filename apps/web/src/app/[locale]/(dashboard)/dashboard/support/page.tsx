@@ -25,9 +25,9 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Plus, Search, Ticket } from "lucide-react";
-import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import Link from "@repo/shared/platform/link";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale, getTranslations } from "@repo/shared/platform/intl";
 
 import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
 import { loadPaginationConfig } from "@/features/pagination/server";

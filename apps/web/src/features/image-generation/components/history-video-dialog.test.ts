@@ -20,7 +20,7 @@ vi.mock("../history-actions", () => ({
   getAdminHistoryRequestSnapshotAction,
   getVideoInputsAction,
 }));
-vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
+vi.mock("use-intl", () => ({ useLocale: () => "zh" }));
 
 import {
   HistoryVideoDialog,

@@ -5,7 +5,7 @@
  * 原计费操作上下文，避免从 sourceRef 或退款发生时间猜测业务归属。
  */
 
-import { requestGoBackendInternalJson } from "./http/go-backend";
+import { requestGoBackendInternalJson } from "./http/go-backend-internal";
 import { grantCredits } from "./credits/core";
 import type { CreditOperationContext } from "./credits/usage-read-model";
 

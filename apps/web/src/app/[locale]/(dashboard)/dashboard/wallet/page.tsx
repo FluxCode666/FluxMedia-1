@@ -5,8 +5,8 @@
  * 订单和一次性充值能力；不展示退款记录或价格趋势，也不在页面层处理支付履约。
  */
 import { getServerSession } from "@repo/shared/auth/server";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { getMyWalletPageDataAction } from "@/features/wallet/actions";
 import { createWalletCopy } from "@/features/wallet/components/wallet-copy";

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Dashboard 跨应用自然日访问记录器。
  *
@@ -7,7 +5,7 @@
  * 应用自然日变化后补一次请求；页面内导航不会重复写入或增加客户端身份字段。
  */
 import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useRef } from "react";
 
 import { recordDashboardWebVisitAction } from "./actions";

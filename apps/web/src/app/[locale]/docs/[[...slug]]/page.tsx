@@ -1,6 +1,6 @@
 import { DocsBody, DocsPage, DocsTitle } from "fumadocs-ui/page";
-import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import type { Metadata } from "@repo/shared/platform/metadata";
+import { notFound, redirect } from "@repo/shared/platform/navigation";
 import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import {
   getSystemDocsMetadata,

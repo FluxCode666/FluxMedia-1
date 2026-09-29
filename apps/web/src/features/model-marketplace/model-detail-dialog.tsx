@@ -5,7 +5,6 @@
  * 支持参数、输入能力、配置可达性、基础设施边界和创作入口，并把复制动作交回浏览器
  * 统一反馈。Radix Dialog 负责焦点圈定、Esc 关闭及关闭后焦点恢复。
  */
-"use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
 import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace";
@@ -25,8 +24,8 @@ import {
   TooltipTrigger,
 } from "@repo/ui/components/tooltip";
 import { ArrowUpRight, Copy } from "lucide-react";
-import Image from "next/image";
-import { useTranslations } from "next-intl";
+import Image from "@repo/shared/platform/image";
+import { useTranslations } from "use-intl";
 import { useRef, useState } from "react";
 
 import { Link } from "@/i18n/routing";

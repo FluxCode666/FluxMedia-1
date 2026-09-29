@@ -1,5 +1,3 @@
-"use client";
-
 import { createTicketAction } from "@repo/shared/support/actions/ticket";
 import {
   ticketCategories,
@@ -23,9 +21,9 @@ import {
 } from "@repo/ui/components/select";
 import { Textarea } from "@repo/ui/components/textarea";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useLocale } from "next-intl";
+import Link from "@repo/shared/platform/link";
+import { useRouter } from "@repo/shared/platform/navigation";
+import { useLocale } from "use-intl";
 import { useState } from "react";
 import { toast } from "sonner";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";

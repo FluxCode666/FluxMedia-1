@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * URL 驱动的响应式分页控件适配器。
  *
@@ -8,7 +6,7 @@
  */
 import { getPaginationWindow } from "@repo/shared/pagination/state";
 import { PaginationControls } from "@repo/ui/components/pagination-controls";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams } from "@repo/shared/platform/navigation";
 import { useEffect, useRef, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { usePathname, useRouter } from "@/i18n/routing";

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 系统设置页的全站内容审核策略专用卡。
  *
@@ -27,7 +25,7 @@ import {
 import { Separator } from "@repo/ui/components/separator";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2, RefreshCw, Save, ShieldCheck } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "../../platform/use-action";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 

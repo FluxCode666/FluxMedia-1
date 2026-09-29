@@ -4,10 +4,9 @@
  * 使用方：OperationsDashboardPanel。区间成功率、耗时和支付履约失败使用全局日期
  * 筛选；队列与后端成员显式标记为当前值，并只链接既有管理页面。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import { Link } from "@/i18n/routing";
 

@@ -1,5 +1,3 @@
-"use client";
-
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   ALLOWED_IMAGE_TYPES,
@@ -39,8 +37,8 @@ import {
   TabsTrigger,
 } from "@repo/ui/components/tabs";
 import { Camera, Loader2 } from "lucide-react";
-import { useParams, useSearchParams } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
+import { useParams, useSearchParams } from "@repo/shared/platform/navigation";
+import { useLocale, useTranslations } from "use-intl";
 import { useJsonAction } from "@repo/shared/http/use-json-action";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
@@ -124,7 +122,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
     startLocaleTransition(() => {
       requestNavigationFeedback();
       router.replace(
-        // @ts-expect-error Current route params always match the current pathname.
         { pathname, params },
         { locale: newLocale }
       );

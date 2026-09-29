@@ -19,8 +19,8 @@ import {
 } from "@repo/ui/components/card";
 import { cn } from "@repo/ui/utils";
 import { CheckCircle2, Megaphone, Pin } from "lucide-react";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import {
   loadMyAnnouncementPage,
   markAllMyAnnouncementsRead,

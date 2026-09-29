@@ -20,12 +20,12 @@ const testHarness = vi.hoisted(() => ({
   search: "",
 }));
 
-vi.mock("next/navigation", () => ({
+vi.mock("@repo/shared/platform/navigation", () => ({
   usePathname: () => testHarness.pathname,
   useSearchParams: () => new URLSearchParams(testHarness.search),
 }));
 
-vi.mock("next-intl", () => ({
+vi.mock("use-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 

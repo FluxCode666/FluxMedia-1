@@ -4,7 +4,6 @@
  * 使用方：`header.tsx`；导航数据由 Header 同时传给本组件与移动 Sheet。
  * 关键依赖：next-intl 路由、NavigationMenu 与 Framer Motion 悬停反馈。
  */
-"use client";
 
 import type { NavItem } from "@repo/shared/config";
 import {
@@ -15,7 +14,7 @@ import {
 } from "@repo/ui/components/navigation-menu";
 import { cn } from "@repo/ui/utils";
 import { motion } from "framer-motion";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useState } from "react";
 import { Link, usePathname } from "@/i18n/routing";
 

@@ -1,13 +1,11 @@
-"use server";
-
 import {
   announcementIdSchema,
   createAnnouncementSchema,
   updateAnnouncementSchema,
 } from "@repo/shared/announcements/schemas";
 import { adminAction, protectedAction } from "@repo/shared/safe-action";
-import { revalidatePath } from "next/cache";
-import { requestGoJson } from "@/server/go-backend-client";
+import { revalidatePath } from "@repo/shared/platform/cache";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 const withAnnouncementAction = (name: string) =>
   protectedAction.metadata({ action: `announcements.${name}` });

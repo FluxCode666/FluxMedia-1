@@ -1,5 +1,3 @@
-"use client";
-
 import type {
   ImageSizeConfigInput,
   ImageSizeConfigMapping,
@@ -9,7 +7,7 @@ import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Plus, Trash2 } from "lucide-react";
-import { useAction } from "next-safe-action/hooks";
+import { useAction } from "@repo/shared/platform/use-action";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 

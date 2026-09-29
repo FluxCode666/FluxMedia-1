@@ -4,7 +4,6 @@
  * 使用方是 `/models` Server Component；本组件只对公开 DTO 做本地搜索、类别与厂商
  * 筛选、Clipboard 反馈和详情 Dialog 编排，不重新请求目录或解释展示配置。
  */
-"use client";
 
 import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace";
 import { Button } from "@repo/ui/components/button";
@@ -18,7 +17,7 @@ import {
   SheetTitle,
 } from "@repo/ui/components/sheet";
 import { ListFilter, Search } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 

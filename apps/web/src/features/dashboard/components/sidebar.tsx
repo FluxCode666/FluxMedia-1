@@ -1,10 +1,11 @@
-"use client";
-
 import { signOut } from "@repo/shared/auth/client";
 import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { ModeToggle } from "@repo/shared/components";
 import { dashboardConfig } from "@repo/shared/config";
 import { CreditBalanceBadge } from "@repo/shared/credits/components";
+import Link, { useLinkStatus } from "@repo/shared/platform/link";
+import { usePathname, useRouter } from "@repo/shared/platform/navigation";
+import { useAction } from "@repo/shared/platform/use-action";
 import { getMyUnreadTicketCountAction } from "@repo/shared/support/actions/ticket";
 import {
   Avatar,
@@ -26,11 +27,8 @@ import {
   LogOut,
   Settings,
 } from "lucide-react";
-import Link, { useLinkStatus } from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
-import { useAction } from "next-safe-action/hooks";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "use-intl";
 import { getMyUnreadAnnouncementCountAction } from "@/features/announcements/actions";
 import {
   type CurrentSession,
@@ -45,6 +43,10 @@ import {
   type SidebarNavGroup,
 } from "@/features/dashboard/sidebar-navigation";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
+import {
+  SystemVersionButton,
+  SystemVersionProvider,
+} from "@/features/system-updates/system-version-control";
 
 /**
  * Dashboard 侧边栏组件
@@ -127,11 +129,20 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   } = useAction(getMyUnreadAnnouncementCountAction);
   const unreadTicketCount = Math.max(
     0,
-    Number((unreadTicketsResult.data as unknown as { count?: number } | undefined)?.count ?? 0)
+    Number(
+      (unreadTicketsResult.data as unknown as { count?: number } | undefined)
+        ?.count ?? 0
+    )
   );
   const unreadAnnouncementCount = Math.max(
     0,
-    Number((unreadAnnouncementsResult.data as unknown as { count?: number } | undefined)?.count ?? 0)
+    Number(
+      (
+        unreadAnnouncementsResult.data as unknown as
+          | { count?: number }
+          | undefined
+      )?.count ?? 0
+    )
   );
 
   useEffect(() => {
@@ -287,6 +298,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
               label={tNavigationFeedback("opening", { page: "FluxMedia" })}
             />
           </Link>
+          {!collapsed ? <SystemVersionButton className="ml-auto" /> : null}
         </div>
 
         {/* 导航菜单 */}
@@ -617,7 +629,8 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   };
 
   return (
-    <>
+    // 版本号弹窗只挂一份：桌面侧栏与移动端抽屉共用同一更新状态和轮询。
+    <SystemVersionProvider enabled={role === "super_admin"}>
       {/* 桌面端侧边栏 */}
       <aside
         className={cn(
@@ -641,6 +654,6 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
           </div>
         </SheetContent>
       </Sheet>
-    </>
+    </SystemVersionProvider>
   );
 }

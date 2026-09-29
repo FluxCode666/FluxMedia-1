@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 积分余额徽章组件
  *
@@ -26,7 +24,7 @@ export function CreditBalanceBadge() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/go/api/user/credits", {
+    fetch("/api/user/credits", {
       credentials: "same-origin",
       cache: "no-store",
       headers: { Accept: "application/json" },

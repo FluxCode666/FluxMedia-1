@@ -1,5 +1,5 @@
 import { footerNav, siteConfig } from "@repo/shared/config";
-import { getLocale } from "next-intl/server";
+import { getLocale } from "@repo/shared/platform/intl";
 
 import { Link } from "@/i18n/routing";
 

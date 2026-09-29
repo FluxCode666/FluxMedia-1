@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 历史记录中的视频详情弹层。
  *
@@ -15,8 +13,8 @@ import { Badge } from "@repo/ui/components/badge";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/components/dialog";
 import { Separator } from "@repo/ui/components/separator";
 import { Film, Images } from "lucide-react";
-import Image from "next/image";
-import { useLocale } from "next-intl";
+import Image from "@repo/shared/platform/image";
+import { useLocale } from "use-intl";
 import { useEffect, useState } from "react";
 import { getVideoInputsAction } from "../history-actions";
 import { AdminRequestJsonDetails } from "./admin-request-json-details";

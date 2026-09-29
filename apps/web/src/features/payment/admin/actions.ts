@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 管理端支付查询 Server Action 薄适配器。
  *
@@ -15,7 +13,7 @@ import {
   adminPaymentUserSearchInputSchema,
 } from "@repo/shared/payment/admin-contract";
 import { adminAction } from "@repo/shared/safe-action";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 
 /** 读取指定日期范围或默认当前自然月的充值支付概览。 */

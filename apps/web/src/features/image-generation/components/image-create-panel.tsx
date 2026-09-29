@@ -6,8 +6,6 @@
  * 本组件表达。使用方仅为 `GeneratePageClient`。
  */
 
-"use client";
-
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { resolveImageCreditPricing } from "@repo/shared/image-backend/group-image-pricing";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

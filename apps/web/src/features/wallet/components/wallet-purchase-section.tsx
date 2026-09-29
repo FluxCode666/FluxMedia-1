@@ -1,5 +1,4 @@
 /** 钱包购买区：只展示一次性积分充值，不承载支付履约状态机。 */
-"use client";
 
 import type { WalletTopUpOptions } from "@repo/shared/credits/wallet-contract";
 

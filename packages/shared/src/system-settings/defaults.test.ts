@@ -4,7 +4,8 @@ import {SETTING_DEFINITION_BY_KEY} from "./definitions";
 import {clearSystemSettingsCache,getRuntimeSettingNumber,getAuthoritativeVideoModelBillingSettings,getRuntimeVideoModelBillingSettings,initializeMissingSystemSettingsDefaults} from "./index";
 const store=vi.hoisted(()=>new Map<string,{key:string;value:unknown}>());
 const go=vi.hoisted(()=>vi.fn());
-vi.mock("../http/go-backend",()=>({requestGoBackendInternalJson:go,requestGoBackendJson:go}));
+vi.mock("../http/go-backend",()=>({requestGoBackendJson:go}));
+vi.mock("../http/go-backend-internal",()=>({requestGoBackendInternalJson:go}));
 // Persistent initialization parity is covered by Go PostgreSQL tests. The web
 // retains only the display definitions and interpretation of returned values.
 describe("settings definitions and Go defaults",()=>{

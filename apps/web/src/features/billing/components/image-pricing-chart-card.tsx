@@ -5,8 +5,6 @@
  * 运行时生图定价和当前用户的按量计费数据。
  */
 
-"use client";
-
 import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
 import {

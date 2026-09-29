@@ -45,67 +45,80 @@ func (b *backend) handleBootstrapAuth(w http.ResponseWriter, r *http.Request) er
 	if !b.cronAuthorized(r) {
 		return &apiError{http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized"}
 	}
-	enabled, err := b.settingBool(r.Context(), "SELF_USE_MODE_ENABLED", true)
+	id, reason, err := b.ensureSelfUseSuperAdmin(r.Context())
 	if err != nil {
 		return err
 	}
-	if !enabled {
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "userId": "", "reason": "self_use_disabled"})
+	if reason != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "userId": "", "reason": reason})
 		return nil
 	}
-	tx, err := b.db.Begin(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "userId": id})
+	return nil
+}
+
+// ensureSelfUseSuperAdmin creates the first super admin from the deployment
+// environment when self-use mode is on and none exists yet. It runs at startup
+// and from the internal bootstrap hook; an existing account and its password
+// are never reset. A non-empty reason explains why no admin is available.
+func (b *backend) ensureSelfUseSuperAdmin(ctx context.Context) (string, string, error) {
+	enabled, err := b.settingBool(ctx, "SELF_USE_MODE_ENABLED", true)
 	if err != nil {
-		return err
+		return "", "", err
+	}
+	if !enabled {
+		return "", "self_use_disabled", nil
+	}
+	tx, err := b.db.Begin(ctx)
+	if err != nil {
+		return "", "", err
 	}
 	defer rollback(tx)
 	// Serialize first-account creation across startup hooks and gateway replicas.
-	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtext('fluxmedia:self-use-super-admin'))`); err != nil {
-		return err
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('fluxmedia:self-use-super-admin'))`); err != nil {
+		return "", "", err
 	}
 	var id string
-	err = tx.QueryRow(r.Context(), `SELECT id FROM "user" WHERE role='super_admin' ORDER BY created_at,id LIMIT 1`).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id FROM "user" WHERE role='super_admin' ORDER BY created_at,id LIMIT 1`).Scan(&id)
 	if err == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "userId": id})
-		return nil
+		return id, "", nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return "", "", err
 	}
 	email := normalizeEmail(os.Getenv("FLUXMEDIA_SUPER_ADMIN_EMAIL"))
 	password := os.Getenv("FLUXMEDIA_SUPER_ADMIN_PASSWORD")
 	address, emailErr := mail.ParseAddress(email)
 	if emailErr != nil || address.Address != email || strings.TrimSpace(password) == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "userId": "", "reason": "credentials_not_configured"})
-		return nil
+		return "", "credentials_not_configured", nil
 	}
-	err = tx.QueryRow(r.Context(), `SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE`, email).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE`, email).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		id = newRequestID()
-		_, err = tx.Exec(r.Context(), `INSERT INTO "user"(id,name,email,email_verified,role) VALUES($1,'FluxMedia Super Admin',$2,true,'super_admin')`, id, email)
+		_, err = tx.Exec(ctx, `INSERT INTO "user"(id,name,email,email_verified,role) VALUES($1,'FluxMedia Super Admin',$2,true,'super_admin')`, id, email)
 	} else if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE "user" SET role='super_admin',email_verified=true,updated_at=now() WHERE id=$1`, id)
+		_, err = tx.Exec(ctx, `UPDATE "user" SET role='super_admin',email_verified=true,updated_at=now() WHERE id=$1`, id)
 	}
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	var credentialExists bool
-	if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM account WHERE user_id=$1 AND provider_id='credential')`, id).Scan(&credentialExists); err != nil {
-		return err
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM account WHERE user_id=$1 AND provider_id='credential')`, id).Scan(&credentialExists); err != nil {
+		return "", "", err
 	}
 	if !credentialExists {
-		hashed, hashErr := hashPassword(r.Context(), password)
+		hashed, hashErr := hashPassword(ctx, password)
 		if hashErr != nil {
-			return hashErr
+			return "", "", hashErr
 		}
-		if _, err = tx.Exec(r.Context(), `INSERT INTO account(id,account_id,provider_id,user_id,password) VALUES($1,$2,'credential',$2,$3)`, newRequestID(), id, hashed); err != nil {
-			return err
+		if _, err = tx.Exec(ctx, `INSERT INTO account(id,account_id,provider_id,user_id,password) VALUES($1,$2,'credential',$2,$3)`, newRequestID(), id, hashed); err != nil {
+			return "", "", err
 		}
 	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return err
+	if err = tx.Commit(ctx); err != nil {
+		return "", "", err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "userId": id})
-	return nil
+	return id, "", nil
 }
 
 type authSession struct {
@@ -679,7 +692,22 @@ func (b *backend) handleRevokeSessions(w http.ResponseWriter, r *http.Request) e
 	writeJSON(w, 200, map[string]bool{"status": true})
 	return nil
 }
+
+// handleAuthOptions exposes the public sign-in capabilities the SPA auth pages
+// render: whether Google OAuth is configured and whether self-use mode closes
+// public registration. Credentials themselves never leave the backend.
+func (b *backend) handleAuthOptions(w http.ResponseWriter, r *http.Request) error {
+	selfUseMode, err := b.settingBool(r.Context(), "SELF_USE_MODE_ENABLED", true)
+	if err != nil {
+		return err
+	}
+	_, googleErr := b.oauthConfig("google")
+	noStore(w)
+	writeJSON(w, http.StatusOK, map[string]bool{"googleEnabled": googleErr == nil, "selfUseMode": selfUseMode})
+	return nil
+}
 func (b *backend) registerAuth(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/auth/options", b.endpoint(b.handleAuthOptions))
 	mux.HandleFunc("POST /api/auth/sign-in/social", b.endpoint(b.handleSocialSignIn))
 	mux.HandleFunc("GET /api/auth/callback/{provider}", b.endpoint(b.handleOAuthCallback))
 	mux.HandleFunc("POST /api/auth/sign-up/email", b.endpoint(b.handleSignUp))

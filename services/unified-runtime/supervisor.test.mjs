@@ -17,11 +17,11 @@ class FakeChild extends EventEmitter {
   }
 }
 
-const specs = ["backend", "web", "script-runtime", "media-processing"].map(
+const specs = ["backend", "script-runtime", "media-processing"].map(
   (name) => ({ name, command: `/test/${name}`, args: [], cwd: "/test" })
 );
 
-test("starts all four direct children and forwards SIGTERM", async () => {
+test("starts all three direct children and forwards SIGTERM", async () => {
   const signalSource = new EventEmitter();
   const children = [];
   const result = runSupervisor(specs, {
@@ -35,12 +35,12 @@ test("starts all four direct children and forwards SIGTERM", async () => {
     },
   });
 
-  assert.equal(children.length, 4);
+  assert.equal(children.length, 3);
   signalSource.emit("SIGTERM");
   assert.equal(await result, 0);
   assert.deepEqual(
     children.map(({ child }) => child.signals),
-    [["SIGTERM"], ["SIGTERM"], ["SIGTERM"], ["SIGTERM"]]
+    [["SIGTERM"], ["SIGTERM"], ["SIGTERM"]]
   );
 });
 
@@ -68,13 +68,18 @@ test("private runtimes receive only their required environment", async () => {
     },
   });
 
+  assert.deepEqual(
+    spawned.map(({ command }) => command.split("/").pop()),
+    ["backend", process.execPath.split("/").pop(), process.execPath.split("/").pop()]
+  );
   assert.equal(spawned[0].env.DATABASE_URL, environment.DATABASE_URL);
-  assert.equal(spawned[1].env.REDIS_PASSWORD, environment.REDIS_PASSWORD);
-  assert.equal(spawned[2].env.SCRIPT_RUNTIME_BIND, ":8090");
-  assert.equal(spawned[2].env.SCRIPT_RUNTIME_TOKEN, environment.GO_SCRIPT_RUNTIME_TOKEN);
-  assert.equal(spawned[3].env.MEDIA_PROCESSING_PORT, "8091");
-  assert.equal(spawned[3].env.MEDIA_PROCESSING_TOKEN, environment.GO_MEDIA_PROCESSING_TOKEN);
-  for (const { env } of spawned.slice(2)) {
+  assert.equal(spawned[0].env.REDIS_PASSWORD, environment.REDIS_PASSWORD);
+  assert.equal(spawned[0].env.FLUXMEDIA_SUPERVISOR_PID, String(process.pid));
+  assert.equal(spawned[1].env.SCRIPT_RUNTIME_BIND, ":8090");
+  assert.equal(spawned[1].env.SCRIPT_RUNTIME_TOKEN, environment.GO_SCRIPT_RUNTIME_TOKEN);
+  assert.equal(spawned[2].env.MEDIA_PROCESSING_PORT, "8091");
+  assert.equal(spawned[2].env.MEDIA_PROCESSING_TOKEN, environment.GO_MEDIA_PROCESSING_TOKEN);
+  for (const { env } of spawned.slice(1)) {
     assert.equal(env.DATABASE_URL, undefined);
     assert.equal(env.REDIS_PASSWORD, undefined);
     assert.equal(env.HOME, environment.HOME);
@@ -105,7 +110,6 @@ test("a premature child exit fails fast and terminates the other children", asyn
   assert.deepEqual(children[0].signals, ["SIGTERM"]);
   assert.deepEqual(children[1].signals, []);
   assert.deepEqual(children[2].signals, ["SIGTERM"]);
-  assert.deepEqual(children[3].signals, ["SIGTERM"]);
 });
 
 test("uses SIGKILL and returns failure when a child ignores graceful shutdown", async () => {
@@ -132,5 +136,4 @@ test("uses SIGKILL and returns failure when a child ignores graceful shutdown", 
   assert.equal(await result, 1);
   assert.ok(children[1].signals.includes("SIGKILL"));
   assert.ok(children[2].signals.includes("SIGKILL"));
-  assert.ok(children[3].signals.includes("SIGKILL"));
 });

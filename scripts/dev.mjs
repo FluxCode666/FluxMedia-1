@@ -23,7 +23,7 @@ let forceKillTimer;
  * @param child Node.js 创建的子进程。
  * @param signal 要发送的 POSIX 信号。
  * @returns 无返回值；目标已退出时静默结束。
- * @sideEffects 在 POSIX 系统终止整个独立进程组，防止残留代理或 Next 进程。
+ * @sideEffects 在 POSIX 系统终止整个独立进程组，防止残留运行时或 Vite 进程。
  */
 function signalChildProcessTree(child, signal) {
   if (!child.pid) return;
@@ -144,9 +144,8 @@ function runDevelopmentServices() {
     resolve(projectRoot, "services/media-processing-runtime"),
     environment
   );
-  // The web app now calls first-party APIs on the Go backend directly. Start
-  // it as part of the normal development command so server actions never
-  // fall back to an unrelated process on port 3000.
+  // The Vite dev server proxies backend paths to the Go backend, so pages
+  // need it running alongside the frontend.
   startChild(
     "Go API 后端",
     "go",

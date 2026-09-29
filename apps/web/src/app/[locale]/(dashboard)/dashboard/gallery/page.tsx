@@ -10,10 +10,10 @@ import type {
   GalleryListOutput,
   GalleryTab,
 } from "@repo/shared/image-generation/gallery-contract";
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
+import { redirect } from "@repo/shared/platform/navigation";
+import { getLocale } from "@repo/shared/platform/intl";
 import { GalleryClient } from "@/features/image-generation/components/gallery-client";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 interface GalleryPageProps {
   searchParams: Promise<{ tab?: string }>;

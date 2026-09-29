@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@repo/shared/platform/link";
 import type { BlogPost } from "../data/mock-posts";
 
 interface BlogPostItemProps {

@@ -4,7 +4,6 @@
  * 使用方：OperationsDashboardPanel。组件保留所选范围内全部注册日，固定高度纵向
  * 滚动，并将 D1/D7/D30 的真实值、未成熟、上线前和无样本状态显式分开。
  */
-"use client";
 
 import { Button } from "@repo/ui/components/button";
 import {
@@ -15,7 +14,7 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { cn } from "@repo/ui/utils";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import type { OperationsGrowthCohort } from "./growth-service";
 import {

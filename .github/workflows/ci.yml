@@ -78,9 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: ./.github/actions/setup
-      # 生成 Fumadocs 的 `.source`（.gitignore 忽略、由 createMDX 在 next build/dev 时产出）。
-      # 独立 `tsc --noEmit` 不会触发该产出，缺失会导致 src/lib/source.ts 找不到 ../../.source/server，
-      # 引发一连串隐式 any 报错。build 任务走 next build 会自生成，故仅 typecheck 需要这一步。
+      # 生成 Fumadocs 的 `.source`（.gitignore 忽略、由 fumadocs-mdx Vite 插件在 build/dev 时产出）。
+      # 独立 `tsc --noEmit` 不会触发该产出，缺失会导致 src/lib/source.ts 找不到 .source，
+      # 引发一连串隐式 any 报错。build 任务走 vite build 会自生成，故仅 typecheck 需要这一步。
       - name: Generate Fumadocs source
         run: pnpm --filter @repo/web exec fumadocs-mdx
       - run: pnpm turbo typecheck
@@ -145,37 +145,29 @@ jobs:
           pnpm --filter @repo/integration-tests test:media-task-mq
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 4) 构建（鲁棒性）：next build（standalone）。Next 在 build 时会做整体类型与编译校验，
-  #    能抓到仅在生产构建下暴露的问题。环境变量为占位值，与 Dockerfile.web 的 build-args 一致。
+  # 4) 构建（鲁棒性）：vite build 产出 Go 内嵌的 Web SPA，能抓到仅在生产打包下暴露的
+  #    问题。公开变量为占位值，与 Dockerfile.unified 的 build-args 一致；SPA 构建不读取机密。
   #    注意：此处不设 NODE_ENV=production，否则 pnpm 可能跳过 devDependencies 导致构建失败。
   # ───────────────────────────────────────────────────────────────────────────
   build:
     name: Build web
     runs-on: ubuntu-latest
     env:
-      NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_NAME: FluxMedia
       NEXT_PUBLIC_PAYMENT_PROVIDER: none
-      SYSTEM_ASSETS_BUCKET_NAME: system
-      GENERATIONS_BUCKET_NAME: generations
-      # 仅供构建期模块加载使用的占位值（@repo/database 在 import 时会校验 DATABASE_URL）。
-      # 绝非运行时机密 —— 真实机密只存在于部署环境（见 .github/CICD.md）。
-      DATABASE_URL: postgresql://gpt2image:gpt2image@localhost:5432/gpt2image
-      BETTER_AUTH_SECRET: build-time-placeholder-secret-not-for-runtime
-      BETTER_AUTH_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: ./.github/actions/setup
       - run: |
           set -euo pipefail
           pnpm turbo build --filter=@repo/web
-          pnpm --filter @repo/web assert:api-upstream-worker-standalone
+          test -f apps/web/dist/index.html
           pnpm --filter @repo/web smoke:api-upstream-worker
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 5) 容器构建校验（仅 PR）：用 Dockerfile.web 实打实构建 web 镜像但**不推送**，
-  #    验证多阶段 Dockerfile（turbo prune → install → build → standalone 打包）未损坏。
+  # 5) 容器构建校验（仅 PR）：用 Dockerfile.unified 实打实构建统一应用镜像但**不推送**，
+  #    验证多阶段 Dockerfile（turbo prune → SPA 构建 → Go 内嵌编译 → runner 自检）未损坏。
   #    gha 缓存让重复构建保持快速。门禁在前 4 个 job 通过后才跑，避免无谓消耗。
   # ───────────────────────────────────────────────────────────────────────────
   docker-build:
@@ -186,22 +178,18 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build web image (validation only)
+      - name: Build unified image (validation only)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Dockerfile.web
+          file: Dockerfile.unified
           target: runner
-          push: false # 仅校验可构建性；推送由 tag 触发的 docker-release.yml 负责
-          load: true
-          tags: fluxmedia-api-adapter-smoke:ci
+          platforms: linux/amd64
+          push: false # 仅校验可构建性；推送由 release.yml 负责
+          tags: fluxmedia-unified:ci
           build-args: |
             NEXT_PUBLIC_APP_URL=http://localhost:3000
             NEXT_PUBLIC_APP_NAME=FluxMedia
             NEXT_PUBLIC_PAYMENT_PROVIDER=none
-          cache-from: type=gha,scope=web-ci
-          cache-to: type=gha,mode=max,scope=web-ci
-      - name: Smoke API upstream worker in final container
-        run: >-
-          node apps/web/scripts/smoke-api-upstream-container.mjs
-          fluxmedia-api-adapter-smoke:ci
+          cache-from: type=gha,scope=unified-ci
+          cache-to: type=gha,mode=max,scope=unified-ci

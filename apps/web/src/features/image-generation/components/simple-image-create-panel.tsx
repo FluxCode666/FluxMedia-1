@@ -5,8 +5,6 @@
  * 模型与生成设置、结果和最近图片；模型权限、文件校验、计费与请求提交仍由父组件负责。
  */
 
-"use client";
-
 import { formatCredits } from "@repo/shared/credits/format";
 import { StorageThumbnail } from "@repo/shared/storage/storage-thumbnail";
 import { Button } from "@repo/ui/components/button";
@@ -35,7 +33,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import Image from "next/image";
+import Image from "@repo/shared/platform/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";

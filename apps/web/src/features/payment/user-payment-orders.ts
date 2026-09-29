@@ -11,7 +11,7 @@ import {
   userPaymentOrderListInputSchema,
   userPaymentOrderListOutputSchema,
 } from "@repo/shared/payment/user-order-contract";
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 数据库读取后进入用户态映射的最小订单行。 */
 export type UserPaymentOrderRow = {

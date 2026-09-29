@@ -75,9 +75,11 @@ require_text 'write_migration_marker'
 require_text 'rm -f "${migration_marker}" "${deployment_attempt}"'
 require_text 'migration_started=true'
 require_text 'require_env_value()'
-require_text '生产 .env 的 BIND_HOST/WEB_PORT/GO_BACKEND_PORT 必须为 127.0.0.1/3000/3001。'
+require_text '生产 .env 的 BIND_HOST/GO_BACKEND_PORT 必须为 127.0.0.1/3001。'
 require_text '生产存储目录已有内容但统一应用用户不可写，拒绝迁移。'
 require_text 'prepare_video_input_migration_state'
+require_text 'install -d -m 750 -o "${app_uid}" -g "${app_gid}" "${releases_path}"'
+require_text 'mv -f "${state_file}" "${releases_path}/state.superseded-${image_tag}.json"'
 
 nginx_install_line="$(
   grep -nF 'install_nginx_configuration' "${workflow_path}" \
@@ -110,6 +112,10 @@ migration_started_line="$(
   grep -nF 'migration_started=true' "${workflow_path}" \
     | tail -n 1 | cut -d: -f1
 )"
+retire_in_site_update_line="$(
+  grep -nx 'retire_in_site_update_state' "${workflow_path}" \
+    | tail -n 1 | cut -d: -f1
+)"
 smoke_line="$(
   grep -nF 'bash ./smoke-production-routing.sh' "${workflow_path}" \
     | tail -n 1 | cut -d: -f1
@@ -124,6 +130,7 @@ if [ -z "${nginx_install_line}" ] || [ -z "${cron_gate_line}" ] \
   || [ -z "${running_gate_line}" ] || [ -z "${migration_marker_line}" ] \
   || [ -z "${candidate_promote_line}" ] \
   || [ -z "${migration_started_line}" ] || [ -z "${smoke_line}" ] \
+  || [ -z "${retire_in_site_update_line}" ] \
   || [ -z "${success_line}" ]; then
   printf 'could not locate production routing deployment boundaries\n' >&2
   exit 1
@@ -142,6 +149,13 @@ if [ "${stop_line}" -ge "${migration_marker_line}" ] \
   || [ "${migration_marker_line}" -ge "${migration_started_line}" ] \
   || [ "${migration_started_line}" -ge "${candidate_promote_line}" ]; then
   printf 'persistent boundary must precede candidate promotion after legacy stop\n' >&2
+  exit 1
+fi
+# 迁移边界前失败会恢复上一版应用并沿用卷内站内更新版本，所以只能在边界之后、
+# 切换候选 Compose 之前撤下站内更新记录。
+if [ "${migration_started_line}" -ge "${retire_in_site_update_line}" ] \
+  || [ "${retire_in_site_update_line}" -ge "${candidate_promote_line}" ]; then
+  printf 'in-site update state must be retired after the migration boundary\n' >&2
   exit 1
 fi
 if [ "${smoke_line}" -ge "${success_line}" ]; then

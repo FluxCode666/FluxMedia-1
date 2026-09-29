@@ -10,7 +10,7 @@ import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next-safe-action/hooks", () => ({
+vi.mock("@repo/shared/platform/use-action", () => ({
   useAction: () => ({ execute: vi.fn(), isPending: false }),
 }));
 vi.mock("./actions", () => ({

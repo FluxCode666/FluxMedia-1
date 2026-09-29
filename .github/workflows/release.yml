@@ -2,11 +2,13 @@
 #
 # 使用方式：推送符合 SemVer 的 Git tag（例如 v0.31.0）自动执行质量门、构建 GHCR
 # 统一镜像，并发布带部署包的 GitHub Release；也可在同名 tag 上手动重跑。
-# 本流水线不接触生产服务器。生产发布由 Deploy Production 流水线手动选择版本，
-# 下载这里产出的 Release 部署包后经 SSH 发布。
+# 本流水线不接触生产服务器。生产发布有两条路径：Deploy Production 流水线手动选择
+# 版本，下载这里产出的部署包后经 SSH 换镜像；或者超级管理员在站内点版本号，安装
+# 应用包（仅当新版本的平台指纹与运行中的镜像一致）。
 # Release 资产：
-#   - fluxmedia-release.env：版本、提交、镜像 digest 与部署包 SHA-256；
-#   - fluxmedia-deploy.tar.gz：Compose、Nginx 与部署脚本。
+#   - fluxmedia-release.env：版本、提交、镜像 digest、部署包与应用包 SHA-256、平台指纹；
+#   - fluxmedia-deploy.tar.gz：Compose、Nginx 与部署脚本；
+#   - fluxmedia-app-linux-amd64.tar.gz：站内更新使用的应用包（镜像 /app 与 /backend）。
 name: Release
 
 on:
@@ -253,19 +255,13 @@ jobs:
 
       - name: Build web
         env:
-          BETTER_AUTH_SECRET: build-time-placeholder-secret-not-for-runtime
-          BETTER_AUTH_URL: http://localhost:3000
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           NEXT_PUBLIC_APP_NAME: FluxMedia
           NEXT_PUBLIC_APP_URL: http://localhost:3000
-          SYSTEM_ASSETS_BUCKET_NAME: system
-          GENERATIONS_BUCKET_NAME: generations
           NEXT_PUBLIC_PAYMENT_PROVIDER: none
-          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           set -euo pipefail
           pnpm --filter @repo/web build
-          pnpm --filter @repo/web assert:api-upstream-worker-standalone
+          test -f apps/web/dist/index.html
           pnpm --filter @repo/web smoke:api-upstream-worker
 
   build-and-push:
@@ -276,6 +272,7 @@ jobs:
       app_image: ${{ steps.meta.outputs.app_image }}
       app_digest: ${{ steps.unified.outputs.digest }}
       tag: ${{ steps.meta.outputs.tag }}
+      platform_fingerprint: ${{ steps.meta.outputs.platform_fingerprint }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -289,6 +286,7 @@ jobs:
           owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "app_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "platform_fingerprint=$(bash deploy/compute-platform-fingerprint.sh)" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -318,8 +316,9 @@ jobs:
             NEXT_PUBLIC_APP_URL=${{ env.PUBLIC_APP_URL }}
             NEXT_PUBLIC_APP_NAME=FluxMedia
             NEXT_PUBLIC_PAYMENT_PROVIDER=none
-            BETTER_AUTH_URL=${{ env.PUBLIC_APP_URL }}
-            GO_BACKEND_URL=http://127.0.0.1:8080
+            APP_VERSION=${{ steps.meta.outputs.tag }}
+            GIT_SHA=${{ github.sha }}
+            PLATFORM_FINGERPRINT=${{ steps.meta.outputs.platform_fingerprint }}
           cache-from: |
             type=registry,ref=${{ steps.meta.outputs.app_image }}:latest
             type=gha,scope=fluxmedia-unified
@@ -331,13 +330,31 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: read
     env:
       VERSION: ${{ needs.build-and-push.outputs.tag }}
       APP_IMAGE: ${{ needs.build-and-push.outputs.app_image }}
       APP_DIGEST: ${{ needs.build-and-push.outputs.app_digest }}
+      PLATFORM_FINGERPRINT: ${{ needs.build-and-push.outputs.platform_fingerprint }}
     steps:
       - name: Checkout release commit
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build application bundle from the pushed image
+        run: |
+          set -euo pipefail
+          bash deploy/build-app-bundle.sh \
+            --image "${APP_IMAGE}@${APP_DIGEST}" \
+            --version "${VERSION}" \
+            --platform-fingerprint "${PLATFORM_FINGERPRINT}" \
+            --output "${RUNNER_TEMP}/app-bundle/fluxmedia-app-linux-amd64.tar.gz"
 
       - name: Build deployment bundle
         run: |
@@ -347,7 +364,9 @@ jobs:
             --version "${VERSION}" \
             --git-sha "${GITHUB_SHA}" \
             --app-image "${APP_IMAGE}" \
-            --app-digest "${APP_DIGEST}"
+            --app-digest "${APP_DIGEST}" \
+            --app-bundle "${RUNNER_TEMP}/app-bundle/fluxmedia-app-linux-amd64.tar.gz" \
+            --platform-fingerprint "${PLATFORM_FINGERPRINT}"
 
       - name: Publish release and assets
         env:
@@ -357,6 +376,7 @@ jobs:
           assets=(
             "${RUNNER_TEMP}/release-assets/fluxmedia-release.env"
             "${RUNNER_TEMP}/release-assets/fluxmedia-deploy.tar.gz"
+            "${RUNNER_TEMP}/app-bundle/fluxmedia-app-linux-amd64.tar.gz"
           )
 
           if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
@@ -381,5 +401,6 @@ jobs:
             echo "- Release：[FluxMedia ${VERSION}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION})"
             echo "- 统一应用镜像：\`${APP_IMAGE}@${APP_DIGEST}\`"
             echo "- 提交：\`${GITHUB_SHA}\`"
-            echo "- 生产发布：手动运行 Deploy Production。"
+            echo "- 平台指纹：\`${PLATFORM_FINGERPRINT}\`"
+            echo "- 生产发布：平台指纹与线上镜像一致时可在站内点版本号更新，否则手动运行 Deploy Production。"
           } >> "${GITHUB_STEP_SUMMARY}"

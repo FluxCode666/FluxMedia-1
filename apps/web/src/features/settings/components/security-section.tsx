@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 安全设置组件
  *
@@ -9,7 +7,7 @@
  */
 
 import { Eye, EyeOff } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useState } from "react";
 import { toast } from "sonner";
 

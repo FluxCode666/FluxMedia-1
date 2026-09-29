@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 用户控制台统计的 Server Action 传输适配器。
  *

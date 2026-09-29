@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * 图表卡懒加载包装器。
  *
@@ -11,7 +9,7 @@
  * `dynamic({ ssr: false })`，因此经此 Client Component 包装器中转。
  */
 
-import dynamic from "next/dynamic";
+import dynamic from "@repo/shared/platform/dynamic";
 import type { ComponentProps } from "react";
 import type { ImagePricingChartCard } from "./image-pricing-chart-card";
 

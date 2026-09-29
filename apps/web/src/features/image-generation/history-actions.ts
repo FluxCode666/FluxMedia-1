@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * 统一生成历史 Server Action 薄传输适配器。
  *
@@ -25,7 +23,7 @@ import {
 } from "@repo/shared/uol/operations/video-generation";
 import type { z } from "zod";
 
-import { requestGoJson } from "@/server/go-backend-client";
+import { requestGoJson } from "@/lib/go-backend-request";
 
 /** 读取当前登录用户的一页图片/视频统一历史。 */
 export const getMyHistoryRecordsAction = protectedAction

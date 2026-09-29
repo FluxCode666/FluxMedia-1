@@ -1,10 +1,11 @@
 /**
- * 服务端展示时区解析与用户偏好持久化。
+ * 展示时区解析与用户偏好持久化。
  *
- * 使用方包括 Dashboard Server Components 与 user-auth UOL 操作。部署默认值由 Go
- * 后端的运行时设置提供；用户偏好也由 Go API 读取和持久化，数据库时间本身仍统一为 UTC。
+ * 使用方包括 Dashboard 页面加载函数与 user-auth UOL 操作。部署默认值由 Go 后端写入
+ * index.html 的运行时配置提供；用户偏好也由 Go API 读取和持久化，数据库时间本身仍统一为 UTC。
  */
 import { requestGoBackendJson } from "../http/go-backend";
+import { getRuntimeConfig } from "../runtime-config";
 import {
   isValidTimeZone,
   normalizeUserTimeZonePreference,
@@ -20,10 +21,10 @@ export type UserTimeZoneSettings = {
 /**
  * 读取部署环境的默认展示时区。
  *
- * @returns 合法 APP_TIME_ZONE；未配置或非法时返回 UTC；无外部副作用。
+ * @returns 运行时配置中的合法 APP_TIME_ZONE（Node 进程读取环境变量）；未配置或非法时返回 UTC。
  */
 export function getAppTimeZone(): string {
-  return resolveDisplayTimeZone(null, process.env.APP_TIME_ZONE);
+  return resolveDisplayTimeZone(null, getRuntimeConfig().appTimeZone ?? process.env.APP_TIME_ZONE);
 }
 
 /**
@@ -54,7 +55,7 @@ export async function getUserTimeZoneSettings(
   const rowTimeZone = normalizeUserTimeZonePreference(profile.timeZone);
   const defaultTimeZone = resolveDisplayTimeZone(
     null,
-    profile.defaultTimeZone || process.env.APP_TIME_ZONE
+    profile.defaultTimeZone || getAppTimeZone()
   );
   return {
     timeZone: rowTimeZone,
