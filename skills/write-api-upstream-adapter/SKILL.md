@@ -1,11 +1,12 @@
 ---
 name: write-api-upstream-adapter
-description: 根据供应商 API 文档、参数说明、HAR、请求响应样例或错误信息，为 FluxMedia API 类型账号生成并校验六操作上游适配配置，包括相对路径、四种认证、真实模型 ID 映射、请求 JavaScript、响应 JavaScript 和无网络测试夹具。适用于文生图、图生图和生视频的同步或异步上游协议，以及 Query、Header、Body、任务状态、URL、Base64、首尾帧和多参考图适配。
+description: 根据供应商 API 文档、参数说明、HAR、请求响应样例或错误信息，为 FluxMedia API 类型账号生成并校验六操作上游适配配置，包括相对路径、四种认证、真实模型 ID 映射、请求 JavaScript、响应 JavaScript 和无网络测试夹具。适用于文生图、图生图和生视频的同步或异步上游协议，以及 Query、Header、Body、任务状态、URL、Base64、首尾帧和多参考图适配。也适用于持有管理员 agent 令牌时，通过线上 API 读取、在线测试、增量修改和回滚已部署供应商的适配配置。
 ---
 
 <!--
-本 Skill 指导 Codex 在不访问真实供应商的前提下，为 FluxMedia API 账号生成完整、
-可审查并可用生产 QuickJS 契约验证的六操作适配配置。
+本 Skill 指导 Codex、Claude Code 等 agent 在不访问真实供应商的前提下，为 FluxMedia
+API 账号生成完整、可审查并可用生产 QuickJS 契约验证的六操作适配配置；持有管理员
+agent 令牌时，还可以通过线上 API 写入配置并按版本回滚。
 -->
 
 # 编写 API 上游适配器
@@ -39,6 +40,10 @@ description: 根据供应商 API 文档、参数说明、HAR、请求响应样�
   [references/video.md](references/video.md)
 
 请求同时覆盖多类媒体时，分别读取对应参考文件，但保持一套共享分析和交付流程。
+
+用户要求直接配置线上服务，或环境中存在 `FLUXMEDIA_ADMIN_AGENT_TOKEN` 时，再读取
+[references/online-api.md](references/online-api.md)，先用线上接口读取当前配置作为事实
+来源，并按第 8 步写入。
 
 在 FluxMedia 仓库中工作时，再核对当前源码：
 
@@ -183,6 +188,20 @@ return {
 12. 脚本是否不使用禁用能力且满足所有资源边界；
 13. 用户错误、日志和夹具是否不含凭据、Prompt、媒体或上游正文。
 
+### 8. 写入线上配置（可选）
+
+仅在用户明确要求且持有管理员 agent 令牌时执行，完整接口见
+[references/online-api.md](references/online-api.md)：
+
+1. 调用 `me` 确认令牌可写，调用供应商详情取得 `expectedCurrentVersionId`；
+2. 对每个非空脚本用 `script-test` 跑通第 6 步的全部夹具；
+3. 用 `dryRun: true` 的 PATCH 预演，确认 `changedFields` 只包含预期字段；
+4. 正式保存，重新读取详情并用 `supplierId` 复测已保存脚本；
+5. 出现异常时用版本历史回滚，并报告旧版本号、新版本号和变更字段。
+
+令牌不能修改认证方式和密钥；修改 `baseUrl` 会让已保存密钥发往新地址，必须由用户
+确认新地址后才能提交。
+
 ## 交付格式
 
 按以下顺序交付：
@@ -194,7 +213,8 @@ return {
 5. 每个非空响应脚本的状态映射、源码和 before/after；
 6. 同步、异步和失败的无网络测试夹具；
 7. 已验证项、未验证项和上线风险；
-8. 明确列出保持为空、使用内置行为的脚本。
+8. 明确列出保持为空、使用内置行为的脚本；
+9. 写入线上时，列出供应商 ID、旧版本号、新版本号、变更字段和回滚方式。
 
 上线风险必须区分图片与视频：异步图片仅当前进程尽力完成，容器重启或崩溃后不会恢复
 远端任务；视频才使用持久任务恢复。对异步图片明确建议管理员在发布或重启前确认没有

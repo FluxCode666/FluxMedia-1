@@ -28,6 +28,7 @@ const REFERENCE_PATHS = [
   "references/text-to-image.md",
   "references/image-to-image.md",
   "references/video.md",
+  "references/online-api.md",
 ] as const;
 
 /** 提取 Markdown 中所有 JavaScript 函数体代码块。 */
@@ -87,7 +88,7 @@ afterAll(async () => {
 });
 
 describe("write-api-upstream-adapter skill", () => {
-  it("包含有效元数据、UI 配置和四个直接参考文件", async () => {
+  it("包含有效元数据、UI 配置和全部直接参考文件", async () => {
     const skill = await readFile(SKILL_PATH, "utf8");
     expect(skill).toMatch(
       /^---\nname: write-api-upstream-adapter\ndescription: .+\n---/u
