@@ -1,9 +1,10 @@
 # Go 后端迁移契约与验证记录
 
-更新于 2026-09-14。Next.js 负责页面、静态资源、输入/输出契约与向 Go 转发请求；
-运行中的 API、身份验证、持久化和后台任务由 `services/api-gateway` 实现。
-Go 不把业务请求回传给 Next.js。博客/落地页列表 API 已由 Go 提供；MDX 内容详情的
-文件读取、组件编译与页面渲染仍保留在 Next.js，这是静态内容页面职责。
+更新于 2026-09-29。`apps/web` 已从 Next.js 改为 Vite 构建的 React SPA，生产构建以
+`go:embed`（`-tags embed`）编进 Go 二进制；Go 同源提供页面外壳（语言重定向、控制台会话
+门禁、SEO 元信息与运行时配置注入）、静态资源和全部 API。运行中的 API、身份验证、持久化
+和后台任务由 `services/api-gateway` 实现。MDX 博客与文档在构建期编译进 SPA。下文的
+审计数字记录的是 SPA 改造前对 Next.js 路由与 Server Actions 的检查结果。
 
 ## 当前审计结果
 
@@ -87,11 +88,9 @@ MCP 已退役，兼容入口明确返回 410；此前移除的 Chat、Responses�
 ## 运行拓扑
 
 ```text
-浏览器 / Nginx
-  ├── 页面与静态资源 → Next.js web
-  └── API / 媒体 / Webhook → Go backend
-
-Next.js Server Actions / UOL 适配器 → Go backend（转发会话）
+浏览器 / Nginx → Go backend
+  ├── 页面外壳与静态资源：内嵌的 Vite SPA 构建产物
+  └── API / 媒体 / Webhook
 
 Go backend
   ├── PostgreSQL：用户、配置、任务、租约、事实、账本与幂等状态
@@ -109,22 +108,23 @@ SCUNet 修复、RealESR 超分、ISNet 抠图及扩图像素处理。Go 决定�
 Next.js 业务接口。该白名单用于减少意外暴露，并不把同一容器内的进程变成独立安全边界；
 需要抵御容器内进程互相读取时仍应拆分容器或使用更强的运行时隔离。
 
-源码开发仍以 web、backend、script-runtime、media-processing 四个进程运行，便于独立
-调试。根目录自托管 Compose 与生产 `deploy/docker-compose.yml` 都把这四个进程装入统一
-`app` 容器；`Dockerfile.unified` 生成不可变镜像，由 PID 1 监管并转发终止信号，任一关键
-进程意外退出都会让整个容器失败。生产 Web 和 Go 只向宿主机回环地址发布 `3000` 与
-`3001`，QuickJS 与 ONNX/Sharp 仅在容器内监听 `127.0.0.1:8090` 和 `127.0.0.1:8091`。
-Next.js 到 Go 以及 Go 到两个私有运行时都固定使用 `127.0.0.1`，不依赖 Compose DNS。
+源码开发以 Vite、backend、script-runtime、media-processing 四个进程运行，便于独立
+调试；Vite 把后端路径代理到 Go。根目录自托管 Compose 与生产 `deploy/docker-compose.yml`
+都把 backend（内嵌 SPA）、script-runtime、media-processing 三个进程装入统一 `app` 容器；
+`Dockerfile.unified` 生成不可变镜像，由 PID 1 监管并转发终止信号，任一关键进程意外退出
+都会让整个容器失败。生产只把 Go 发布到宿主机回环地址 `3001`，QuickJS 与 ONNX/Sharp 仅在
+容器内监听 `127.0.0.1:8090` 和 `127.0.0.1:8091`。Go 到两个私有运行时固定使用
+`127.0.0.1`，不依赖 Compose DNS。
 镜像当前固定构建为 `linux/amd64`，与生产工作流、Go 二进制及 ONNX/Sharp x64 原生模块一致。
 
 本地 Go 启动时可先执行现有 Drizzle journal / SQL 迁移，使用数据库锁避免并发迁移
 冲突。生产发布在维护窗口内用候选 `app` 镜像恰好执行一次迁移，常驻容器设置
-`GO_BACKEND_SKIP_MIGRATION=true`，避免四进程启动时重复迁移；`/readyz` 检查 PostgreSQL
+`GO_BACKEND_SKIP_MIGRATION=true`，避免容器启动时重复迁移；`/readyz` 检查 PostgreSQL
 和 Redis。数据库时间以 UTC 处理，
 `APP_TIME_ZONE` 仅定义展示与统计自然日。Go 媒体 worker 以 PostgreSQL 为持久队列，
 Redis 发布/订阅只用于唤醒，并定时补扫，丢失唤醒不会丢失任务。
 
-`Dockerfile.web`、`Dockerfile.api-gateway`、`Dockerfile.api-upstream-script-runtime` 与
+`Dockerfile.api-gateway`（不带 embed 标签，不含页面）、`Dockerfile.api-upstream-script-runtime` 与
 `Dockerfile.media-processing-runtime` 继续保留作组件专项构建和诊断；生产只构建、推送
 `Dockerfile.unified`。统一镜像保留 Node 维护脚本环境供发布门禁、离线回填和治理脚本
 使用；在线 SQL 迁移、HTTP 和任务执行仍由 Go 负责。不能把镜像内存在 Node 或依赖包
@@ -195,7 +195,7 @@ Redis 发布/订阅只用于唤醒，并定时补扫，丢失唤醒不会丢失�
 媒体计算运行时已完成三项本机真实 ONNX 推理和 Linux 容器依赖/推理检查，
 `Dockerfile.media-processing-runtime` 专项镜像构建通过。生产统一镜像构建一次 Web、Go
 与两个私有运行时，共享依赖层并使用 BuildKit 缓存；Compose 使用 digest 固定该镜像。
-统一健康检查同时验证四个进程，运营 epoch 通过容器内回环 Go 接口初始化。Go backend 的 go-builder
+统一健康检查同时验证三个进程，运营 epoch 通过容器内回环 Go 接口初始化。Go backend 的 go-builder
 目标实际构建通过，产物为 Go 1.26.6、CGO=0、linux/amd64；嵌入式设置定义与 YAML
 解析依赖均包含在构建中。pruner 目标也构建通过，裁剪后的四份博客/pSEO 内容文件
 逐一通过与仓库源文件的 SHA256 一致性检查。构建验证通过临时同版本官方 ECR
@@ -215,7 +215,7 @@ frozen lock 安装 QuickJS 0.32.0，镜像包含 `pool.mjs`。无网络、无宿
 ```bash
 pnpm install --frozen-lockfile
 make dev-backend                  # Go :8080，先迁移后监听
-make dev-frontend                 # Next.js 页面 :3000
+make dev-frontend                 # Vite 页面 :3000（后端路径代理到 :8080）
 make dev-script-runtime           # 私有 QuickJS :8090
 make dev-media-processing-runtime # 私有 ONNX / sharp :8091
 make dev                         # 一次启动四个服务

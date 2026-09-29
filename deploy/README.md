@@ -1,16 +1,22 @@
 # FluxMedia 生产部署
 
-本目录提供 `media.flux-code.cc` 与 `media.fluxhall.cc` 的生产部署配置。Nginx 将页面和
-静态资源转发到 Next.js，将 API、媒体与 Webhook 转发到 Go。生产 Compose 只运行一个
-`app` 容器，其中由监管进程启动 Next.js、Go、QuickJS 与 ONNX/Sharp 四个进程；
-PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主机回环地址发布
-`127.0.0.1:${WEB_PORT}`（默认 `3000`）和
-`127.0.0.1:${GO_BACKEND_PORT}`（默认 `3001`）。数据库迁移由发布脚本在维护窗口中
-恰好执行一次，常驻 `app` 启动时跳过迁移。
+本目录提供 `media.flux-code.cc` 与 `media.fluxhall.cc` 的生产部署配置。Web SPA 在构建期
+通过 `go:embed` 打进 Go 二进制，Nginx 把页面、静态资源、API、媒体与 Webhook 全部转发到
+Go，仅对长连接接口关闭缓冲。生产 Compose 只运行一个 `app` 容器，其中由监管进程启动
+Go、QuickJS 与 ONNX/Sharp 三个进程；PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。
+容器只向宿主机回环地址发布 `127.0.0.1:${GO_BACKEND_PORT}`（必须为 `3001`）。常驻 `app`
+启动时跳过迁移：换镜像时由发布脚本在维护窗口中恰好执行一次，站内更新时由容器重启后的
+`boot.mjs` 在维护响应下执行（见下文“站内更新”）。
 
-生产发布只消费 Release 流水线（`.github/workflows/release.yml`）发布到 GitHub Release 的
-部署包。发布入口只有一个：手动运行 `.github/workflows/deploy-production.yml`，由它经 SSH
-执行部署包内的 `apply-release.sh`；部署目录中的 `release-state/deploy.lock` 防止并发部署。
+生产环境只消费 Release 流水线（`.github/workflows/release.yml`）发布到 GitHub Release 的
+产物，有两条升级路径：
+
+- **Deploy Production（换镜像）**：手动运行 `.github/workflows/deploy-production.yml`，由它
+  经 SSH 执行部署包内的 `apply-release.sh`；部署目录中的 `release-state/deploy.lock` 防止
+  并发部署。首次部署、平台指纹变化、修改 `.env` 或 Nginx 时必须走这条路径。
+- **站内更新（只换应用代码）**：新版本平台指纹与运行中镜像一致时，超级管理员可在控制台
+  侧栏点击版本号完成更新，不经过 SSH 与 Actions。
+
 流水线细节见 [`.github/CICD.md`](../.github/CICD.md)。
 
 ## 文件
@@ -20,21 +26,28 @@ PostgreSQL、Redis 与宿主机 Nginx 不合入应用容器。容器只向宿主
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
 - `build-release-bundle.sh`：Release 流水线构建 `fluxmedia-deploy.tar.gz` 与 manifest
   `fluxmedia-release.env`；其文件清单是生产部署文件的唯一来源。
+- `build-app-bundle.sh`：Release 流水线从已发布的统一镜像导出站内更新使用的应用包
+  `fluxmedia-app-linux-amd64.tar.gz`（镜像内 `/app` 去掉存储、版本目录与媒体模型，加上
+  `/backend`）；不进入部署包。
+- `compute-platform-fingerprint.sh`：计算平台指纹，覆盖站内更新无法替换的基础镜像、系统
+  依赖、入口脚本、`boot.mjs`、健康检查、媒体模型与 Compose/Nginx 配置；结果写入镜像
+  `release.json` 与 manifest。
 - `read-release-manifest.sh`：严格解析 manifest（不 source），校验版本、提交、镜像 digest
-  与部署包 SHA-256。
+  与部署包 SHA-256；可选的 `APP_BUNDLE_SHA256` 与 `PLATFORM_FINGERPRINT` 必须同时出现。
 - `fetch-release-bundle.sh`：在 Actions runner 上匿名 HTTPS 下载公开 Release 部署包，校验
   SHA-256，只接受扁平普通文件；不进入部署包。
 - `apply-release.sh`：由 Deploy Production 经 SSH 调用，持有 `release-state/deploy.lock`，
   原子落地部署包文件后执行 `deploy-release.sh`。
-- `deploy-release.sh`：生产发布状态机（备份、门禁、迁移、Nginx、smoke 与安全证据）。
+- `deploy-release.sh`：生产发布状态机（备份、门禁、迁移、Nginx、smoke 与安全证据）；
+  越过迁移边界后撤下站内更新记录，使本次镜像成为运行版本。
 - `release-bundle.test.sh`：manifest 解析、部署包构建/下载/校验、路径穿越拒绝，以及
   `apply-release.sh` 落地、部署锁与缺失文件拒绝的回归测试（需 Linux）。
 - `.env.example`：不含真实机密的服务器环境变量模板。
 - `nginx/nginx.conf`：参考 user-service 的宿主机 Nginx 主配置。
-- `nginx/conf.d/fluxmedia.conf`：两个生产域名的 HTTPS Web/API 分流配置。
-- `nginx/routing-contract.test.sh`：Web 与 Go upstream 分流的静态回归测试。
-- `smoke-production-routing.sh`：页面、Next.js 静态资源、Go API 与健康入口的公网 smoke。
-- `.github/workflows/release.yml`：质量门、GHCR 构建与带部署包的 GitHub Release。
+- `nginx/conf.d/fluxmedia.conf`：两个生产域名的 HTTPS 反向代理配置（全部转发到 Go）。
+- `nginx/routing-contract.test.sh`：单一 Go upstream 与长连接配置的静态回归测试。
+- `smoke-production-routing.sh`：页面、SPA 静态资源、Go API 与健康入口的公网 smoke。
+- `.github/workflows/release.yml`：质量门、GHCR 构建与带部署包、应用包的 GitHub Release。
 - `.github/workflows/deploy-production.yml`：手动下载部署包并经 SSH 执行发布。
 
 ## 首次配置服务器
@@ -66,10 +79,10 @@ sudo editor /root/fluxmedia/.env
 缓存默认使用逻辑库 4。迁移由部署流水线在切换 `app` 前执行。本 Compose 不启动 PostgreSQL
 或 Redis。
 
-`app` 内的 Next.js 固定监听 `3000`，Go 固定监听 `8080`；宿主机端口分别由
-`WEB_PORT` 与 `GO_BACKEND_PORT` 配置。QuickJS 和 ONNX/Sharp 只监听容器回环地址
-`127.0.0.1:8090` 与 `127.0.0.1:8091`，不发布宿主机端口。修改任一公开端口后，必须同步修改
-`nginx/conf.d/fluxmedia.conf` 中对应的 upstream 地址，然后执行 `nginx -t` 并 reload。
+`app` 内的 Go 固定监听 `8080`，同源提供页面与 API；宿主机端口由 `GO_BACKEND_PORT`
+配置，发布脚本要求它与 `BIND_HOST` 分别为 `3001` 和 `127.0.0.1`，与
+`nginx/conf.d/fluxmedia.conf` 的 upstream 一致。QuickJS 和 ONNX/Sharp 只监听容器回环地址
+`127.0.0.1:8090` 与 `127.0.0.1:8091`，不发布宿主机端口。旧版本使用的 `WEB_PORT` 已不再需要。
 
 ## Redis MQ 运行要求
 
@@ -171,13 +184,14 @@ docker compose exec --interactive=false \
 自动部署必须关闭一次性 `app` 容器的 stdin。发布脚本运行在 SSH 会话中；若保留
 Compose 默认的交互输入，迁移容器可能读取调用方输入，导致只完成迁移却未启动服务。
 
-自动部署先校验 `CRON_SECRET`，备份、安装并验证版本化 Nginx 配置，再以 digest 拉取
-候选单一镜像。流水线在覆盖生产 Compose 前保存上一版 Compose 与镜像元数据；随后停止
+自动部署先校验 `CRON_SECRET`，再以 digest 拉取候选单一镜像，并在停止旧应用前一刻备份、
+安装并验证版本化 Nginx 配置（新配置把全部页面交给 Go，紧贴停服安装可把旧应用在新路由下
+服务页面的窗口压到最短）。流水线在覆盖生产 Compose 前保存上一版 Compose 与镜像元数据；随后停止
 旧应用、确认数据库连接已排空，并执行早期
 只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、迁移、
 postcheck 与控制台统计回填对账。新 `app` 启动后、健康检查前，流水线会自动确保运营统计
 epoch：空表按生产应用时区当前日初始化，已有值原样跳过。资产收编开始后，任何迁移、
-后置校验、统计对账、epoch 门禁、启动或四进程联合健康检查失败都会保持 `app` 停止，
+后置校验、统计对账、epoch 门禁、启动或三进程联合健康检查失败都会保持 `app` 停止，
 绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版应用在本轮停服前确实处于
 运行状态且上一版 Compose 与镜像元数据完整，退出状态机才恢复原 Compose 并重启原服务；
 这个跨拓扑恢复边界支持首次从四容器切换到单容器。容器健康后还必须通过两个公网域名的页面、静态资源、
@@ -270,9 +284,42 @@ Compose。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 推送合规版本 tag 只触发 Release 流水线构建镜像并创建带部署包的 GitHub Release，不会
 自动部署生产。生产发布只能通过手动运行 Deploy Production 完成，版本号必须
 符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`，且该版本必须由新 Release 流水线
-发布（旧流水线创建的 Release 没有部署包）。新容器的四个内部进程未全部通过联合健康检查时，
+发布（旧流水线创建的 Release 没有部署包）。新容器的三个内部进程未全部通过联合健康检查时，
 发布保持维护状态并记录备份存储类型、artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或
 启动旧应用。
 
 回滚时手动运行 Deploy Production，输入仍带部署包且镜像仍存在于 GHCR 的旧版本。若迁移已经
 开始，必须先按上文确认数据库备份恢复、资产回滚与 `legacy-startup` 门禁。
+
+## 站内更新
+
+站内更新只替换应用代码，由运行中的 Go 进程完成下载与校验，由容器入口的 `boot.mjs`
+完成迁移与切换，不需要 SSH、Actions 或宿主机上的额外进程。
+
+- **持久卷**：`/root/docker-data/fluxmedia-releases` 挂载到容器 `/app/releases`。
+  `deploy-release.sh` 在停服前以镜像内应用用户（uid 1001）创建该目录并拒绝符号链接；
+  首次上线若手工部署，需要执行等价的
+  `install -d -m 750 -o 1001 -g 1001 /root/docker-data/fluxmedia-releases`。
+- **目录内容**：`<版本>/` 为解压后的应用版本，`state.json` 记录运行版本、待切换版本与上次
+  结果，`backups/` 保存每次更新前的 `pg_dump` custom-format 备份（只保留最近 3 份，与
+  Deploy Production 的 `backups/` 相互独立）。
+- **条件**：只提供 GitHub 最新正式 Release（不含 prerelease），且版本比当前新、manifest 带
+  `APP_BUNDLE_SHA256` 与 `PLATFORM_FINGERPRINT`；平台指纹必须与运行中镜像一致，否则弹窗
+  提示需要 Deploy Production。
+- **流程**：Go 下载应用包并校验 SHA-256 与平台指纹，安全解压到 `<版本>/`，用镜像内
+  `pg_dump` 备份数据库，写入 `state.json` 后请求监管进程退出；容器按
+  `restart: unless-stopped` 重启，`boot.mjs` 在 `8080` 上返回 `503 SYSTEM_UPDATING`
+  维护响应，用新版本执行 `--migrate` 与控制台统计回填，成功后切换并清理旧版本目录。
+- **失败**：迁移失败（事务整体回滚）、版本目录不完整或连续 3 次启动未完成时，保持原版本
+  运行并在 `state.json` 记录失败原因，弹窗展示给超级管理员。
+- **与 Deploy Production 的关系**：`boot.mjs` 只在 `state.json` 中记录的基础镜像与当前镜像
+  一致时使用卷内版本；Deploy Production 越过迁移边界后还会把 `state.json` 改名为
+  `state.superseded-<tag>.json`，因此换镜像（包括重新部署同一镜像）后一律以镜像为准，卷内
+  旧版本目录由下一次站内更新清理。迁移边界之前失败会恢复上一版应用，此时仍沿用卷内版本。
+- **回滚**：站内更新的迁移已提交。回退时先停止 `app`，用 `backups/` 中更新前的备份恢复
+  数据库，再用 Deploy Production 部署旧版本镜像。
+
+Release manifest 新增的两个键只有新版 `read-release-manifest.sh` 能解析。Deploy Production
+在 runner 上用触发分支（默认 `main`）的 `deploy/` 脚本校验 manifest，因此必须先把本变更
+合入默认分支，再对带应用包的版本运行 Deploy Production；服务器上的 `apply-release.sh`
+使用部署包内同版本的脚本，不受影响。
