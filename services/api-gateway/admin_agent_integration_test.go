@@ -2,7 +2,7 @@
 
 package main
 
-// agent 供应商配置通道的端到端集成测试：令牌签发与撤销、Bearer 鉴权、
+// agent 供应商配置通道的端到端集成测试：令牌签发与撤销、Bearer 鉴权、scope 授权、
 // 禁止修改认证与密钥、乐观锁、预演、增量修改、版本历史、回滚与审计。
 
 import (
@@ -48,9 +48,9 @@ func agentTestAdmin(t *testing.T, b *backend) (string, *http.Cookie) {
 	return id, signInTestUser(t, b, email)
 }
 
-func agentTestIssueToken(t *testing.T, b *backend, cookie *http.Cookie, canWrite bool) (string, string) {
+func agentTestIssueToken(t *testing.T, b *backend, cookie *http.Cookie, scopes ...string) (string, string) {
 	t.Helper()
-	w := authRequest(t, b, "POST", "/api/admin/agent-tokens", mustJSON(map[string]any{"name": "agent", "canWrite": canWrite, "expiresInDays": 7}), cookie)
+	w := authRequest(t, b, "POST", "/api/admin/agent-tokens", mustJSON(map[string]any{"name": "agent", "scopes": scopes, "expiresInDays": 7}), cookie)
 	if w.Code != 200 {
 		t.Fatalf("issue token failed: %d %s", w.Code, w.Body.String())
 	}
@@ -93,8 +93,13 @@ func TestAdminAgentSupplierLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = b.db.Exec(ctx, `DELETE FROM admin_audit_log WHERE admin_user_id=$1`, adminID) })
-	writeID, writeToken := agentTestIssueToken(t, b, cookie, true)
-	_, readToken := agentTestIssueToken(t, b, cookie, false)
+	// 只勾选 suppliers:write 时自动附带 suppliers:read。
+	writeID, writeToken := agentTestIssueToken(t, b, cookie, adminAgentScopeSuppliersWrite)
+	_, readToken := agentTestIssueToken(t, b, cookie, adminAgentScopeSuppliersRead)
+	var storedScopes []string
+	if err := b.db.QueryRow(ctx, `SELECT scopes FROM admin_agent_token WHERE id=$1`, writeID).Scan(&storedScopes); err != nil || strings.Join(storedScopes, ",") != "suppliers:read,suppliers:write" {
+		t.Fatalf("write scope must imply read: %v %v", storedScopes, err)
+	}
 
 	if w, _ := agentRequest(t, b, "GET", "/api/admin-agent/v1/me", "", nil); w.Code != 401 {
 		t.Fatalf("missing token must be rejected: %d", w.Code)
@@ -102,7 +107,7 @@ func TestAdminAgentSupplierLifecycle(t *testing.T) {
 	if w, _ := agentRequest(t, b, "GET", "/api/admin-agent/v1/me", adminAgentTokenPrefix+strings.Repeat("0", 64), nil); w.Code != 401 {
 		t.Fatalf("unknown token must be rejected: %d", w.Code)
 	}
-	if w, out := agentRequest(t, b, "GET", "/api/admin-agent/v1/me", writeToken, nil); w.Code != 200 || out["canWrite"] != true {
+	if w, out := agentRequest(t, b, "GET", "/api/admin-agent/v1/me", writeToken, nil); w.Code != 200 || len(out["scopes"].([]any)) != 2 || len(out["availableScopes"].([]any)) == 0 {
 		t.Fatalf("me failed: %d %v", w.Code, out)
 	}
 
@@ -121,7 +126,7 @@ func TestAdminAgentSupplierLifecycle(t *testing.T) {
 
 	patchPath := "/api/admin-agent/v1/suppliers/" + memberID
 	pathPatch := map[string]any{"expectedCurrentVersionId": expected, "config": map[string]any{"operations": map[string]any{"images.generate": map[string]any{"path": "/custom/generate"}}}}
-	if w, out := agentRequest(t, b, "PATCH", patchPath, readToken, pathPatch); w.Code != 403 || out["code"] != "READ_ONLY_TOKEN" {
+	if w, out := agentRequest(t, b, "PATCH", patchPath, readToken, pathPatch); w.Code != 403 || out["code"] != "INSUFFICIENT_SCOPE" {
 		t.Fatalf("read-only token wrote: %d %v", w.Code, out)
 	}
 	for _, forbiddenCfg := range []map[string]any{{"apiKey": "stolen"}, {"authentication": map[string]any{"mode": "none"}}} {
@@ -183,7 +188,7 @@ func TestAdminAgentSupplierLifecycle(t *testing.T) {
 		t.Fatalf("rollback with stale version accepted: %d", w.Code)
 	}
 	rollback["expectedCurrentVersionId"] = version2
-	if w, out := agentRequest(t, b, "POST", patchPath+"/rollback", readToken, rollback); w.Code != 403 {
+	if w, out := agentRequest(t, b, "POST", patchPath+"/rollback", readToken, rollback); w.Code != 403 || out["code"] != "INSUFFICIENT_SCOPE" {
 		t.Fatalf("read-only rollback accepted: %d %v", w.Code, out)
 	}
 	if w, out := agentRequest(t, b, "POST", patchPath+"/rollback", writeToken, rollback); w.Code != 200 || out["changed"] != true {
@@ -197,7 +202,7 @@ func TestAdminAgentSupplierLifecycle(t *testing.T) {
 
 	// 会话接口：列表只显示本人令牌，撤销后令牌立即失效。
 	lw := authRequest(t, b, "GET", "/api/admin/agent-tokens", "", cookie)
-	if lw.Code != 200 || strings.Contains(lw.Body.String(), writeToken) || strings.Contains(lw.Body.String(), "token_hash") {
+	if lw.Code != 200 || strings.Contains(lw.Body.String(), writeToken) || strings.Contains(lw.Body.String(), "token_hash") || !strings.Contains(lw.Body.String(), `"availableScopes"`) {
 		t.Fatalf("token list leaked plaintext: %d %s", lw.Code, lw.Body.String())
 	}
 	if rw := authRequest(t, b, "POST", "/api/admin/agent-tokens/"+writeID+"/revoke", "{}", cookie); rw.Code != 200 {
@@ -220,15 +225,15 @@ func TestAdminAgentTokenIssueRules(t *testing.T) {
 	ctx := context.Background()
 	adminID, cookie := agentTestAdmin(t, b)
 	t.Cleanup(func() { _, _ = b.db.Exec(ctx, `DELETE FROM admin_audit_log WHERE admin_user_id=$1`, adminID) })
-	for _, body := range []map[string]any{{"name": ""}, {"name": "x", "expiresInDays": 0}, {"name": "x", "expiresInDays": 91}, {"name": "x", "extra": true}} {
+	for _, body := range []map[string]any{{"name": "", "scopes": []string{"suppliers:read"}}, {"name": "x", "scopes": []string{"suppliers:read"}, "expiresInDays": 0}, {"name": "x", "scopes": []string{"suppliers:read"}, "expiresInDays": 91}, {"name": "x", "scopes": []string{"suppliers:read"}, "extra": true}, {"name": "x"}, {"name": "x", "scopes": []string{}}, {"name": "x", "scopes": []string{"users:write"}}, {"name": "x", "canWrite": true}} {
 		if w := authRequest(t, b, "POST", "/api/admin/agent-tokens", mustJSON(body), cookie); w.Code != 400 {
 			t.Fatalf("invalid token input accepted: %v %d", body, w.Code)
 		}
 	}
 	for range adminAgentTokenMaxActive {
-		agentTestIssueToken(t, b, cookie, false)
+		agentTestIssueToken(t, b, cookie, adminAgentScopeSuppliersRead)
 	}
-	if w := authRequest(t, b, "POST", "/api/admin/agent-tokens", mustJSON(map[string]any{"name": "over"}), cookie); w.Code != 409 {
+	if w := authRequest(t, b, "POST", "/api/admin/agent-tokens", mustJSON(map[string]any{"name": "over", "scopes": []string{"suppliers:read"}}), cookie); w.Code != 409 {
 		t.Fatalf("token limit not enforced: %d", w.Code)
 	}
 	// 其他普通管理员不能撤销他人令牌。

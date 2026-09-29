@@ -172,3 +172,40 @@ func TestAuthenticateAdminAgentRejectsMissingOrMalformedTokenBeforeDatabase(t *t
 		assertAPIErrorCode(t, err, http.StatusUnauthorized, "UNAUTHORIZED")
 	}
 }
+
+func TestNormalizeAdminAgentScopes(t *testing.T) {
+	got, err := normalizeAdminAgentScopes([]string{" suppliers:write ", "suppliers:write"})
+	if err != nil || !reflect.DeepEqual(got, []string{adminAgentScopeSuppliersRead, adminAgentScopeSuppliersWrite}) {
+		t.Fatalf("write must dedupe and imply read in registry order: %v %v", got, err)
+	}
+	got, err = normalizeAdminAgentScopes([]string{"suppliers:read"})
+	if err != nil || !reflect.DeepEqual(got, []string{adminAgentScopeSuppliersRead}) {
+		t.Fatalf("read scope wrong: %v %v", got, err)
+	}
+	for _, input := range [][]string{nil, {}, {"suppliers:admin"}, {""}, {"suppliers:read", "users:write"}} {
+		_, err := normalizeAdminAgentScopes(input)
+		assertAPIErrorCode(t, err, http.StatusBadRequest, "INVALID_REQUEST")
+	}
+}
+
+func TestAdminAgentScopeRegistryIsConsistent(t *testing.T) {
+	seen := map[string]bool{}
+	for _, scope := range adminAgentScopeRegistry {
+		if seen[scope.ID] || !strings.Contains(scope.ID, ":") || scope.Label == "" || scope.Description == "" || scope.Requires == nil {
+			t.Fatalf("invalid scope definition: %+v", scope)
+		}
+		for _, required := range scope.Requires {
+			if !seen[required] {
+				t.Fatalf("scope %s requires unknown or later scope %s", scope.ID, required)
+			}
+		}
+		seen[scope.ID] = true
+	}
+}
+
+func TestAdminAgentPrincipalHasScope(t *testing.T) {
+	p := &adminAgentPrincipal{Scopes: []string{adminAgentScopeSuppliersRead}}
+	if !p.hasScope(adminAgentScopeSuppliersRead) || p.hasScope(adminAgentScopeSuppliersWrite) {
+		t.Fatal("scope check wrong")
+	}
+}

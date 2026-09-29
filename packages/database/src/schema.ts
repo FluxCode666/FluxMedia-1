@@ -2961,9 +2961,10 @@ export type McpApiKey = typeof mcpApiKey.$inferSelect;
 export type NewMcpApiKey = typeof mcpApiKey.$inferInsert;
 
 /**
- * 管理员 agent 令牌 - 外部 agent 调用供应商适配器配置 API 的凭据
+ * 管理员 agent 令牌 - 外部 agent 调用 /api/admin-agent/v1/* 的全局管理员凭据
  *
- * 明文令牌只在签发时返回一次，此表仅保存 SHA-256 哈希。令牌继承签发管理员的
+ * 能力由签发时勾选的 scopes 决定，新的管理功能通过注册新 scope 接入，Go 端
+ * adminAgentScopeRegistry 是 scope 清单的唯一来源。明文令牌只在签发时返回一次，此表仅保存 SHA-256 哈希。令牌继承签发管理员的
  * 身份，签发人失去管理员角色、被封禁、令牌过期或被撤销后立即失效。
  *
  * @field id - 令牌唯一标识符
@@ -2971,7 +2972,7 @@ export type NewMcpApiKey = typeof mcpApiKey.$inferInsert;
  * @field tokenPrefix - 明文令牌前缀
  * @field tokenHash - 明文令牌的 SHA-256 哈希
  * @field lastFour - 明文令牌末四位，用于识别
- * @field canWrite - 是否允许修改供应商配置（否则只读）
+ * @field scopes - 授权范围列表，如 suppliers:read、suppliers:write
  * @field createdByUserId - 签发管理员用户 ID
  * @field expiresAt - 过期时间（必填）
  * @field lastUsedAt - 最近使用时间
@@ -2987,7 +2988,7 @@ export const adminAgentToken = pgTable(
     tokenPrefix: text("token_prefix").notNull(),
     tokenHash: text("token_hash").notNull().unique(),
     lastFour: text("last_four").notNull(),
-    canWrite: boolean("can_write").notNull().default(false),
+    scopes: text("scopes").array().notNull().default(sql`'{}'::text[]`),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

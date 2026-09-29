@@ -1,9 +1,10 @@
 package main
 
-// 管理员 agent 专用的供应商适配器配置接口：/api/admin-agent/v1/*。
+// 管理员 agent 通用接口（/me）与供应商适配器配置接口：/api/admin-agent/v1/*。
 //
-// 外部 agent 使用 agent 令牌读取 API 供应商配置、运行无网络脚本测试、增量修改
-// 配置和回滚历史版本。约束如下：
+// 外部 agent 使用全局 agent 令牌读取 API 供应商配置、运行无网络脚本测试、增量修改
+// 配置和回滚历史版本。读取与脚本测试需要 suppliers:read，修改与回滚需要
+// suppliers:write。约束如下：
 //   - 任何接口都不返回供应商密钥；
 //   - 不允许修改密钥（apiKey）和认证配置（authentication），baseUrl 可以修改；
 //   - 每次修改必须携带 expectedCurrentVersionId 做乐观锁；
@@ -28,7 +29,7 @@ var adminAgentPatchableConfigKeys = map[string]bool{
 	"videoInputCapabilitiesByModel": true, "modelMappings": true, "operations": true,
 }
 
-// registerAdminAgentRoutes 注册 agent 令牌鉴权的供应商配置接口。
+// registerAdminAgentRoutes 注册 agent 令牌鉴权的通用接口与供应商配置接口。
 func (b *backend) registerAdminAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin-agent/v1/me", b.endpoint(b.handleAdminAgentMe))
 	mux.HandleFunc("GET /api/admin-agent/v1/catalog", b.endpoint(b.handleAdminAgentCatalog))
@@ -41,7 +42,8 @@ func (b *backend) registerAdminAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin-agent/v1/script-test", b.endpoint(b.handleAdminAgentScriptTest))
 }
 
-// handleAdminAgentMe 返回当前令牌身份，供 agent 在开始工作前自检权限。
+// handleAdminAgentMe 返回当前令牌身份与授权范围，供 agent 在开始工作前自检权限。
+// 任何有效令牌都可调用，不要求特定 scope；availableScopes 列出全部可签发的 scope。
 func (b *backend) handleAdminAgentMe(w http.ResponseWriter, r *http.Request) error {
 	principal, err := b.authenticateAdminAgent(r)
 	if err != nil {
@@ -49,15 +51,16 @@ func (b *backend) handleAdminAgentMe(w http.ResponseWriter, r *http.Request) err
 	}
 	noStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tokenId": principal.TokenID, "tokenName": principal.TokenName, "canWrite": principal.CanWrite,
-		"user": map[string]any{"id": principal.UserID, "role": principal.Role},
+		"tokenId": principal.TokenID, "tokenName": principal.TokenName, "scopes": nonNilStrings(principal.Scopes),
+		"availableScopes": adminAgentScopeRegistry,
+		"user":            map[string]any{"id": principal.UserID, "role": principal.Role},
 	})
 	return nil
 }
 
 // handleAdminAgentCatalog 返回分组、尺寸配置集和操作清单，供 agent 选择合法 ID。
 func (b *backend) handleAdminAgentCatalog(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	groups, err := b.backendPoolGroups(r)
@@ -106,7 +109,7 @@ func (b *backend) handleAdminAgentCatalog(w http.ResponseWriter, r *http.Request
 
 // handleAdminAgentSuppliers 列出供应商摘要（不含脚本内容和密钥）。
 func (b *backend) handleAdminAgentSuppliers(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	records, err := b.queryPoolMembers(r.Context(), "")
@@ -154,7 +157,7 @@ func adminAgentSupplierSummary(member map[string]any) map[string]any {
 
 // handleAdminAgentSupplier 返回单个供应商：supplier 为脱敏详情，editable 为可直接修改的输入形状。
 func (b *backend) handleAdminAgentSupplier(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	record, err := b.loadPoolMemberRecord(r.Context(), r.PathValue("id"))
@@ -306,7 +309,7 @@ func mergeAdminAgentOperations(cfg map[string]any, value any) error {
 
 // handleAdminAgentPatchSupplier 增量修改供应商配置；dryRun 时只校验不落库。
 func (b *backend) handleAdminAgentPatchSupplier(w http.ResponseWriter, r *http.Request) error {
-	principal, err := b.requireAdminAgentWriter(r)
+	principal, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersWrite)
 	if err != nil {
 		return err
 	}
@@ -376,7 +379,7 @@ func (b *backend) auditAdminAgentWrite(ctx context.Context, principal *adminAgen
 
 // handleAdminAgentVersions 分页列出适配版本。
 func (b *backend) handleAdminAgentVersions(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	page, size := poolPage(r)
@@ -391,7 +394,7 @@ func (b *backend) handleAdminAgentVersions(w http.ResponseWriter, r *http.Reques
 
 // handleAdminAgentVersion 读取单个适配版本详情。
 func (b *backend) handleAdminAgentVersion(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	out, err := b.getPoolAdapterVersion(r.Context(), r.PathValue("id"), r.PathValue("versionId"))
@@ -405,7 +408,7 @@ func (b *backend) handleAdminAgentVersion(w http.ResponseWriter, r *http.Request
 
 // handleAdminAgentRollback 以历史版本配置追加新版本，保留当前认证与密钥。
 func (b *backend) handleAdminAgentRollback(w http.ResponseWriter, r *http.Request) error {
-	principal, err := b.requireAdminAgentWriter(r)
+	principal, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersWrite)
 	if err != nil {
 		return err
 	}
@@ -437,7 +440,7 @@ type adminAgentScriptTestRequest struct {
 
 // handleAdminAgentScriptTest 使用合成样例运行脚本，不访问上游、不读取密钥、不产生费用。
 func (b *backend) handleAdminAgentScriptTest(w http.ResponseWriter, r *http.Request) error {
-	if _, err := b.authenticateAdminAgent(r); err != nil {
+	if _, err := b.requireAdminAgentScope(r, adminAgentScopeSuppliersRead); err != nil {
 		return err
 	}
 	var in adminAgentScriptTestRequest

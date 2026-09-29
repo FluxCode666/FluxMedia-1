@@ -1,5 +1,7 @@
--- 管理员 agent 令牌：供外部 agent 通过专用 API 读取和配置 API 供应商适配器。
--- 明文令牌只在签发时返回一次，数据库仅保存 SHA-256 哈希；令牌必须设置过期时间。
+-- 管理员 agent 令牌：全局管理员凭据，供外部 agent 调用 /api/admin-agent/v1/* 专用 API。
+-- 能力由签发时勾选的 scopes 决定（如 suppliers:read、suppliers:write），新的管理功能
+-- 通过注册新 scope 接入。明文令牌只在签发时返回一次，数据库仅保存 SHA-256 哈希；
+-- 令牌必须设置过期时间。
 
 CREATE TABLE IF NOT EXISTS "admin_agent_token" (
   "id" text PRIMARY KEY NOT NULL,
@@ -7,7 +9,7 @@ CREATE TABLE IF NOT EXISTS "admin_agent_token" (
   "token_prefix" text NOT NULL,
   "token_hash" text NOT NULL,
   "last_four" text NOT NULL,
-  "can_write" boolean DEFAULT false NOT NULL,
+  "scopes" text[] DEFAULT '{}'::text[] NOT NULL,
   "created_by_user_id" text NOT NULL,
   "expires_at" timestamp NOT NULL,
   "last_used_at" timestamp,

@@ -3,7 +3,8 @@ package main
 // 管理员 agent 令牌：签发、列出、撤销与请求鉴权。
 //
 // 外部 agent（如 Claude Code、Codex）使用 Bearer 令牌调用 /api/admin-agent/v1/*。
-// 明文令牌只在签发时返回一次，数据库仅保存 SHA-256 哈希。令牌继承签发管理员
+// 令牌是全局管理员凭据，不绑定具体功能；能力由签发时勾选的 scope 决定，见
+// admin_agent_scopes.go。明文令牌只在签发时返回一次，数据库仅保存 SHA-256 哈希。令牌继承签发管理员
 // 的身份：签发人失去 admin/super_admin 角色或被封禁后，令牌立即失效。
 
 import (
@@ -35,7 +36,7 @@ type adminAgentPrincipal struct {
 	TokenName string
 	UserID    string
 	Role      string
-	CanWrite  bool
+	Scopes    []string
 }
 
 // registerAdminAgentTokenRoutes 注册后台会话使用的令牌管理接口。
@@ -68,7 +69,7 @@ func (b *backend) handleListAdminAgentTokens(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 	all := s.User.Role == "super_admin"
-	rows, err := b.db.Query(r.Context(), `SELECT t.id,t.name,t.token_prefix,t.last_four,t.can_write,t.created_by_user_id,COALESCE(u.name,''),COALESCE(u.email,''),t.expires_at,t.last_used_at,t.revoked_at,t.created_at FROM admin_agent_token t LEFT JOIN "user" u ON u.id=t.created_by_user_id WHERE $1 OR t.created_by_user_id=$2 ORDER BY t.created_at DESC LIMIT 200`, all, s.User.ID)
+	rows, err := b.db.Query(r.Context(), `SELECT t.id,t.name,t.token_prefix,t.last_four,t.scopes,t.created_by_user_id,COALESCE(u.name,''),COALESCE(u.email,''),t.expires_at,t.last_used_at,t.revoked_at,t.created_at FROM admin_agent_token t LEFT JOIN "user" u ON u.id=t.created_by_user_id WHERE $1 OR t.created_by_user_id=$2 ORDER BY t.created_at DESC LIMIT 200`, all, s.User.ID)
 	if err != nil {
 		return err
 	}
@@ -77,10 +78,10 @@ func (b *backend) handleListAdminAgentTokens(w http.ResponseWriter, r *http.Requ
 	tokens := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, name, prefix, lastFour, creatorID, creatorName, creatorEmail string
-		var canWrite bool
+		var scopes []string
 		var expires, created time.Time
 		var lastUsed, revoked *time.Time
-		if err := rows.Scan(&id, &name, &prefix, &lastFour, &canWrite, &creatorID, &creatorName, &creatorEmail, &expires, &lastUsed, &revoked, &created); err != nil {
+		if err := rows.Scan(&id, &name, &prefix, &lastFour, &scopes, &creatorID, &creatorName, &creatorEmail, &expires, &lastUsed, &revoked, &created); err != nil {
 			return err
 		}
 		status := "active"
@@ -90,7 +91,7 @@ func (b *backend) handleListAdminAgentTokens(w http.ResponseWriter, r *http.Requ
 			status = "expired"
 		}
 		tokens = append(tokens, map[string]any{
-			"id": id, "name": name, "tokenPrefix": prefix, "lastFour": lastFour, "canWrite": canWrite,
+			"id": id, "name": name, "tokenPrefix": prefix, "lastFour": lastFour, "scopes": nonNilStrings(scopes),
 			"createdBy": map[string]any{"id": creatorID, "name": creatorName, "email": creatorEmail},
 			"isOwn":     creatorID == s.User.ID, "status": status,
 			"expiresAt": expires.UTC().Format(time.RFC3339Nano), "lastUsedAt": timeValue(lastUsed),
@@ -100,7 +101,7 @@ func (b *backend) handleListAdminAgentTokens(w http.ResponseWriter, r *http.Requ
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens, "availableScopes": adminAgentScopeRegistry})
 	return nil
 }
 
@@ -111,9 +112,9 @@ func (b *backend) handleCreateAdminAgentToken(w http.ResponseWriter, r *http.Req
 		return err
 	}
 	var in struct {
-		Name          string `json:"name"`
-		CanWrite      bool   `json:"canWrite"`
-		ExpiresInDays *int   `json:"expiresInDays"`
+		Name          string   `json:"name"`
+		Scopes        []string `json:"scopes"`
+		ExpiresInDays *int     `json:"expiresInDays"`
 	}
 	if err := decodeBody(r, &in); err != nil {
 		return err
@@ -128,6 +129,10 @@ func (b *backend) handleCreateAdminAgentToken(w http.ResponseWriter, r *http.Req
 	}
 	if days < 1 || days > adminAgentTokenMaxDays {
 		return invalid("令牌有效期必须为 1-" + strconv.Itoa(adminAgentTokenMaxDays) + " 天")
+	}
+	scopes, err := normalizeAdminAgentScopes(in.Scopes)
+	if err != nil {
+		return err
 	}
 	randomPart := make([]byte, adminAgentTokenRandomBytes)
 	if _, err := rand.Read(randomPart); err != nil {
@@ -152,18 +157,18 @@ func (b *backend) handleCreateAdminAgentToken(w http.ResponseWriter, r *http.Req
 		return &apiError{http.StatusConflict, "TOKEN_LIMIT_REACHED", "有效令牌数量已达上限，请先撤销不再使用的令牌"}
 	}
 	var expires, created time.Time
-	if err = tx.QueryRow(r.Context(), `INSERT INTO admin_agent_token(id,name,token_prefix,token_hash,last_four,can_write,created_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+make_interval(days=>$8)) RETURNING expires_at,created_at`, id, name, adminAgentTokenPrefix, hashAdminAgentToken(plaintext), lastFour, in.CanWrite, s.User.ID, days).Scan(&expires, &created); err != nil {
+	if err = tx.QueryRow(r.Context(), `INSERT INTO admin_agent_token(id,name,token_prefix,token_hash,last_four,scopes,created_by_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+make_interval(days=>$8)) RETURNING expires_at,created_at`, id, name, adminAgentTokenPrefix, hashAdminAgentToken(plaintext), lastFour, scopes, s.User.ID, days).Scan(&expires, &created); err != nil {
 		return err
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		return err
 	}
 	b.auditAdminWithMetadata(r.Context(), s.User.ID, "admin_agent_token.create", "", nil,
-		map[string]any{"tokenId": id, "name": name, "canWrite": in.CanWrite, "expiresAt": expires.UTC().Format(time.RFC3339Nano)},
+		map[string]any{"tokenId": id, "name": name, "scopes": scopes, "expiresAt": expires.UTC().Format(time.RFC3339Nano)},
 		map[string]any{"tokenId": id, "lastFour": lastFour})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": id, "token": plaintext, "name": name, "tokenPrefix": adminAgentTokenPrefix, "lastFour": lastFour,
-		"canWrite": in.CanWrite, "expiresAt": expires.UTC().Format(time.RFC3339Nano), "createdAt": created.UTC().Format(time.RFC3339Nano),
+		"scopes": scopes, "expiresAt": expires.UTC().Format(time.RFC3339Nano), "createdAt": created.UTC().Format(time.RFC3339Nano),
 	})
 	return nil
 }
@@ -220,7 +225,7 @@ func (b *backend) authenticateAdminAgent(r *http.Request) (*adminAgentPrincipal,
 	var principal adminAgentPrincipal
 	var banned bool
 	var lastUsed *time.Time
-	err := b.db.QueryRow(r.Context(), `SELECT t.id,t.name,t.can_write,t.last_used_at,u.id,u.role,u.banned FROM admin_agent_token t JOIN "user" u ON u.id=t.created_by_user_id WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()`, hashAdminAgentToken(plaintext)).Scan(&principal.TokenID, &principal.TokenName, &principal.CanWrite, &lastUsed, &principal.UserID, &principal.Role, &banned)
+	err := b.db.QueryRow(r.Context(), `SELECT t.id,t.name,t.scopes,t.last_used_at,u.id,u.role,u.banned FROM admin_agent_token t JOIN "user" u ON u.id=t.created_by_user_id WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()`, hashAdminAgentToken(plaintext)).Scan(&principal.TokenID, &principal.TokenName, &principal.Scopes, &lastUsed, &principal.UserID, &principal.Role, &banned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, adminAgentUnauthorized()
 	}
@@ -237,18 +242,6 @@ func (b *backend) authenticateAdminAgent(r *http.Request) (*adminAgentPrincipal,
 		_, _ = b.db.Exec(r.Context(), `UPDATE admin_agent_token SET last_used_at=now() WHERE id=$1`, principal.TokenID)
 	}
 	return &principal, nil
-}
-
-// requireAdminAgentWriter 要求令牌具有写权限。
-func (b *backend) requireAdminAgentWriter(r *http.Request) (*adminAgentPrincipal, error) {
-	principal, err := b.authenticateAdminAgent(r)
-	if err != nil {
-		return nil, err
-	}
-	if !principal.CanWrite {
-		return nil, &apiError{http.StatusForbidden, "READ_ONLY_TOKEN", "当前 agent 令牌为只读，不能修改供应商配置"}
-	}
-	return principal, nil
 }
 
 // limitAdminAgent 使用全局限流档位约束 agent 请求频率。
