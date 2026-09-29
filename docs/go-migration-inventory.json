@@ -1139,6 +1139,11 @@
       "source": "packages/shared/src/uol/operations/payment.ts"
     },
     {
+      "name": "pool.createAdminAgentToken",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
       "name": "pool.deleteGroup",
       "access": "poolWriteAccess",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
@@ -1159,6 +1164,11 @@
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
+      "name": "pool.getApiAdapterVersion",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
       "name": "pool.getApiUpstreamRuntimeDiagnostics",
       "access": "poolWriteAccess",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
@@ -1174,6 +1184,11 @@
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
+      "name": "pool.listAdminAgentTokens",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
       "name": "pool.listAdminGroups",
       "access": "{ kind: \"imageBackendPoolViewer\" }",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
@@ -1184,12 +1199,27 @@
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
+      "name": "pool.listApiAdapterVersions",
+      "access": "{ kind: \"imageBackendPoolViewer\" }",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
       "name": "pool.listImageSizeConfigs",
       "access": "{ kind: \"imageBackendPoolViewer\" }",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
       "name": "pool.resetMemberStatus",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.revokeAdminAgentToken",
+      "access": "poolWriteAccess",
+      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
+    },
+    {
+      "name": "pool.rollbackApiAdapter",
       "access": "poolWriteAccess",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
@@ -3075,7 +3105,7 @@
     {
       "helper": "requestGoJson",
       "source": "apps/web/src/server/uol-bindings/image-backend-pool.ts",
-      "line": 248
+      "line": 259
     },
     {
       "helper": "requestGoJsonForPrincipal",

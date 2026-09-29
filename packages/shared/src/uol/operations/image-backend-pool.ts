@@ -541,3 +541,220 @@ export const deleteMember = defineOperation({
     throw new Error("Not yet wired: pool.deleteMember");
   },
 });
+
+const adapterVersionRefSchema = z
+  .object({
+    id: z.string().nullable(),
+    revision: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/** 适配版本列表中的单条摘要；不包含脚本内容和密钥。 */
+export const apiAdapterVersionSummarySchema = z
+  .object({
+    id: z.string(),
+    revision: z.number().int().positive(),
+    credentialScope: z.string(),
+    baseUrl: z.string(),
+    createdAt: z.string(),
+    isCurrent: z.boolean(),
+  })
+  .strict();
+
+/** 分页读取 API 供应商的适配版本历史。 */
+export const listApiAdapterVersions = defineOperation({
+  name: "pool.listApiAdapterVersions",
+  domain: "image-backend-pool",
+  title: "读取供应商适配版本历史",
+  description: "按修订号倒序读取 API 供应商的适配版本摘要，不返回脚本和密钥。",
+  input: z
+    .object({
+      id: z.string().trim().min(1).max(128),
+      page: z.number().int().positive().default(1),
+      pageSize: z
+        .union([z.literal(10), z.literal(20), z.literal(50)])
+        .default(20),
+    })
+    .strict(),
+  output: z
+    .object({
+      memberId: z.string(),
+      currentVersionId: z.string(),
+      items: z.array(apiAdapterVersionSummarySchema),
+      total: z.number().int().nonnegative(),
+      page: z.number().int().positive(),
+      pageSize: z.number().int().positive(),
+      totalPages: z.number().int().positive(),
+    })
+    .strict(),
+  access: { kind: "imageBackendPoolViewer" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listApiAdapterVersions");
+  },
+});
+
+/** 读取单个适配版本的脱敏配置（含脚本，不含密钥）。 */
+export const getApiAdapterVersion = defineOperation({
+  name: "pool.getApiAdapterVersion",
+  domain: "image-backend-pool",
+  title: "读取供应商适配版本",
+  description: "读取单个适配版本的完整脱敏配置，用于对比和回滚前确认。",
+  input: z
+    .object({
+      id: z.string().trim().min(1).max(128),
+      versionId: z.string().trim().min(1).max(256),
+    })
+    .strict(),
+  output: apiAdapterVersionSummarySchema
+    .extend({ config: z.record(z.string(), z.unknown()) })
+    .strict(),
+  access: { kind: "imageBackendPoolViewer" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.getApiAdapterVersion");
+  },
+});
+
+/** 以历史版本配置追加新适配版本；保留当前认证配置和密钥。 */
+export const rollbackApiAdapter = defineOperation({
+  name: "pool.rollbackApiAdapter",
+  domain: "image-backend-pool",
+  title: "回滚供应商适配配置",
+  description:
+    "以目标历史版本的适配配置追加新修订，只影响新任务，不恢复旧认证方式或密钥。",
+  input: z
+    .object({
+      id: z.string().trim().min(1).max(128),
+      versionId: z.string().trim().min(1).max(256),
+      expectedCurrentVersionId: z.string().trim().min(1).max(256),
+      reason: z.string().trim().max(500).default(""),
+      dryRun: z.boolean().default(false),
+    })
+    .strict(),
+  output: z
+    .object({
+      memberId: z.string(),
+      dryRun: z.boolean(),
+      changed: z.boolean(),
+      changedFields: z.array(z.string()),
+      previousVersion: adapterVersionRefSchema,
+      currentVersion: adapterVersionRefSchema,
+      targetVersion: adapterVersionRefSchema,
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "none" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.rollbackApiAdapter");
+  },
+});
+
+/** 管理员 agent 令牌的脱敏列表项；明文令牌只在签发时返回一次。 */
+export const adminAgentTokenSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    tokenPrefix: z.string(),
+    lastFour: z.string(),
+    canWrite: z.boolean(),
+    createdBy: z
+      .object({ id: z.string(), name: z.string(), email: z.string() })
+      .strict(),
+    isOwn: z.boolean(),
+    status: z.enum(["active", "revoked", "expired"]),
+    expiresAt: z.string(),
+    lastUsedAt: z.string().nullable(),
+    revokedAt: z.string().nullable(),
+    createdAt: z.string(),
+  })
+  .strict();
+
+export type AdminAgentTokenItem = z.output<typeof adminAgentTokenSchema>;
+
+/** 列出管理员 agent 令牌：super_admin 可见全部，admin 仅见自己签发的。 */
+export const listAdminAgentTokens = defineOperation({
+  name: "pool.listAdminAgentTokens",
+  domain: "image-backend-pool",
+  title: "读取管理员 agent 令牌",
+  description: "列出用于外部 agent 配置供应商的令牌元数据，不返回明文或哈希。",
+  input: z.object({}).strict(),
+  output: z.object({ tokens: z.array(adminAgentTokenSchema) }).strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listAdminAgentTokens");
+  },
+});
+
+/** 签发管理员 agent 令牌；明文只在本次输出中返回。 */
+export const createAdminAgentToken = defineOperation({
+  name: "pool.createAdminAgentToken",
+  domain: "image-backend-pool",
+  title: "签发管理员 agent 令牌",
+  description:
+    "签发可撤销、有到期时间的 agent 令牌；令牌不能修改供应商认证配置和密钥。",
+  input: z
+    .object({
+      name: z.string().trim().min(1).max(120),
+      canWrite: z.boolean().default(false),
+      expiresInDays: z.number().int().min(1).max(90).default(30),
+    })
+    .strict(),
+  output: z
+    .object({
+      id: z.string(),
+      token: z.string(),
+      name: z.string(),
+      tokenPrefix: z.string(),
+      lastFour: z.string(),
+      canWrite: z.boolean(),
+      expiresAt: z.string(),
+      createdAt: z.string(),
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "none" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.createAdminAgentToken");
+  },
+});
+
+/** 撤销管理员 agent 令牌，撤销后立即失效。 */
+export const revokeAdminAgentToken = defineOperation({
+  name: "pool.revokeAdminAgentToken",
+  domain: "image-backend-pool",
+  title: "撤销管理员 agent 令牌",
+  description: "撤销令牌；admin 只能撤销自己签发的，super_admin 可撤销任意令牌。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ id: z.string(), revoked: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.revokeAdminAgentToken");
+  },
+});

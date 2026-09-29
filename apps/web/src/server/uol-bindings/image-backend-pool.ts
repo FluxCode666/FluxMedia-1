@@ -17,7 +17,7 @@ import type { BackendMemberAdminSummary } from "@/features/image-backend-pool/me
 import { assertApiUpstreamOpaqueValuesPreserved, createApiUpstreamOpaqueToken, restoreApiUpstreamOpaqueValues } from "@/features/image-backend-pool/api-upstream-opaque-values";
 import { getApiUpstreamScriptPoolDiagnostics } from "@/features/image-backend-pool/api-upstream-script-pool";
 import { runApiUpstreamScript } from "@/features/image-backend-pool/api-upstream-script-runtime";
-import { bindExecute, OperationError } from "@repo/shared/uol";
+import { bindExecute, OperationError, type OperationErrorCode } from "@repo/shared/uol";
 import { requestGoJson, GoBackendRequestError } from "@/server/go-backend-client";
 
 
@@ -234,11 +234,22 @@ export function executeApiUpstreamRuntimeDiagnosticsBinding(
   } as const;
 }
 
+/** 按 Go 错误码和 HTTP 状态选择 UOL 错误码；版本冲突等业务码按状态归类。 */
+function goPoolErrorCode(error: GoBackendRequestError): OperationErrorCode {
+  if (error.code === "FORBIDDEN") return "forbidden";
+  if (error.code === "NOT_FOUND") return "not_found";
+  if (error.code === "CONFLICT") return "conflict";
+  if (error.code === "INVALID_REQUEST") return "validation_error";
+  if (error.status === 403) return "forbidden";
+  if (error.status === 409) return "conflict";
+  if (error.status === 429) return "rate_limited";
+  return "internal_error";
+}
+
 /** 把 Go HTTP 错误映射为 UOL 稳定错误码。 */
 function throwGoPoolError(error: unknown): never {
   if (error instanceof GoBackendRequestError) {
-    const code = error.code === "FORBIDDEN" ? "forbidden" : error.code === "NOT_FOUND" ? "not_found" : error.code === "CONFLICT" ? "conflict" : error.code === "INVALID_REQUEST" ? "validation_error" : "internal_error";
-    throw new OperationError(code, error.message);
+    throw new OperationError(goPoolErrorCode(error), error.message);
   }
   throw error;
 }
@@ -288,3 +299,9 @@ bindExecute("pool.resetMemberStatus", async (input: { id: string }) => requestPo
 bindExecute("pool.setMemberEnabled", async (input: { id: string; isEnabled: boolean }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/enabled`, "POST", { isEnabled: input.isEnabled }));
 bindExecute("pool.deleteMember", async (input: { id: string }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}`, "DELETE"));
 
+bindExecute("pool.listApiAdapterVersions", async (input: { id: string; page: number; pageSize: number }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/adapter-versions?${new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) })}`));
+bindExecute("pool.getApiAdapterVersion", async (input: { id: string; versionId: string }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/adapter-versions/${encodeURIComponent(input.versionId)}`));
+bindExecute("pool.rollbackApiAdapter", async ({ id, ...body }: { id: string; versionId: string; expectedCurrentVersionId: string; reason: string; dryRun: boolean }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(id)}/adapter-rollback`, "POST", body));
+bindExecute("pool.listAdminAgentTokens", async () => requestPool("/api/admin/agent-tokens"));
+bindExecute("pool.createAdminAgentToken", async (input: unknown) => requestPool("/api/admin/agent-tokens", "POST", input));
+bindExecute("pool.revokeAdminAgentToken", async (input: { id: string }) => requestPool(`/api/admin/agent-tokens/${encodeURIComponent(input.id)}/revoke`, "POST", {}));
