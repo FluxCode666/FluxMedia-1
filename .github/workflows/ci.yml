@@ -26,7 +26,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 最小权限：CI 只读仓库内容；不授予写权限（发布交给 deploy-production.yml）。
+# 最小权限：CI 只读仓库内容；不授予写权限（发版交给 release.yml，生产部署交给 deploy-production.yml）。
 permissions:
   contents: read
 

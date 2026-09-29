@@ -8,7 +8,9 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
 dockerfile_path="${repository_root}/Dockerfile.unified"
-workflow_path="${repository_root}/.github/workflows/deploy-production.yml"
+# 镜像只在 Release 流水线构建；生产发布逻辑位于 deploy-release.sh。
+release_workflow_path="${repository_root}/.github/workflows/release.yml"
+workflow_path="${repository_root}/deploy/deploy-release.sh"
 compose_path="${repository_root}/deploy/docker-compose.yml"
 dockerignore_path="${repository_root}/.dockerignore"
 
@@ -53,8 +55,8 @@ require_text "${dockerignore_path}" '.playwright-cli'
 
 unified_build_block="$(
   sed -n \
-    '/- name: Build and push unified application image/,/^  deploy:/p' \
-    "${workflow_path}"
+    '/- name: Build and push unified application image/,/^  [a-z-]*:$/p' \
+    "${release_workflow_path}"
 )"
 if [ -z "${unified_build_block}" ]; then
   printf 'could not locate unified application image build step\n' >&2
@@ -71,7 +73,7 @@ if printf '%s\n' "${unified_build_block}" \
   exit 1
 fi
 
-build_action_count="$(grep -Fc 'uses: docker/build-push-action@' "${workflow_path}")"
+build_action_count="$(grep -Fc 'uses: docker/build-push-action@' "${release_workflow_path}")"
 if [ "${build_action_count}" -ne 1 ]; then
   printf 'production must build and push exactly one application image.\n' >&2
   exit 1
@@ -137,17 +139,17 @@ if [ "${migration_command_count}" -ne 1 ]; then
   exit 1
 fi
 
-attempt_line="$(grep -n '^            write_deployment_attempt$' \
+attempt_line="$(grep -n '^  write_deployment_attempt$' \
   "${workflow_path}" | cut -d: -f1)"
-stop_line="$(grep -n '^          if ! previous_compose stop ' \
+stop_line="$(grep -n '^if ! previous_compose stop ' \
   "${workflow_path}" | cut -d: -f1)"
-marker_line="$(grep -n '^          write_migration_marker$' \
+marker_line="$(grep -n '^write_migration_marker$' \
   "${workflow_path}" | tail -n 1 | cut -d: -f1)"
-image_ref_line="$(grep -nF \
-  '          set_env_value FLUXMEDIA_APP_IMAGE_REF "${app_ref}"' \
+image_ref_line="$(grep -nxF \
+  'set_env_value FLUXMEDIA_APP_IMAGE_REF "${app_ref}"' \
   "${workflow_path}" | cut -d: -f1)"
-compose_promotion_line="$(grep -nF \
-  '          activate_compose_file docker-compose.next.yml' \
+compose_promotion_line="$(grep -nxF \
+  'activate_compose_file docker-compose.next.yml' \
   "${workflow_path}" | cut -d: -f1)"
 if [ -z "${attempt_line}" ] || [ -z "${stop_line}" ] \
   || [ -z "${marker_line}" ] || [ -z "${image_ref_line}" ] \

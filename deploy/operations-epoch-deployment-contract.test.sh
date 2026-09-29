@@ -7,7 +7,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
-workflow_path="${repository_root}/.github/workflows/deploy-production.yml"
+# 生产发布逻辑位于 deploy-release.sh，Actions 手动部署与站内系统更新共用。
+workflow_path="${repository_root}/deploy/deploy-release.sh"
 dockerfile_path="${repository_root}/Dockerfile.unified"
 package_path="${repository_root}/apps/web/package.json"
 compose_path="${repository_root}/deploy/docker-compose.yml"

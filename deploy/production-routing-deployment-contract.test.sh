@@ -5,7 +5,9 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workflow_path="${script_dir}/../.github/workflows/deploy-production.yml"
+# 生产发布逻辑位于 deploy-release.sh；部署文件清单由 build-release-bundle.sh 打包。
+workflow_path="${script_dir}/deploy-release.sh"
+bundle_builder_path="${script_dir}/build-release-bundle.sh"
 
 require_text() {
   expected="$1"
@@ -25,8 +27,15 @@ forbid_text() {
   fi
 }
 
-require_text 'deploy/nginx/conf.d/fluxmedia.conf \'
-require_text 'deploy/smoke-production-routing.sh \'
+for bundled_entry in \
+  '"nginx/conf.d/fluxmedia.conf:fluxmedia.conf"' \
+  '"smoke-production-routing.sh:smoke-production-routing.sh"'; do
+  if ! grep -Fq -- "${bundled_entry}" "${bundle_builder_path}"; then
+    printf 'production routing deployment contract missing bundle entry: %s\n' \
+      "${bundled_entry}" >&2
+    exit 1
+  fi
+done
 require_text 'replace_nginx_configuration_atomically()'
 require_text 'install_nginx_configuration()'
 require_text 'restore_previous_nginx_configuration()'
@@ -94,7 +103,7 @@ candidate_promote_line="$(
     "${workflow_path}" | cut -d: -f1
 )"
 migration_marker_line="$(
-  grep -nF '          write_migration_marker' "${workflow_path}" \
+  grep -nx 'write_migration_marker' "${workflow_path}" \
     | tail -n 1 | cut -d: -f1
 )"
 migration_started_line="$(

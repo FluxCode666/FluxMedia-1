@@ -6,7 +6,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
-workflow_path="${repository_root}/.github/workflows/deploy-production.yml"
+# 生产发布逻辑位于 deploy-release.sh，Actions 手动部署与站内系统更新共用。
+workflow_path="${repository_root}/deploy/deploy-release.sh"
 readme_path="${repository_root}/deploy/README.md"
 compose_path="${repository_root}/deploy/docker-compose.yml"
 
@@ -53,7 +54,7 @@ if [ "${storage_mount_count}" -ne 1 ]; then
 fi
 
 require_text "${workflow_path}" 'candidate_compose run --rm --no-deps \'
-require_text "${workflow_path}" '              app \'
+require_text "${workflow_path}" '    app \'
 
 prepare_line="$(
   grep -nF 'prepare_video_input_migration_state' "${workflow_path}" \

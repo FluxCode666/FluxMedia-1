@@ -1,0 +1,386 @@
+# FluxMedia 发版流水线。
+#
+# 使用方式：推送符合 SemVer 的 Git tag（例如 v0.31.0）自动执行质量门、构建 GHCR
+# 统一镜像，并发布带部署包的 GitHub Release；也可在同名 tag 上手动重跑。
+# 本流水线不接触生产服务器。生产发布有两条入口，均消费这里产出的 Release 部署包：
+#   - 站内超管“系统更新”页面：宿主机 systemd 更新器从公开 Release 下载并发布；
+#   - Deploy Production 流水线：运维手动选择版本经 SSH 发布。
+# Release 资产：
+#   - fluxmedia-release.env：版本、提交、镜像 digest 与部署包 SHA-256；
+#   - fluxmedia-deploy.tar.gz：Compose、Nginx、部署脚本与站内更新器。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，必须与所选 tag 一致，例如 v0.8.1 或 v0.9.0-rc.1"
+        required: true
+        type: string
+
+# 同一版本只允许一个发版运行；不同版本互不阻塞。
+concurrency:
+  group: fluxmedia-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # The repository was recreated as FluxMedia-1; use a single package for the
+  # complete application runtime.
+  IMAGE_NAME: fluxmedia-1-app
+  PUBLIC_APP_URL: https://media.flux-code.cc
+
+jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: fluxmedia_moderation_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fluxmedia_moderation_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 2
+
+      - name: Validate release tag
+        env:
+          VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "::error::版本号必须符合 v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]。"
+            exit 1
+          fi
+
+          # 发布物必须与 tag 指向的提交一一对应：手动重跑也只能在同名 tag 上执行。
+          if [ "${GITHUB_REF}" != "refs/tags/${VERSION}" ]; then
+            echo "::error::Release 只能在与版本号一致的 Git tag 上运行（当前 ${GITHUB_REF}）。"
+            exit 1
+          fi
+
+          # tag 提交必须已合入 main，避免从未审查的分支发布。
+          git fetch --no-tags --depth=200 origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::tag ${VERSION} 指向的提交不在 main 上。"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup
+
+      - name: Test deployment environment parser
+        run: bash deploy/read-env-value.test.sh
+
+      - name: Test release ledger digest parser
+        run: bash deploy/read-release-ledger-digest.test.sh
+
+      - name: Test deployment database backup
+        run: bash deploy/create-database-backup.test.sh
+
+      - name: Test deployment release recovery policy
+        run: bash deploy/release-recovery-policy.test.sh
+
+      - name: Test release bundle and in-site system updater
+        run: bash deploy/release-bundle.test.sh
+
+      - name: Test backend entrypoint command forwarding
+        run: sh services/api-gateway/backend-entrypoint.test.sh
+
+      - name: Test backend image build performance contract
+        run: bash deploy/backend-image-build-contract.test.sh
+
+      - name: Test video input asset deployment contract
+        run: bash deploy/video-input-asset-deployment-contract.test.sh
+
+      - name: Test production routing deployment contract
+        run: |
+          bash deploy/nginx/routing-contract.test.sh
+          bash deploy/production-routing-deployment-contract.test.sh
+          bash -n deploy/smoke-production-routing.sh
+
+      - name: Verify Go backend
+        working-directory: services/api-gateway
+        run: |
+          set -euo pipefail
+          gofmt -d -e ./*.go
+          test -z "$(gofmt -l ./*.go)"
+          go vet ./...
+          go test -race ./...
+          go mod verify
+
+      - name: Test operations epoch deployment gate
+        run: bash deploy/operations-epoch-deployment-contract.test.sh
+
+      - name: Generate Fumadocs source
+        run: pnpm --filter @repo/web exec fumadocs-mdx
+
+      - name: Lint
+        run: pnpm turbo lint
+
+      - name: Typecheck
+        run: pnpm turbo typecheck
+
+      - name: Test
+        run: pnpm turbo test
+
+      - name: Test unified application runtime
+        run: node --test services/unified-runtime/*.test.mjs
+
+      - name: Set up Go for migration completeness gate
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: services/api-gateway/go.sum
+
+      - name: Require complete Go backend before production release
+        run: |
+          node scripts/audit-go-migration.mjs --write
+          go -C services/api-gateway run . --route-audit
+
+      - name: Test development environment selection
+        run: node --test scripts/with-root-env.test.mjs
+
+      - name: Migrate moderation integration database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: pnpm --filter @repo/database db:migrate
+
+      - name: Test generation time migration with PostgreSQL
+        env:
+          GENERATION_TIME_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: pnpm --filter @repo/integration-tests test:generation-time-migration
+
+      - name: Test moderation with PostgreSQL
+        env:
+          MODERATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: pnpm --filter @repo/integration-tests test:moderation
+
+      - name: Test release governance gates with PostgreSQL
+        env:
+          RELEASE_GATE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: pnpm --filter @repo/integration-tests test:release-governance
+
+      - name: Configure authenticated Redis for integration tests
+        run: >-
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass
+          fluxmedia-ci-redis-secret
+
+      - name: Test Go backend with PostgreSQL, Redis, and race detection
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+          GO_BACKEND_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_go_test_ci
+          BETTER_AUTH_SECRET: fluxmedia-ci-go-auth-secret
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: "6379"
+          REDIS_ADDR: 127.0.0.1:6379
+          REDIS_PASSWORD: fluxmedia-ci-redis-secret
+          REDIS_DB: "4"
+          REDIS_TLS: "false"
+        run: |
+          set -euo pipefail
+          docker exec "${{ job.services.postgres.id }}" \
+            createdb -U postgres fluxmedia_go_test_ci
+          go -C services/api-gateway test -race -tags=integration ./...
+
+      - name: Test unified media pool with PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          GO_BACKEND_TEST_REDIS_URL: redis://:fluxmedia-ci-redis-secret@127.0.0.1:6379/14
+          IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: |
+          set -euo pipefail
+          pnpm --filter @repo/integration-tests test:image-backend-pool
+          pnpm --filter @repo/integration-tests test:media-generation-financial-recovery
+          pnpm --filter @repo/integration-tests test:video-generation-recovery
+          pnpm --filter @repo/integration-tests test:media-backend-pool-migration
+
+      - name: Test media task queue with Redis
+        env:
+          MEDIA_TASK_MQ_TEST_REDIS_URL: redis://:fluxmedia-ci-redis-secret@127.0.0.1:6379/15
+        run: pnpm --filter @repo/integration-tests test:media-task-mq
+
+      - name: Verify release database gates
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: |
+          set -euo pipefail
+          pnpm --filter @repo/database db:release-gate -- drain
+          pnpm --filter @repo/database db:release-gate -- preflight-early
+          VIDEO_INPUT_ROLLBACK_MANIFEST=/tmp/video-input-rollback.ndjson \
+            node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+            --confirm-no-legacy-writers
+          release_preflight="$(
+            # 门禁失败时仍需把非敏感聚合证据写入 Actions 日志，供阻塞报告定位。
+            pnpm --filter @repo/database db:release-gate -- preflight \
+              | tee /dev/stderr
+          )"
+          release_credits_ledger_digest="$(
+            printf '%s\n' "${release_preflight}" \
+              | bash deploy/read-release-ledger-digest.sh
+          )"
+          RELEASE_CREDITS_LEDGER_DIGEST="${release_credits_ledger_digest}" \
+            pnpm --filter @repo/database db:release-gate -- postcheck-initial
+
+      - name: Build web
+        env:
+          BETTER_AUTH_SECRET: build-time-placeholder-secret-not-for-runtime
+          BETTER_AUTH_URL: http://localhost:3000
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          NEXT_PUBLIC_APP_NAME: FluxMedia
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          SYSTEM_ASSETS_BUCKET_NAME: system
+          GENERATIONS_BUCKET_NAME: generations
+          NEXT_PUBLIC_PAYMENT_PROVIDER: none
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          pnpm --filter @repo/web build
+          pnpm --filter @repo/web assert:api-upstream-worker-standalone
+          pnpm --filter @repo/web smoke:api-upstream-worker
+
+  build-and-push:
+    name: Build and push unified application image
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      app_image: ${{ steps.meta.outputs.app_image }}
+      app_digest: ${{ steps.unified.outputs.digest }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Resolve image metadata
+        id: meta
+        env:
+          VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          set -euo pipefail
+          owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "app_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push unified application image
+        id: unified
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.unified
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.app_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.app_image }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ env.PUBLIC_APP_URL }}
+            NEXT_PUBLIC_APP_NAME=FluxMedia
+            NEXT_PUBLIC_PAYMENT_PROVIDER=none
+            BETTER_AUTH_URL=${{ env.PUBLIC_APP_URL }}
+            GO_BACKEND_URL=http://127.0.0.1:8080
+          cache-from: |
+            type=registry,ref=${{ steps.meta.outputs.app_image }}:latest
+            type=gha,scope=fluxmedia-unified
+          cache-to: type=inline
+
+  publish-release:
+    name: Publish GitHub Release with deployment bundle
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build-and-push.outputs.tag }}
+      APP_IMAGE: ${{ needs.build-and-push.outputs.app_image }}
+      APP_DIGEST: ${{ needs.build-and-push.outputs.app_digest }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Build deployment bundle
+        run: |
+          set -euo pipefail
+          bash deploy/build-release-bundle.sh \
+            --output "${RUNNER_TEMP}/release-assets" \
+            --version "${VERSION}" \
+            --git-sha "${GITHUB_SHA}" \
+            --app-image "${APP_IMAGE}" \
+            --app-digest "${APP_DIGEST}"
+
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=(
+            "${RUNNER_TEMP}/release-assets/fluxmedia-release.env"
+            "${RUNNER_TEMP}/release-assets/fluxmedia-deploy.tar.gz"
+          )
+
+          if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # 重跑时刷新部署包，使其与本次构建的镜像 digest 保持一致。
+            gh release upload "${VERSION}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            release_flags=(--generate-notes --verify-tag)
+            if [[ "${VERSION}" =~ -(alpha|beta|rc)\.[0-9]+$ ]]; then
+              release_flags+=(--prerelease)
+            fi
+            # gh 先建草稿、上传资产后再公开：站内更新器不会看到缺少部署包的 Release。
+            gh release create "${VERSION}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "FluxMedia ${VERSION}" \
+              "${release_flags[@]}"
+          fi
+
+          {
+            echo "## FluxMedia Release"
+            echo ""
+            echo "- Release：[FluxMedia ${VERSION}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION})"
+            echo "- 统一应用镜像：\`${APP_IMAGE}@${APP_DIGEST}\`"
+            echo "- 提交：\`${GITHUB_SHA}\`"
+            echo "- 生产发布：站内超管系统更新页面，或手动运行 Deploy Production。"
+          } >> "${GITHUB_STEP_SUMMARY}"
