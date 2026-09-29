@@ -149,6 +149,9 @@ jobs:
       # 预热 Go 编译缓存：用例在 20s 的 beforeAll 内 `go run .`，冷编译会超时。
       - name: Prebuild Go backend
         run: go -C services/api-gateway build -o /dev/null .
+      # 积分恢复用例的 fixture schema 回退到 public 读取业务表，需先迁移。
+      - name: Migrate media integration database
+        run: pnpm --filter @repo/database db:migrate
       - name: Test unified media pool and MQ
         run: |
           set -euo pipefail
