@@ -176,6 +176,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "Supplier Management": t("nav.supplierManagement"),
       "Image Size Configurations": t("nav.imageSizeConfigurations"),
       "Group Management": t("nav.groupManagement"),
+      "Agent Tokens": t("nav.agentTokens"),
       Support: t("nav.support"),
       "New Ticket": t("nav.newTicket"),
       "User Management": t("nav.userManagement"),

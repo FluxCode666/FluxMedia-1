@@ -31,6 +31,8 @@ type adminAgentScope struct {
 	Description string `json:"description"`
 	// Risky 标记高风险能力，签发界面需要额外提示。
 	Risky bool `json:"risky"`
+	// RiskNote 是高风险能力的具体风险说明，非高风险 scope 为空字符串。
+	RiskNote string `json:"riskNote"`
 	// Requires 是授予该 scope 时自动附带的前置 scope。
 	Requires []string `json:"requires"`
 }
@@ -46,6 +48,7 @@ var adminAgentScopeRegistry = []adminAgentScope{
 		ID: adminAgentScopeSuppliersWrite, Group: "供应商", Label: "修改供应商配置",
 		Description: "增量修改和回滚 API 供应商配置（含 baseUrl、路径、模型映射和请求/响应脚本），不能修改认证方式和密钥。",
 		Risky:       true, Requires: []string{adminAgentScopeSuppliersRead},
+		RiskNote: "可以修改 baseUrl：上游请求会携带已保存的供应商密钥发往新地址。请设置较短有效期，用完立即撤销。",
 	},
 }
 

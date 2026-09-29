@@ -895,6 +895,7 @@
       "supplierManagement": "Supplier Management",
       "imageSizeConfigurations": "Image Size Configurations",
       "groupManagement": "Group Management",
+      "agentTokens": "Agent Tokens",
       "support": "Support",
       "newTicket": "New Ticket"
     },
@@ -928,6 +929,7 @@
       "supplierManagement": "Supplier Management",
       "imageSizeConfigurations": "Image Size Configurations",
       "groupManagement": "Group Management",
+      "agentTokens": "Agent Tokens",
       "addModel": "Add Model",
       "addSupplier": "Add Supplier",
       "saveConfiguration": "Save Configuration",

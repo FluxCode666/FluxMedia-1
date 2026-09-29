@@ -83,6 +83,13 @@ describe("控制台生成入口多语言契约", () => {
     expect(superAdminHrefs).toContain("/dashboard/admin/settings");
     expect(superAdminHrefs).toContain("/dashboard/admin/system-updates");
     expect(adminHrefs).not.toContain("/dashboard/admin/system-updates");
+    expect(adminHrefs).toContain("/dashboard/admin/agent-tokens");
+    expect(superAdminHrefs).toContain("/dashboard/admin/agent-tokens");
+    expect(observerHrefs).not.toContain("/dashboard/admin/agent-tokens");
+    expect(enMessages.Dashboard.nav.agentTokens).toBe("Agent Tokens");
+    expect(zhMessages.Dashboard.nav.agentTokens).toBe("Agent 令牌");
+    expect(enMessages.Dashboard.pages.agentTokens).toBe("Agent Tokens");
+    expect(zhMessages.Dashboard.pages.agentTokens).toBe("Agent 令牌");
   });
 
   it("在中英文菜单和顶部标题中使用对应的生成动作名称", () => {

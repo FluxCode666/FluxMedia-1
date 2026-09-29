@@ -191,7 +191,7 @@ func TestNormalizeAdminAgentScopes(t *testing.T) {
 func TestAdminAgentScopeRegistryIsConsistent(t *testing.T) {
 	seen := map[string]bool{}
 	for _, scope := range adminAgentScopeRegistry {
-		if seen[scope.ID] || !strings.Contains(scope.ID, ":") || scope.Label == "" || scope.Description == "" || scope.Requires == nil {
+		if seen[scope.ID] || !strings.Contains(scope.ID, ":") || scope.Label == "" || scope.Description == "" || scope.Requires == nil || scope.Risky != (scope.RiskNote != "") {
 			t.Fatalf("invalid scope definition: %+v", scope)
 		}
 		for _, required := range scope.Requires {

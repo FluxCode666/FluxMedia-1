@@ -26,7 +26,6 @@ import {
   protectedAction,
 } from "@repo/shared/safe-action";
 import {
-  type AdminAgentTokenItem,
   type AdminPoolGroupListOutput,
   type AdminPoolMemberListOutput,
   type ImageSizeConfigOutput,
@@ -381,18 +380,6 @@ export interface ApiAdapterRollbackResult {
   targetVersion: { id: string | null; revision: number };
 }
 
-/** 新签发的 agent 令牌；明文只在本次响应中出现。 */
-export interface CreatedAdminAgentToken {
-  id: string;
-  token: string;
-  name: string;
-  tokenPrefix: string;
-  lastFour: string;
-  canWrite: boolean;
-  expiresAt: string;
-  createdAt: string;
-}
-
 const adapterVersionListSchema = idSchema
   .extend({
     page: z.number().int().positive().default(1),
@@ -409,14 +396,6 @@ const adapterRollbackSchema = adapterVersionSchema
     expectedCurrentVersionId: z.string().trim().min(1).max(256),
     reason: z.string().trim().max(500).default(""),
     dryRun: z.boolean().default(false),
-  })
-  .strict();
-
-const createAdminAgentTokenSchema = z
-  .object({
-    name: z.string().trim().min(1).max(120),
-    canWrite: z.boolean().default(false),
-    expiresInDays: z.number().int().min(1).max(90).default(30),
   })
   .strict();
 
@@ -447,20 +426,3 @@ export const rollbackApiAdapterAction = adminAction
     if (!parsedInput.dryRun) revalidateBackendPoolPage();
     return result;
   });
-
-/** 列出管理员 agent 令牌元数据。 */
-export const listAdminAgentTokensAction = adminAction
-  .metadata({ action: "imageBackendPool.listAdminAgentTokens" })
-  .action(async () => requestPool<{ tokens: AdminAgentTokenItem[] }>("/api/admin/agent-tokens", "GET"));
-
-/** 签发管理员 agent 令牌，返回仅出现一次的明文。 */
-export const createAdminAgentTokenAction = adminAction
-  .metadata({ action: "imageBackendPool.createAdminAgentToken" })
-  .schema(createAdminAgentTokenSchema)
-  .action(async ({ parsedInput }) => requestPool<CreatedAdminAgentToken>("/api/admin/agent-tokens", "POST", parsedInput));
-
-/** 撤销管理员 agent 令牌。 */
-export const revokeAdminAgentTokenAction = adminAction
-  .metadata({ action: "imageBackendPool.revokeAdminAgentToken" })
-  .schema(idSchema)
-  .action(async ({ parsedInput }) => requestPool<{ id: string; revoked: boolean }>(`/api/admin/agent-tokens/${encodeURIComponent(parsedInput.id)}/revoke`, "POST", {}));

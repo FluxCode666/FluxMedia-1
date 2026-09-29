@@ -17,6 +17,7 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
+import "@/server/uol-bindings/admin-agent";
 import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
 import "@/server/uol-bindings/credits";

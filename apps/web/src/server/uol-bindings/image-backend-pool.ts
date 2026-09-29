@@ -302,6 +302,3 @@ bindExecute("pool.deleteMember", async (input: { id: string }) => requestPool(`/
 bindExecute("pool.listApiAdapterVersions", async (input: { id: string; page: number; pageSize: number }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/adapter-versions?${new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) })}`));
 bindExecute("pool.getApiAdapterVersion", async (input: { id: string; versionId: string }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(input.id)}/adapter-versions/${encodeURIComponent(input.versionId)}`));
 bindExecute("pool.rollbackApiAdapter", async ({ id, ...body }: { id: string; versionId: string; expectedCurrentVersionId: string; reason: string; dryRun: boolean }) => requestPool(`/api/admin/image-backend/members/${encodeURIComponent(id)}/adapter-rollback`, "POST", body));
-bindExecute("pool.listAdminAgentTokens", async () => requestPool("/api/admin/agent-tokens"));
-bindExecute("pool.createAdminAgentToken", async (input: unknown) => requestPool("/api/admin/agent-tokens", "POST", input));
-bindExecute("pool.revokeAdminAgentToken", async (input: { id: string }) => requestPool(`/api/admin/agent-tokens/${encodeURIComponent(input.id)}/revoke`, "POST", {}));

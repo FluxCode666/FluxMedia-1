@@ -10,10 +10,7 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 
-import {
-  AdminAgentTokenDialog,
-  ImageBackendPoolAdminPanel,
-} from "@/features/image-backend-pool";
+import { ImageBackendPoolAdminPanel } from "@/features/image-backend-pool";
 import { loadPaginationConfig } from "@/features/pagination/server";
 
 /**
@@ -38,7 +35,6 @@ export default async function DashboardAdminSuppliersPage() {
     redirect(`/${locale}/dashboard`);
   }
 
-  const readOnly = role === "observer_admin";
   const [paginationConfig, timeZone] = await Promise.all([
     loadPaginationConfig(),
     getUserTimeZone(session.user.id),
@@ -50,19 +46,16 @@ export default async function DashboardAdminSuppliersPage() {
         <h1 className="font-serif text-2xl font-medium tracking-tight">
           {t("supplierManagement")}
         </h1>
-        <div className="flex items-center gap-4">
-          {readOnly ? null : <AdminAgentTokenDialog timeZone={timeZone} />}
-          <a
-            className="text-sm underline underline-offset-4"
-            href="/dashboard/admin/image-size-configs"
-          >
-            图片尺寸配置
-          </a>
-        </div>
+        <a
+          className="text-sm underline underline-offset-4"
+          href="/dashboard/admin/image-size-configs"
+        >
+          图片尺寸配置
+        </a>
       </header>
       <ImageBackendPoolAdminPanel
         paginationConfig={paginationConfig}
-        readOnly={readOnly}
+        readOnly={role === "observer_admin"}
         readOnlyNotice={t("readOnlyNotice")}
         timeZone={timeZone}
         title={t("supplierManagement")}

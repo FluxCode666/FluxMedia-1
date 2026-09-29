@@ -8,6 +8,7 @@ import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Bot,
   Boxes,
   ChartNoAxesCombined,
   CreditCard,
@@ -143,6 +144,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
       title: "Group Management",
       href: "/dashboard/admin/supplier-groups",
       icon: Boxes,
+    },
+    {
+      title: "Agent Tokens",
+      href: "/dashboard/admin/agent-tokens",
+      icon: Bot,
     },
   ];
 

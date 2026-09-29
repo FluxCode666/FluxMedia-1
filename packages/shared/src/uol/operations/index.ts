@@ -36,6 +36,8 @@ import "./moderation";
 import "./external-api";
 // 模型配置与模型广场（人工管理写入、system-only 公开读取）
 import "./model-marketplace";
+// 管理员 agent 令牌（全局凭据，按 scope 授权，仅人工管理员签发）
+import "./admin-agent";
 
 export { listAdminStatusErrors } from "./admin-status";
 export type {

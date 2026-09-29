@@ -410,6 +410,14 @@
       ]
     },
     {
+      "source": "apps/web/src/features/admin-agent-tokens/actions.ts",
+      "exports": [
+        "listAdminAgentTokensAction",
+        "createAdminAgentTokenAction",
+        "revokeAdminAgentTokenAction"
+      ]
+    },
+    {
       "source": "apps/web/src/features/announcements/actions.ts",
       "exports": [
         "getMyUnreadAnnouncementCountAction",
@@ -461,10 +469,7 @@
         "getImageBackendGroupOptionsAction",
         "listApiAdapterVersionsAction",
         "getApiAdapterVersionAction",
-        "rollbackApiAdapterAction",
-        "listAdminAgentTokensAction",
-        "createAdminAgentTokenAction",
-        "revokeAdminAgentTokenAction"
+        "rollbackApiAdapterAction"
       ]
     },
     {
@@ -669,6 +674,21 @@
     }
   ],
   "operations": [
+    {
+      "name": "adminAgent.createToken",
+      "access": "adminAgentTokenAccess",
+      "source": "packages/shared/src/uol/operations/admin-agent.ts"
+    },
+    {
+      "name": "adminAgent.listTokens",
+      "access": "adminAgentTokenAccess",
+      "source": "packages/shared/src/uol/operations/admin-agent.ts"
+    },
+    {
+      "name": "adminAgent.revokeToken",
+      "access": "adminAgentTokenAccess",
+      "source": "packages/shared/src/uol/operations/admin-agent.ts"
+    },
     {
       "name": "analytics.getAdminDataDashboard",
       "access": "{ kind: \"roles\", roles: [\"admin\", \"super_admin\"] }",
@@ -1145,11 +1165,6 @@
       "source": "packages/shared/src/uol/operations/payment.ts"
     },
     {
-      "name": "pool.createAdminAgentToken",
-      "access": "poolWriteAccess",
-      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
-    },
-    {
       "name": "pool.deleteGroup",
       "access": "poolWriteAccess",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
@@ -1190,11 +1205,6 @@
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
     {
-      "name": "pool.listAdminAgentTokens",
-      "access": "poolWriteAccess",
-      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
-    },
-    {
       "name": "pool.listAdminGroups",
       "access": "{ kind: \"imageBackendPoolViewer\" }",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
@@ -1216,11 +1226,6 @@
     },
     {
       "name": "pool.resetMemberStatus",
-      "access": "poolWriteAccess",
-      "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
-    },
-    {
-      "name": "pool.revokeAdminAgentToken",
       "access": "poolWriteAccess",
       "source": "packages/shared/src/uol/operations/image-backend-pool.ts"
     },
@@ -1897,13 +1902,13 @@
       "path": "/api/admin/image-backend/size-configs",
       "method": "GET",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 187
+      "line": 186
     },
     {
       "path": "/api/image-backend/groups/options",
       "method": "GET",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 350
+      "line": 349
     },
     {
       "path": "/api/images/generate",
@@ -2749,61 +2754,61 @@
       "path": "/api/image-generation/history",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 83
+      "line": 84
     },
     {
       "path": "/api/admin/image-generation/history",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 105
+      "line": 106
     },
     {
       "path": "/api/admin/image-generation/request-snapshot",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 127
+      "line": 128
     },
     {
       "path": "/api/credits/usage-log",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 153
+      "line": 154
     },
     {
       "path": "/api/credits/usage-log/detail",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 170
+      "line": 171
     },
     {
       "path": "/api/credits/top-up/options",
       "method": "GET",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 190
+      "line": 191
     },
     {
       "path": "/api/credits/top-up/checkout",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 213
+      "line": 214
     },
     {
       "path": "/api/credits/top-up/order-status",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 235
+      "line": 236
     },
     {
       "path": "/api/credits/payment/status",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 257
+      "line": 258
     },
     {
       "path": "/api/internal/payment-fulfillment/alipay",
       "method": "POST",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 285
+      "line": 286
     },
     {
       "path": "/api/internal/auth/bootstrap",
@@ -3055,8 +3060,13 @@
   "dynamicGoRequests": [
     {
       "helper": "requestGoJson",
+      "source": "apps/web/src/features/admin-agent-tokens/actions.ts",
+      "line": 51
+    },
+    {
+      "helper": "requestGoJson",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 102
+      "line": 101
     },
     {
       "helper": "requestGoJson",
@@ -3072,6 +3082,11 @@
       "helper": "requestGoJson",
       "source": "apps/web/src/server/go-backend-client.ts",
       "line": 99
+    },
+    {
+      "helper": "requestGoJson",
+      "source": "apps/web/src/server/uol-bindings/admin-agent.ts",
+      "line": 55
     },
     {
       "helper": "requestGoJson",
@@ -3191,7 +3206,7 @@
     {
       "helper": "requestGoJson",
       "source": "apps/web/src/server/uol-bindings.ts",
-      "line": 338
+      "line": 339
     },
     {
       "helper": "requestGoBackendJson",

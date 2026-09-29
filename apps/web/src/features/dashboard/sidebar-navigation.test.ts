@@ -40,6 +40,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/suppliers",
         "/dashboard/admin/image-size-configs",
         "/dashboard/admin/supplier-groups",
+        "/dashboard/admin/agent-tokens",
       ],
     ],
     [
@@ -56,6 +57,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/suppliers",
         "/dashboard/admin/image-size-configs",
         "/dashboard/admin/supplier-groups",
+        "/dashboard/admin/agent-tokens",
         "/dashboard/admin/settings",
         "/dashboard/admin/system-updates",
       ],
