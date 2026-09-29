@@ -7,6 +7,7 @@
 
 import { canViewImageBackendPool, normalizeUserRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
+import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
@@ -17,7 +18,7 @@ import { BackendMemberDetailPage } from "@/features/image-backend-pool/member-de
  *
  * @param params Next.js 动态路由参数。
  * @returns 受权限保护的账号详情页面。
- * @sideEffects 读取会话与实时角色；未授权时抛出重定向。
+ * @sideEffects 读取会话、实时角色与用户时区；未授权时抛出重定向。
  */
 export default async function DashboardAdminSupplierDetailPage({
   params,
@@ -37,12 +38,16 @@ export default async function DashboardAdminSupplierDetailPage({
     redirect(`/${locale}/dashboard`);
   }
 
-  const { memberId } = await params;
+  const [{ memberId }, timeZone] = await Promise.all([
+    params,
+    getUserTimeZone(session.user.id),
+  ]);
   return (
     <main className="container mx-auto space-y-6 px-4 py-6 md:px-6">
       <BackendMemberDetailPage
         memberId={memberId}
         readOnly={role === "observer_admin"}
+        timeZone={timeZone}
       />
     </main>
   );

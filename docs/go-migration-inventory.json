@@ -458,7 +458,13 @@
         "deleteImageBackendMemberAction",
         "testApiUpstreamAdapterAction",
         "getApiUpstreamRuntimeDiagnosticsAction",
-        "getImageBackendGroupOptionsAction"
+        "getImageBackendGroupOptionsAction",
+        "listApiAdapterVersionsAction",
+        "getApiAdapterVersionAction",
+        "rollbackApiAdapterAction",
+        "listAdminAgentTokensAction",
+        "createAdminAgentTokenAction",
+        "revokeAdminAgentTokenAction"
       ]
     },
     {
@@ -1891,13 +1897,13 @@
       "path": "/api/admin/image-backend/size-configs",
       "method": "GET",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 186
+      "line": 187
     },
     {
       "path": "/api/image-backend/groups/options",
       "method": "GET",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 349
+      "line": 350
     },
     {
       "path": "/api/images/generate",
@@ -3050,7 +3056,7 @@
     {
       "helper": "requestGoJson",
       "source": "apps/web/src/features/image-backend-pool/actions.ts",
-      "line": 101
+      "line": 102
     },
     {
       "helper": "requestGoJson",

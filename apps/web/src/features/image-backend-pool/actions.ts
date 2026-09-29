@@ -26,6 +26,7 @@ import {
   protectedAction,
 } from "@repo/shared/safe-action";
 import {
+  type AdminAgentTokenItem,
   type AdminPoolGroupListOutput,
   type AdminPoolMemberListOutput,
   type ImageSizeConfigOutput,
@@ -347,3 +348,119 @@ export const getApiUpstreamRuntimeDiagnosticsAction = adminAction
 export const getImageBackendGroupOptionsAction = protectedAction
   .metadata({ action: "imageBackendPool.groupOptions" })
   .action(async () => requestGoJson<{ options: Array<{ id: string; name: string }> }>("/api/image-backend/groups/options"));
+
+/** 适配版本摘要；不包含脚本内容和密钥。 */
+export interface ApiAdapterVersionSummary {
+  id: string;
+  revision: number;
+  credentialScope: string;
+  baseUrl: string;
+  createdAt: string;
+  isCurrent: boolean;
+}
+
+/** 适配版本分页列表。 */
+export interface ApiAdapterVersionList {
+  memberId: string;
+  currentVersionId: string;
+  items: ApiAdapterVersionSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+/** 回滚结果；预演时 currentVersion.id 为 null。 */
+export interface ApiAdapterRollbackResult {
+  memberId: string;
+  dryRun: boolean;
+  changed: boolean;
+  changedFields: string[];
+  previousVersion: { id: string | null; revision: number };
+  currentVersion: { id: string | null; revision: number };
+  targetVersion: { id: string | null; revision: number };
+}
+
+/** 新签发的 agent 令牌；明文只在本次响应中出现。 */
+export interface CreatedAdminAgentToken {
+  id: string;
+  token: string;
+  name: string;
+  tokenPrefix: string;
+  lastFour: string;
+  canWrite: boolean;
+  expiresAt: string;
+  createdAt: string;
+}
+
+const adapterVersionListSchema = idSchema
+  .extend({
+    page: z.number().int().positive().default(1),
+    pageSize: z.union([z.literal(10), z.literal(20), z.literal(50)]).default(10),
+  })
+  .strict();
+
+const adapterVersionSchema = idSchema
+  .extend({ versionId: z.string().trim().min(1).max(256) })
+  .strict();
+
+const adapterRollbackSchema = adapterVersionSchema
+  .extend({
+    expectedCurrentVersionId: z.string().trim().min(1).max(256),
+    reason: z.string().trim().max(500).default(""),
+    dryRun: z.boolean().default(false),
+  })
+  .strict();
+
+const createAdminAgentTokenSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    canWrite: z.boolean().default(false),
+    expiresInDays: z.number().int().min(1).max(90).default(30),
+  })
+  .strict();
+
+/** 分页读取供应商适配版本历史。 */
+export const listApiAdapterVersionsAction = imageBackendPoolViewerAction
+  .metadata({ action: "imageBackendPool.listApiAdapterVersions" })
+  .schema(adapterVersionListSchema)
+  .action(async ({ parsedInput }) => {
+    const query = new URLSearchParams({ page: String(parsedInput.page), pageSize: String(parsedInput.pageSize) });
+    return requestPool<ApiAdapterVersionList>(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}/adapter-versions?${query}`, "GET");
+  });
+
+/** 读取单个适配版本的脱敏配置（含脚本，不含密钥）。 */
+export const getApiAdapterVersionAction = imageBackendPoolViewerAction
+  .metadata({ action: "imageBackendPool.getApiAdapterVersion" })
+  .schema(adapterVersionSchema)
+  .action(async ({ parsedInput }) => {
+    return requestPool<ApiAdapterVersionSummary & { config: Record<string, unknown> }>(`/api/admin/image-backend/members/${encodeURIComponent(parsedInput.id)}/adapter-versions/${encodeURIComponent(parsedInput.versionId)}`, "GET");
+  });
+
+/** 以历史版本配置追加新适配版本；dryRun 只返回变更字段不落库。 */
+export const rollbackApiAdapterAction = adminAction
+  .metadata({ action: "imageBackendPool.rollbackApiAdapter" })
+  .schema(adapterRollbackSchema)
+  .action(async ({ parsedInput }) => {
+    const { id, ...body } = parsedInput;
+    const result = await requestPool<ApiAdapterRollbackResult>(`/api/admin/image-backend/members/${encodeURIComponent(id)}/adapter-rollback`, "POST", body);
+    if (!parsedInput.dryRun) revalidateBackendPoolPage();
+    return result;
+  });
+
+/** 列出管理员 agent 令牌元数据。 */
+export const listAdminAgentTokensAction = adminAction
+  .metadata({ action: "imageBackendPool.listAdminAgentTokens" })
+  .action(async () => requestPool<{ tokens: AdminAgentTokenItem[] }>("/api/admin/agent-tokens", "GET"));
+
+/** 签发管理员 agent 令牌，返回仅出现一次的明文。 */
+export const createAdminAgentTokenAction = adminAction
+  .metadata({ action: "imageBackendPool.createAdminAgentToken" })
+  .schema(createAdminAgentTokenSchema)
+  .action(async ({ parsedInput }) => requestPool<CreatedAdminAgentToken>("/api/admin/agent-tokens", "POST", parsedInput));
+
+/** 撤销管理员 agent 令牌。 */
+export const revokeAdminAgentTokenAction = adminAction
+  .metadata({ action: "imageBackendPool.revokeAdminAgentToken" })
+  .schema(idSchema)
+  .action(async ({ parsedInput }) => requestPool<{ id: string; revoked: boolean }>(`/api/admin/agent-tokens/${encodeURIComponent(parsedInput.id)}/revoke`, "POST", {}));

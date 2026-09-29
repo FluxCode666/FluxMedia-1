@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
 import { Link, useRouter } from "@/i18n/routing";
 import { getAdminImageBackendPoolAction } from "./actions";
+import { AdapterVersionHistoryDialog } from "./adapter-version-history-dialog";
 import { BackendMemberFormDialog } from "./member-form";
 import {
   type BackendMemberModelOption,
@@ -42,15 +43,18 @@ function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
  *
  * @param memberId 路由中的账号 ID。
  * @param readOnly observer 角色只读时隐藏保存能力。
+ * @param timeZone 当前用户时区，用于展示版本时间。
  * @returns 加载中、找不到账号或详情表单。
  * @sideEffects 读取管理快照和模型目录，保存后重新读取快照。
  */
 export function BackendMemberDetailPage({
   memberId,
   readOnly = false,
+  timeZone,
 }: {
   memberId: string;
   readOnly?: boolean;
+  timeZone?: string;
 }) {
   const router = useRouter();
   const [member, setMember] = useState<BackendMemberAdminSummary | null>(null);
@@ -129,12 +133,23 @@ export function BackendMemberDetailPage({
     <div className="space-y-6">
       <header className="overflow-hidden rounded-lg border bg-card">
         <div className="px-5 py-5 sm:px-6">
-          <Button asChild className="-ml-3 mb-2" size="sm" variant="ghost">
-            <Link href="/dashboard/admin/suppliers">
-              <ArrowLeft />
-              返回账号列表
-            </Link>
-          </Button>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <Button asChild className="-ml-3" size="sm" variant="ghost">
+              <Link href="/dashboard/admin/suppliers">
+                <ArrowLeft />
+                返回账号列表
+              </Link>
+            </Button>
+            <AdapterVersionHistoryDialog
+              memberId={member.id}
+              onRolledBack={() => {
+                loadPool();
+                router.refresh();
+              }}
+              readOnly={readOnly}
+              timeZone={timeZone}
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold tracking-tight">
               {member.name}
