@@ -33,9 +33,11 @@
   冷却和最近错误；重置不得伪造凭据有效、修改启用开关、累计指标或运行中租约。
 - 适配配置变化必须追加适配版本，只影响新任务；回滚以目标版本配置追加新版本并保留
   当前认证与密钥，不得把旧密钥写回。
-- 外部 agent 只能经 `/api/admin-agent/v1/*` 与哈希存储的 `fmat_` 令牌修改供应商配置：
-  不得修改 `apiKey`、`authentication`，不得返回密钥，写入必须带
-  `expectedCurrentVersionId` 并审计字段名；不得复活已退役的 MCP 通道。
+- 外部 agent 只能经 `/api/admin-agent/v1/*` 与哈希存储的全局 `fmat_` 令牌修改供应商配置：
+  接口必须用 `requireAdminAgentScope` 校验 `suppliers:read` / `suppliers:write`，
+  scope 清单只在 `admin_agent_scopes.go` 注册表维护；不得修改 `apiKey`、
+  `authentication`，不得返回密钥，写入必须带 `expectedCurrentVersionId` 并审计字段名；
+  不得复活已退役的 MCP 通道。
 
 详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)、
 [api-account-upstream-adaptation.md](memory/api-account-upstream-adaptation.md) 与

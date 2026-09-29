@@ -1,6 +1,6 @@
 ---
 name: write-api-upstream-adapter
-description: 根据供应商 API 文档、参数说明、HAR、请求响应样例或错误信息，为 FluxMedia API 类型账号生成并校验六操作上游适配配置，包括相对路径、四种认证、真实模型 ID 映射、请求 JavaScript、响应 JavaScript 和无网络测试夹具。适用于文生图、图生图和生视频的同步或异步上游协议，以及 Query、Header、Body、任务状态、URL、Base64、首尾帧和多参考图适配。也适用于持有管理员 agent 令牌时，通过线上 API 读取、在线测试、增量修改和回滚已部署供应商的适配配置。
+description: 根据供应商 API 文档、参数说明、HAR、请求响应样例或错误信息，为 FluxMedia API 类型账号生成并校验六操作上游适配配置，包括相对路径、四种认证、真实模型 ID 映射、请求 JavaScript、响应 JavaScript 和无网络测试夹具。适用于文生图、图生图和生视频的同步或异步上游协议，以及 Query、Header、Body、任务状态、URL、Base64、首尾帧和多参考图适配。也适用于持有带 suppliers:read / suppliers:write 授权范围的全局管理员 agent 令牌时，通过线上 API 读取、在线测试、增量修改和回滚已部署供应商的适配配置。
 ---
 
 <!--
@@ -41,8 +41,9 @@ agent 令牌时，还可以通过线上 API 写入配置并按版本回滚。
 
 请求同时覆盖多类媒体时，分别读取对应参考文件，但保持一套共享分析和交付流程。
 
-用户要求直接配置线上服务，或环境中存在 `FLUXMEDIA_ADMIN_AGENT_TOKEN` 时，再读取
-[references/online-api.md](references/online-api.md)，先用线上接口读取当前配置作为事实
+用户要求直接配置线上服务，或环境中存在 `FLUXMEDIA_ADMIN_AGENT_TOKEN` 时，先按项目
+Skill `fluxmedia-admin-agent` 完成令牌自检和 scope 确认，再读取
+[references/online-api.md](references/online-api.md)，用线上接口读取当前配置作为事实
 来源，并按第 8 步写入。
 
 在 FluxMedia 仓库中工作时，再核对当前源码：
@@ -190,10 +191,11 @@ return {
 
 ### 8. 写入线上配置（可选）
 
-仅在用户明确要求且持有管理员 agent 令牌时执行，完整接口见
+仅在用户明确要求且持有带 `suppliers:write` 授权范围的管理员 agent 令牌时执行，完整接口见
 [references/online-api.md](references/online-api.md)：
 
-1. 调用 `me` 确认令牌可写，调用供应商详情取得 `expectedCurrentVersionId`；
+1. 调用 `me` 确认 `scopes` 包含 `suppliers:write`（只有 `suppliers:read` 时只做分析和
+   在线测试，把修改建议交给管理员），再调用供应商详情取得 `expectedCurrentVersionId`；
 2. 对每个非空脚本用 `script-test` 跑通第 6 步的全部夹具；
 3. 用 `dryRun: true` 的 PATCH 预演，确认 `changedFields` 只包含预期字段；
 4. 正式保存，重新读取详情并用 `supplierId` 复测已保存脚本；

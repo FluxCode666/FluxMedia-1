@@ -1,14 +1,18 @@
 <!--
-本文件说明外部 agent 如何通过管理员 agent 令牌读取、测试、修改和回滚线上 API
+本文件说明外部 agent 如何通过全局管理员 agent 令牌读取、测试、修改和回滚线上 API
 供应商适配配置。只描述 /api/admin-agent/v1/* 接口契约与安全工作流，不包含任何真实
 令牌、密钥或供应商地址。
 -->
 
 # 线上供应商配置 API
 
-管理员在「供应商管理 → Agent 令牌」签发令牌后，agent 可以直接读取和修改线上 API
-供应商的适配配置（路径、模型映射、请求与响应脚本、baseUrl 等）。所有修改都会生成新的
-适配版本，只影响之后创建的任务，并可回滚。
+管理员在「管理 → Agent 令牌」（`/dashboard/admin/agent-tokens`）签发全局 agent 令牌
+并勾选供应商相关授权范围后，agent 可以直接读取和修改线上 API 供应商的适配配置（路径、
+模型映射、请求与响应脚本、baseUrl 等）。所有修改都会生成新的适配版本，只影响之后创建
+的任务，并可回滚。
+
+环境变量、Bearer 认证、`me` 自检、通用错误码和安全规则以项目 Skill
+`fluxmedia-admin-agent` 为准，本文件只描述供应商相关接口。
 
 ## 环境变量
 
@@ -29,9 +33,10 @@ export FLUXMEDIA_ADMIN_AGENT_TOKEN="<管理员签发的 fmat_ 令牌>"
 
 ## 权限边界
 
-- 只读令牌可以调用全部 GET 接口和脚本测试；修改与回滚返回 403 `READ_ONLY_TOKEN`；
-- 可写令牌可以修改名称、分组、模型、分辨率、开关、优先级、并发和适配配置（包括
-  `baseUrl`）；
+- `suppliers:read`：可以调用全部 GET 接口和脚本测试；
+- `suppliers:write`（自动包含 `suppliers:read`）：可以修改名称、分组、模型、分辨率、
+  开关、优先级、并发和适配配置（包括 `baseUrl`），以及回滚；
+- 缺少接口所需的 scope 时返回 403 `INSUFFICIENT_SCOPE`，message 中带出所需 scope；
 - 任何令牌都不能修改 `apiKey` 和 `authentication`，提交这两个字段返回 403
   `CREDENTIAL_CHANGE_FORBIDDEN`；接口永远不返回供应商密钥；
 - 令牌过期、被撤销、签发人失去管理员角色后立即失效（401 或 403）；
@@ -44,7 +49,7 @@ export FLUXMEDIA_ADMIN_AGENT_TOKEN="<管理员签发的 fmat_ 令牌>"
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/admin-agent/v1/me` | 当前令牌名称与是否可写 |
+| GET | `/api/admin-agent/v1/me` | 当前令牌名称、`scopes` 和全部 `availableScopes`（无需特定 scope） |
 | GET | `/api/admin-agent/v1/catalog` | 分组、尺寸配置、六操作默认路径、可改字段和上限 |
 | GET | `/api/admin-agent/v1/suppliers?q=` | 供应商摘要，只列出已配置脚本的字段名 |
 | GET | `/api/admin-agent/v1/suppliers/{id}` | `supplier` 脱敏详情、`editable` 可改形状、`expectedCurrentVersionId` |
@@ -70,7 +75,8 @@ curl -sS -H "$AUTH" "$API/suppliers/<id>"
 ```
 
 记下详情中的 `expectedCurrentVersionId`，并以 `editable.config.operations` 为准读取
-当前脚本。`me.canWrite` 为 false 时只做分析和测试，把修改建议交给管理员。
+当前脚本。`me.scopes` 不包含 `suppliers:write` 时只做分析和测试，把修改建议交给
+管理员。
 
 ### 2. 在线测试脚本
 

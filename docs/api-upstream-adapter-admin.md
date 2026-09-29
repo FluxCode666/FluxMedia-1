@@ -481,27 +481,34 @@ Worker 数是每个脚本运行时 Node 进程的 Worker Thread 数。生产统�
 管理员可以让外部 agent（Claude Code、Codex 等）直接读取、测试和修改线上供应商的
 适配配置：
 
-1. 在「供应商管理 → Agent 令牌」签发令牌。默认只读；需要写入时打开「允许修改和
-   回滚供应商配置」，有效期可选 7、30 或 90 天；
+1. 在「管理 → Agent 令牌」（`/dashboard/admin/agent-tokens`）签发全局 agent 令牌，
+   按需勾选授权范围：只分析和测试时勾选「读取供应商配置」（`suppliers:read`），需要
+   写入时勾选「修改供应商配置」（`suppliers:write`，自动包含读取）；有效期可选 7、30
+   或 90 天；
 2. 明文令牌只显示一次，复制后在 agent 环境中设置 `FLUXMEDIA_ADMIN_AGENT_TOKEN`
    和 `FLUXMEDIA_BASE_URL`，不要写入仓库或聊天记录；
-3. 让 agent 使用项目内 `write-api-upstream-adapter` Skill，接口与工作流见
+3. 让 agent 先使用项目内 `fluxmedia-admin-agent` Skill 完成令牌自检，再使用
+   `write-api-upstream-adapter` Skill，接口与工作流见
    `skills/write-api-upstream-adapter/references/online-api.md`；
 4. 用完后撤销令牌。
 
 令牌边界：
 
+- 令牌是全局管理员凭据，不绑定具体供应商；能力由签发时勾选的 scope 决定，缺少
+  scope 的请求返回 403 `INSUFFICIENT_SCOPE`；后续其他管理功能接入 agent 时追加新的
+  scope，复用同一套令牌；
 - 令牌以 SHA-256 哈希保存，列表只显示前缀和末四位；每位管理员最多 10 个有效令牌；
 - 普通管理员只能查看和撤销自己签发的令牌，super_admin 可以查看和撤销全部令牌；
+  observer_admin 不能签发令牌；
 - 签发人失去管理员角色或被封禁后，其令牌立即失效；
 - 令牌不能修改 `apiKey` 和 `authentication`，接口永远不返回供应商密钥；
-- 可写令牌可以修改 `baseUrl` 等其他配置，每次修改都会生成新版本并写入管理员审计
-  日志（记录令牌、变更字段名和版本号，不记录脚本和配置内容）。
+- `suppliers:write` 可以修改 `baseUrl` 等其他配置，每次修改都会生成新版本并写入
+  管理员审计日志（记录令牌、变更字段名和版本号，不记录脚本和配置内容）。
 
-风险提示：可写令牌可以修改 `baseUrl`，上游请求会携带已保存的密钥发往新地址。令牌
-泄露时，攻击者可能借此把密钥发往自己控制的地址。请只在需要时签发可写令牌、使用
-较短有效期、用完立即撤销，并定期在审计日志中检查 `admin_agent.supplier.update`
-记录的 `config.baseUrl` 变更。
+风险提示：`suppliers:write` 可以修改 `baseUrl`，上游请求会携带已保存的密钥发往新
+地址。令牌泄露时，攻击者可能借此把密钥发往自己控制的地址。请只在需要时勾选该
+scope、使用较短有效期、用完立即撤销，并定期在审计日志中检查
+`admin_agent.supplier.update` 记录的 `config.baseUrl` 变更。
 
 ## 失败、重试与用户提示
 

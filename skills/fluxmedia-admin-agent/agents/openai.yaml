@@ -1,0 +1,5 @@
+# 本文件为项目内 Skill 提供列表展示名称和默认触发提示，不安装到用户环境。
+interface:
+  display_name: "FluxMedia 管理员 agent"
+  short_description: "用全局 agent 令牌调用线上管理员接口：认证、scope 自检、错误码与安全规则"
+  default_prompt: "使用 $fluxmedia-admin-agent 检查当前 agent 令牌的授权范围，再完成我要求的线上管理操作。"
