@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -36,18 +37,29 @@ func (b *backend) handleApiUpstreamScriptTest(w http.ResponseWriter, r *http.Req
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
+	preview, err := b.runApiUpstreamScriptTest(r.Context(), in)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"preview": preview})
+	return nil
+}
+
+// runApiUpstreamScriptTest 用合成样例在隔离运行时中执行脚本，不访问上游、不读取密钥。
+// 后台测试器和 agent 接口共用此逻辑；脚本为空时原样返回样例。
+func (b *backend) runApiUpstreamScriptTest(ctx context.Context, in apiUpstreamScriptTestRequest) (any, error) {
 	if !apiUpstreamOperations[in.Operation] || (in.Stage != "request" && in.Stage != "response") {
-		return invalid("API 上游脚本操作或阶段无效")
+		return nil, invalid("API 上游脚本操作或阶段无效")
 	}
 	if len([]rune(in.Script)) > 32768 {
-		return invalid("API 上游处理脚本过长")
+		return nil, invalid("API 上游处理脚本过长")
 	}
 	if len(in.Sample) == 0 || string(in.Sample) == "null" {
-		return invalid("样例不能为空")
+		return nil, invalid("样例不能为空")
 	}
 	var sample any
 	if err := json.Unmarshal(in.Sample, &sample); err != nil {
-		return invalid("样例 JSON 无效")
+		return nil, invalid("样例 JSON 无效")
 	}
 	modelID := "sample-model"
 	taskID := "sample-task"
@@ -93,23 +105,25 @@ func (b *backend) handleApiUpstreamScriptTest(w http.ResponseWriter, r *http.Req
 		contextValue["taskId"] = taskID
 	}
 	if strings.TrimSpace(in.Script) == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"preview": sample})
-		return nil
+		return sample, nil
 	}
 	client := newScriptRuntimeClient(b.config.scriptRuntimeURL, b.config.scriptRuntimeToken)
 	if client == nil {
-		return &apiError{http.StatusServiceUnavailable, "SCRIPT_RUNTIME_UNAVAILABLE", "API 上游脚本运行时不可用"}
+		return nil, &apiError{http.StatusServiceUnavailable, "SCRIPT_RUNTIME_UNAVAILABLE", "API 上游脚本运行时不可用"}
 	}
-	output, err := client.execute(r.Context(), scriptRuntimeRequest{Script: strings.TrimSpace(in.Script), Operation: in.Operation, Stage: in.Stage, Input: sample, Context: contextValue})
+	output, err := client.execute(ctx, scriptRuntimeRequest{Script: strings.TrimSpace(in.Script), Operation: in.Operation, Stage: in.Stage, Input: sample, Context: contextValue})
 	if err != nil {
-		return &apiError{http.StatusUnprocessableEntity, "SCRIPT_EXECUTION_FAILED", "供应商请求处理脚本测试失败，请检查脚本和样例"}
+		var unavailable *scriptRuntimeUnavailableError
+		if errors.As(err, &unavailable) {
+			return nil, &apiError{http.StatusServiceUnavailable, "SCRIPT_RUNTIME_UNAVAILABLE", "API 上游脚本运行时不可用"}
+		}
+		return nil, &apiError{http.StatusUnprocessableEntity, "SCRIPT_EXECUTION_FAILED", "供应商请求处理脚本测试失败，请检查脚本和样例"}
 	}
 	var preview any
 	if err := json.Unmarshal(output, &preview); err != nil {
-		return &apiError{http.StatusUnprocessableEntity, "SCRIPT_EXECUTION_FAILED", "供应商请求处理脚本输出无效"}
+		return nil, &apiError{http.StatusUnprocessableEntity, "SCRIPT_EXECUTION_FAILED", "供应商请求处理脚本输出无效"}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"preview": preview})
-	return nil
+	return preview, nil
 }
 
 func (b *backend) handleApiUpstreamScriptDiagnostics(w http.ResponseWriter, r *http.Request) error {

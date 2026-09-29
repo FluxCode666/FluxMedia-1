@@ -204,11 +204,48 @@ func (b *backend) validatePoolAdapter(ctx context.Context, cfg map[string]any) e
 	return nil
 }
 
+// poolSaveOptions 控制供应商保存核心的附加行为。
+type poolSaveOptions struct {
+	// DryRun 为 true 时执行全部校验和事务内检查，但最终回滚不落库。
+	DryRun bool
+	// PreserveCredentials 为 true 时禁止修改密钥和认证配置，供 agent 通道使用。
+	PreserveCredentials bool
+}
+
+// poolSaveResult 描述一次供应商保存的结果，Changed 表示是否追加了新适配版本。
+type poolSaveResult struct {
+	ID                string
+	Created           bool
+	Changed           bool
+	VersionID         string
+	Revision          int
+	PreviousVersionID string
+	PreviousRevision  int
+}
+
+// backendPoolSaveMember 是后台会话保存 API 类型供应商的 HTTP 适配层。
 func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) error {
 	var in poolMemberWrite
 	if err := decodeBody(r, &in); err != nil {
 		return err
 	}
+	result, err := b.savePoolMember(r.Context(), in, poolSaveOptions{})
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"id": result.ID})
+	return nil
+}
+
+// savePoolMember 校验并保存 API 类型供应商：成员字段、分组、密钥和适配配置。
+// 适配配置不同于当前版本时追加新版本，运行中任务继续固定旧版本。
+func (b *backend) savePoolMember(ctx context.Context, in poolMemberWrite, opts poolSaveOptions) (poolSaveResult, error) {
+	var result poolSaveResult
+	err := b.savePoolMemberInto(ctx, in, opts, &result)
+	return result, err
+}
+
+func (b *backend) savePoolMemberInto(ctx context.Context, in poolMemberWrite, opts poolSaveOptions, result *poolSaveResult) error {
 	in.Name = strings.TrimSpace(in.Name)
 	in.ID = strings.TrimSpace(in.ID)
 	if in.Type != "api" || in.Name == "" || len([]rune(in.Name)) > 120 || len(in.ID) > 128 || in.Priority < 0 || in.Priority > 10000 || in.Concurrency < 1 || in.Concurrency > 10000 || len(in.GroupIDs) < 1 || len(in.GroupIDs) > 100 || len(in.Models) < 1 {
@@ -265,6 +302,9 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 			return invalid("适配版本无效")
 		}
 	}
+	if opts.PreserveCredentials && (keySupplied || in.ID == "") {
+		return forbiddenCredentialChange()
+	}
 	if keySupplied && (strings.TrimSpace(apiKey) == "" || len(apiKey) > 8192) {
 		return invalid("供应商密钥无效")
 	}
@@ -290,25 +330,25 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	if err = validatePoolModelOverrides(&in); err != nil {
 		return err
 	}
-	if err = b.validatePoolAdapter(r.Context(), cfg); err != nil {
+	if err = b.validatePoolAdapter(ctx, cfg); err != nil {
 		return err
 	}
 	creating := in.ID == ""
 	if creating {
 		in.ID = newRequestID()
 	}
-	tx, err := b.db.Begin(r.Context())
+	tx, err := b.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback(tx)
-	if err = lockPoolSizeBindings(r.Context(), tx); err != nil {
+	if err = lockPoolSizeBindings(ctx, tx); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock_shared(hashtextextended('pool-groups',0))`); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('pool-groups',0))`); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "pool-member:"+in.ID); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "pool-member:"+in.ID); err != nil {
 		return err
 	}
 	var currentID, currentScope, currentKey string
@@ -316,23 +356,36 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	var currentJSON []byte
 	if !creating {
 		var memberID string
-		if err = tx.QueryRow(r.Context(), `SELECT id FROM image_backend_member WHERE id=$1 FOR UPDATE`, in.ID).Scan(&memberID); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM image_backend_member WHERE id=$1 FOR UPDATE`, in.ID).Scan(&memberID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return &apiError{404, "NOT_FOUND", "供应商不存在"}
 			}
 			return err
 		}
-		err = tx.QueryRow(r.Context(), `SELECT COALESCE(c.current_adapter_version_id,''),COALESCE(c.credential_scope,''),COALESCE(c.api_key,''),COALESCE(v.revision,0),COALESCE(v.configuration,'{}'::json) FROM image_backend_member_api_config c LEFT JOIN image_backend_member_api_adapter_version v ON v.id=c.current_adapter_version_id WHERE c.member_id=$1`, in.ID).Scan(&currentID, &currentScope, &currentKey, &revision, &currentJSON)
+		err = tx.QueryRow(ctx, `SELECT COALESCE(c.current_adapter_version_id,''),COALESCE(c.credential_scope,''),COALESCE(c.api_key,''),COALESCE(v.revision,0),COALESCE(v.configuration,'{}'::json) FROM image_backend_member_api_config c LEFT JOIN image_backend_member_api_adapter_version v ON v.id=c.current_adapter_version_id WHERE c.member_id=$1`, in.ID).Scan(&currentID, &currentScope, &currentKey, &revision, &currentJSON)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if expected != nil && expected != currentID || expected == nil && currentID != "" {
 			return &apiError{409, "VERSION_CONFLICT", "供应商配置已更新，请刷新后重试"}
 		}
+		if opts.PreserveCredentials {
+			var currentConfig map[string]any
+			if len(currentJSON) > 0 {
+				_ = json.Unmarshal(currentJSON, &currentConfig)
+			}
+			if currentConfig == nil {
+				currentConfig = map[string]any{}
+			}
+			poolAdapterDefaults(currentConfig)
+			if !reflect.DeepEqual(currentConfig["authentication"], cfg["authentication"]) {
+				return forbiddenCredentialChange()
+			}
+		}
 	}
 	for _, id := range in.GroupIDs {
 		var exists bool
-		if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM image_backend_group WHERE id=$1)`, id).Scan(&exists); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_backend_group WHERE id=$1)`, id).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -341,7 +394,7 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	}
 	if scope != currentScope && currentID != "" {
 		var used bool
-		if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM image_backend_member_lease WHERE member_id=$1 AND expires_at>now() UNION ALL SELECT 1 FROM generation WHERE status='pending' AND (api_adapter_member_id=$1 OR metadata->'billingSnapshot'->>'providerMemberId'=$1) UNION ALL SELECT 1 FROM video_generation WHERE api_adapter_member_id=$1 AND status NOT IN ('completed','failed'))`, in.ID).Scan(&used); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_backend_member_lease WHERE member_id=$1 AND expires_at>now() UNION ALL SELECT 1 FROM generation WHERE status='pending' AND (api_adapter_member_id=$1 OR metadata->'billingSnapshot'->>'providerMemberId'=$1) UNION ALL SELECT 1 FROM video_generation WHERE api_adapter_member_id=$1 AND status NOT IN ('completed','failed'))`, in.ID).Scan(&used); err != nil {
 			return err
 		}
 		if used {
@@ -356,7 +409,7 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 	} else if apiKey == "" {
 		return invalid("供应商认证需要密钥")
 	}
-	snapshot, err := readPoolSizeSnapshot(r.Context(), tx, extractString(cfg, "imageSizeConfigId"))
+	snapshot, err := readPoolSizeSnapshot(ctx, tx, extractString(cfg, "imageSizeConfigId"))
 	if err != nil {
 		return err
 	}
@@ -368,7 +421,7 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 			if !ok || configID == "" {
 				return invalid("尺寸配置 ID 无效")
 			}
-			snapshot, err := readPoolSizeSnapshot(r.Context(), tx, configID)
+			snapshot, err := readPoolSizeSnapshot(ctx, tx, configID)
 			if err != nil {
 				return err
 			}
@@ -384,31 +437,39 @@ func (b *backend) backendPoolSaveMember(w http.ResponseWriter, r *http.Request) 
 		_ = json.Unmarshal(currentJSON, &current)
 	}
 	versionID := currentID
+	*result = poolSaveResult{ID: in.ID, Created: creating, VersionID: currentID, Revision: revision, PreviousVersionID: currentID, PreviousRevision: revision}
 	if currentID == "" || !reflect.DeepEqual(current, cfg) {
 		versionID = newRequestID()
 		revision++
-		if _, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_adapter_version(id,member_id_snapshot,revision,credential_scope,configuration) VALUES($1,$2,$3,$4,$5)`, versionID, in.ID, revision, scope, mustJSON(cfg)); err != nil {
+		result.Changed = true
+		result.VersionID = versionID
+		result.Revision = revision
+		if _, err = tx.Exec(ctx, `INSERT INTO image_backend_member_api_adapter_version(id,member_id_snapshot,revision,credential_scope,configuration) VALUES($1,$2,$3,$4,$5)`, versionID, in.ID, revision, scope, mustJSON(cfg)); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member(id,type,name,supported_model_ids,supported_resolutions_by_model,content_safety_enabled,is_enabled,always_active,failure_cooldown_enabled,priority,concurrency) VALUES($1,'api',$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,supported_model_ids=excluded.supported_model_ids,supported_resolutions_by_model=excluded.supported_resolutions_by_model,content_safety_enabled=excluded.content_safety_enabled,is_enabled=excluded.is_enabled,always_active=excluded.always_active,failure_cooldown_enabled=excluded.failure_cooldown_enabled,priority=excluded.priority,concurrency=excluded.concurrency,updated_at=now()`, in.ID, in.Name, mustJSON(in.Models), mustJSON(in.Resolutions), in.Safety, in.Enabled, in.Always, in.Cooldown, in.Priority, in.Concurrency); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO image_backend_member(id,type,name,supported_model_ids,supported_resolutions_by_model,content_safety_enabled,is_enabled,always_active,failure_cooldown_enabled,priority,concurrency) VALUES($1,'api',$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,supported_model_ids=excluded.supported_model_ids,supported_resolutions_by_model=excluded.supported_resolutions_by_model,content_safety_enabled=excluded.content_safety_enabled,is_enabled=excluded.is_enabled,always_active=excluded.always_active,failure_cooldown_enabled=excluded.failure_cooldown_enabled,priority=excluded.priority,concurrency=excluded.concurrency,updated_at=now()`, in.ID, in.Name, mustJSON(in.Models), mustJSON(in.Resolutions), in.Safety, in.Enabled, in.Always, in.Cooldown, in.Priority, in.Concurrency); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_api_config(member_id,api_key,current_adapter_version_id,credential_scope) VALUES($1,NULLIF($2,''),$3,$4) ON CONFLICT(member_id) DO UPDATE SET api_key=excluded.api_key,current_adapter_version_id=excluded.current_adapter_version_id,credential_scope=excluded.credential_scope,updated_at=now()`, in.ID, apiKey, versionID, scope); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO image_backend_member_api_config(member_id,api_key,current_adapter_version_id,credential_scope) VALUES($1,NULLIF($2,''),$3,$4) ON CONFLICT(member_id) DO UPDATE SET api_key=excluded.api_key,current_adapter_version_id=excluded.current_adapter_version_id,credential_scope=excluded.credential_scope,updated_at=now()`, in.ID, apiKey, versionID, scope); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(r.Context(), `DELETE FROM image_backend_member_group WHERE member_id=$1`, in.ID); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM image_backend_member_group WHERE member_id=$1`, in.ID); err != nil {
 		return err
 	}
 	sort.Strings(in.GroupIDs)
 	for _, id := range in.GroupIDs {
-		if _, err = tx.Exec(r.Context(), `INSERT INTO image_backend_member_group(id,member_id,group_id) VALUES($1,$2,$3)`, newRequestID(), in.ID, id); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO image_backend_member_group(id,member_id,group_id) VALUES($1,$2,$3)`, newRequestID(), in.ID, id); err != nil {
 			return err
 		}
 	}
-	if err = tx.Commit(r.Context()); err != nil {
-		return err
+	if opts.DryRun {
+		return nil
 	}
-	writeJSON(w, 200, map[string]any{"id": in.ID})
-	return nil
+	return tx.Commit(ctx)
+}
+
+// forbiddenCredentialChange 表示当前通道不允许修改供应商密钥或认证方式。
+func forbiddenCredentialChange() error {
+	return &apiError{http.StatusForbidden, "CREDENTIAL_CHANGE_FORBIDDEN", "当前通道不允许修改供应商密钥或认证配置"}
 }

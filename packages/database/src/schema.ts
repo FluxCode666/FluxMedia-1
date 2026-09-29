@@ -2959,3 +2959,53 @@ export const mcpApiKey = pgTable(
 
 export type McpApiKey = typeof mcpApiKey.$inferSelect;
 export type NewMcpApiKey = typeof mcpApiKey.$inferInsert;
+
+/**
+ * 管理员 agent 令牌 - 外部 agent 调用供应商适配器配置 API 的凭据
+ *
+ * 明文令牌只在签发时返回一次，此表仅保存 SHA-256 哈希。令牌继承签发管理员的
+ * 身份，签发人失去管理员角色、被封禁、令牌过期或被撤销后立即失效。
+ *
+ * @field id - 令牌唯一标识符
+ * @field name - 管理员填写的令牌名称
+ * @field tokenPrefix - 明文令牌前缀
+ * @field tokenHash - 明文令牌的 SHA-256 哈希
+ * @field lastFour - 明文令牌末四位，用于识别
+ * @field canWrite - 是否允许修改供应商配置（否则只读）
+ * @field createdByUserId - 签发管理员用户 ID
+ * @field expiresAt - 过期时间（必填）
+ * @field lastUsedAt - 最近使用时间
+ * @field revokedAt - 撤销时间（撤销后不可恢复）
+ * @field revokedByUserId - 撤销操作的管理员用户 ID
+ * @field createdAt - 创建时间
+ */
+export const adminAgentToken = pgTable(
+  "admin_agent_token",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    tokenPrefix: text("token_prefix").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    lastFour: text("last_four").notNull(),
+    canWrite: boolean("can_write").notNull().default(false),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at").notNull(),
+    lastUsedAt: timestamp("last_used_at"),
+    revokedAt: timestamp("revoked_at"),
+    revokedByUserId: text("revoked_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("admin_agent_token_created_by_user_id_idx").on(
+      table.createdByUserId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type AdminAgentToken = typeof adminAgentToken.$inferSelect;
+export type NewAdminAgentToken = typeof adminAgentToken.$inferInsert;

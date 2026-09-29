@@ -736,6 +736,13 @@
       "when": 1790084641000,
       "tag": "0104_normalize_image_task_transport_input",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1790170000000,
+      "tag": "0105_admin_agent_tokens",
+      "breakpoints": true
     }
   ]
 }

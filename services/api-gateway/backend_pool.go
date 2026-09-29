@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -150,7 +151,12 @@ func metaOr(m map[string]any, key string, fallback any) any {
 }
 
 func (b *backend) backendPoolMembers(r *http.Request) ([]any, error) {
-	rows, err := b.db.Query(r.Context(), `SELECT m.id,m.name,m.supported_model_ids,m.supported_resolutions_by_model,m.content_safety_enabled,m.is_enabled,m.always_active,m.failure_cooldown_enabled,m.priority,m.concurrency,m.status,m.health_status,m.lease_acquired_count,m.created_at,m.last_acquired_at,m.last_used_at,m.last_error,m.last_error_at,(a.api_key IS NOT NULL),v.id,COALESCE(v.revision,0),v.created_at,v.configuration,(SELECT count(*) FROM image_backend_member_lease l WHERE l.member_id=m.id AND l.expires_at>now()),COALESCE((SELECT json_agg(mg.group_id ORDER BY mg.group_id) FROM image_backend_member_group mg WHERE mg.member_id=m.id),'[]'::json) FROM image_backend_member m LEFT JOIN image_backend_member_api_config a ON a.member_id=m.id LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id ORDER BY m.priority ASC,m.id ASC`)
+	return b.queryPoolMembers(r.Context(), "")
+}
+
+// queryPoolMembers 读取脱敏后的供应商成员；memberID 为空时返回全部成员。
+func (b *backend) queryPoolMembers(ctx context.Context, memberID string) ([]any, error) {
+	rows, err := b.db.Query(ctx, `SELECT m.id,m.name,m.supported_model_ids,m.supported_resolutions_by_model,m.content_safety_enabled,m.is_enabled,m.always_active,m.failure_cooldown_enabled,m.priority,m.concurrency,m.status,m.health_status,m.lease_acquired_count,m.created_at,m.last_acquired_at,m.last_used_at,m.last_error,m.last_error_at,(a.api_key IS NOT NULL),v.id,COALESCE(v.revision,0),v.created_at,v.configuration,(SELECT count(*) FROM image_backend_member_lease l WHERE l.member_id=m.id AND l.expires_at>now()),COALESCE((SELECT json_agg(mg.group_id ORDER BY mg.group_id) FROM image_backend_member_group mg WHERE mg.member_id=m.id),'[]'::json) FROM image_backend_member m LEFT JOIN image_backend_member_api_config a ON a.member_id=m.id LEFT JOIN image_backend_member_api_adapter_version v ON v.id=a.current_adapter_version_id WHERE ($1='' OR m.id=$1) ORDER BY m.priority ASC,m.id ASC`, memberID)
 	if err != nil {
 		return nil, err
 	}
