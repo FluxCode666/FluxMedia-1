@@ -143,9 +143,8 @@ func TestAdminUserConcurrencyUsesOneConnectionAndRollsBackAuditFailure(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	singleConnectionBackend := *b
-	singleConnectionBackend.db = pool
-	b = &singleConnectionBackend
+	// 逐字段复制而不是整体解引用，避免复制限流状态中的互斥锁。
+	b = &backend{mailDelivery: b.mailDelivery, oauthHTTPClient: b.oauthHTTPClient, alipayHTTPClient: b.alipayHTTPClient, creemHTTPClient: b.creemHTTPClient, config: b.config, db: pool, redis: b.redis, logger: b.logger, mediaWorker: b.mediaWorker, maintenance: b.maintenance, updates: b.updates, web: b.web}
 	setStorageTestSetting(t, b, "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY", 23)
 	t.Cleanup(func() {
 		_, _ = b.db.Exec(ctx, `DELETE FROM admin_audit_log WHERE admin_user_id=$1 AND target_user_id=$2 AND action='mediaLimits.setUserConcurrencyOverride'`, admin, target)
