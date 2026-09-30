@@ -19,5 +19,7 @@ export async function getCurrentDocumentationBaseUrl(): Promise<string> {
     host,
     "x-forwarded-proto": protocol.replace(/:$/u, ""),
   };
-  return resolveDocumentationBaseUrl({ get: (name) => values[name.toLowerCase()] ?? null });
+  return resolveDocumentationBaseUrl({
+    get: (name) => values[name.toLowerCase()] ?? null,
+  });
 }
