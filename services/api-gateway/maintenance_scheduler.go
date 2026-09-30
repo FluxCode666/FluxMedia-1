@@ -161,23 +161,9 @@ func (b *backend) deliverVideoCallbacks(ctx context.Context) (int, error) {
 		if err != nil {
 			return delivered, err
 		}
-		var model, status, stage, prompt, resolution, ratio string
-		var duration int
-		var credits float64
-		var taskErr *string
-		var storageKey, storageBucket *string
-		if err = b.db.QueryRow(ctx, `SELECT model,status,stage,prompt,resolution,aspect_ratio,duration_seconds,credits_consumed,error,storage_key,storage_bucket FROM video_generation WHERE id=$1`, videoID).Scan(&model, &status, &stage, &prompt, &resolution, &ratio, &duration, &credits, &taskErr, &storageKey, &storageBucket); err != nil {
+		payload, err := b.videoCallbackPayload(ctx, videoID)
+		if err != nil {
 			return delivered, err
-		}
-		payload := map[string]any{"id": videoID, "object": "video.task", "status": status, "stage": stage, "model": model, "prompt": prompt, "durationSeconds": duration, "resolution": resolution, "aspectRatio": ratio, "creditsConsumed": credits}
-		if taskErr != nil {
-			payload["error"] = map[string]any{"message": *taskErr}
-		}
-		if storageKey != nil && storageBucket != nil && *storageKey != "" {
-			base, _ := b.settingString(ctx, "NEXT_PUBLIC_APP_URL", "")
-			if base != "" {
-				payload["videoUrl"] = strings.TrimRight(base, "/") + "/api/storage/" + url.PathEscape(*storageBucket) + "/" + url.PathEscape(*storageKey)
-			}
 		}
 		body, _ := json.Marshal(payload)
 		reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -218,6 +204,44 @@ func (b *backend) deliverVideoCallbacks(ctx context.Context) (int, error) {
 		}
 	}
 	return delivered, nil
+}
+
+// videoCallbackPayload 构造视频任务回调体；经方舟兼容网关创建的任务按方舟查询任务响应结构投递。
+func (b *backend) videoCallbackPayload(ctx context.Context, videoID string) (map[string]any, error) {
+	var model, status, stage, prompt, resolution, ratio, seedanceModel string
+	var duration int
+	var credits float64
+	var generateAudio bool
+	var created, updated time.Time
+	var taskErr *string
+	var storageKey, storageBucket *string
+	if err := b.db.QueryRow(ctx, `SELECT model,status,stage,prompt,resolution,aspect_ratio,duration_seconds,credits_consumed,error,storage_key,storage_bucket,COALESCE(metadata->>'seedanceModel',''),COALESCE(metadata->>'generateAudio','')='true',created_at,GREATEST(created_at,updated_at,COALESCE(completed_at,created_at)) FROM video_generation WHERE id=$1`, videoID).Scan(&model, &status, &stage, &prompt, &resolution, &ratio, &duration, &credits, &taskErr, &storageKey, &storageBucket, &seedanceModel, &generateAudio, &created, &updated); err != nil {
+		return nil, err
+	}
+	videoURL := ""
+	if storageKey != nil && storageBucket != nil && *storageKey != "" {
+		base, _ := b.settingString(ctx, "NEXT_PUBLIC_APP_URL", "")
+		if base != "" {
+			videoURL = strings.TrimRight(base, "/") + "/api/storage/" + url.PathEscape(*storageBucket) + "/" + url.PathEscape(*storageKey)
+		}
+	}
+	var payload map[string]any
+	if seedanceModel != "" {
+		view := seedanceTaskView{ID: videoID, Model: seedanceModel, Status: videoUOLStatus(status, stage), Ratio: ratio, Resolution: resolution, VideoURL: videoURL, Duration: duration, GenerateAudio: generateAudio, CreatedAt: created, UpdatedAt: updated}
+		if taskErr != nil {
+			view.Error = *taskErr
+		}
+		payload = view.object()
+	} else {
+		payload = map[string]any{"id": videoID, "object": "video.task", "status": status, "stage": stage, "model": model, "prompt": prompt, "durationSeconds": duration, "resolution": resolution, "aspectRatio": ratio, "creditsConsumed": credits}
+		if taskErr != nil {
+			payload["error"] = map[string]any{"message": *taskErr}
+		}
+		if videoURL != "" {
+			payload["videoUrl"] = videoURL
+		}
+	}
+	return payload, nil
 }
 
 func minInt(a, b int) int {

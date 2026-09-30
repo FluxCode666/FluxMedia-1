@@ -521,6 +521,7 @@ func withRequestID(logger *slog.Logger, next http.Handler) http.Handler {
 		if !requestIDPattern.MatchString(id) {
 			id = newRequestID()
 			r.Header.Set(requestIDHeader, id)
+			r = r.WithContext(context.WithValue(r.Context(), generatedRequestIDKey{}, true))
 		}
 		w.Header().Set(requestIDHeader, id)
 		logger.InfoContext(r.Context(), "http request", "method", r.Method, "path", safeLogPath(r.URL.Path), "request_id", id)
@@ -563,6 +564,18 @@ func newRequestID() string {
 }
 
 func requestID(r *http.Request) string { return r.Header.Get(requestIDHeader) }
+
+// generatedRequestIDKey 标记请求 ID 由网关生成，而非客户端提供。
+type generatedRequestIDKey struct{}
+
+// clientRequestID 返回客户端显式提供且格式有效的 X-Request-ID；由网关生成时返回空串，
+// 避免把一次性请求 ID 误当作客户端幂等键。
+func clientRequestID(r *http.Request) string {
+	if generated, _ := r.Context().Value(generatedRequestIDKey{}).(bool); generated {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get(requestIDHeader))
+}
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

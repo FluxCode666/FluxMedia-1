@@ -112,6 +112,9 @@ func (b *backend) createNativeVideoTask(r *http.Request, userID, keyID, scope st
 	if input.GeminiOperationID != "" {
 		metadata["geminiOperationId"] = input.GeminiOperationID
 	}
+	if input.SeedanceModel != "" {
+		metadata["seedanceModel"] = input.SeedanceModel
+	}
 	if err = b.adoptNativeVideoInputs(r.Context(), tx, userID, id, manifest); err != nil {
 		return nil, err
 	}

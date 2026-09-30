@@ -118,6 +118,13 @@ function getGroupEndpoints(
   });
 }
 
+/** 视频端点协议标签的固定展示顺序；FluxMedia 原生规范始终排在首位。 */
+const VIDEO_PROTOCOL_ORDER: readonly ApiIntegrationProtocol[] = [
+  "fluxmedia",
+  "gemini",
+  "seedance",
+];
+
 /** 渲染单个端点的契约、示例与说明，不发起网络请求。 */
 function EndpointSection({
   content,
@@ -131,18 +138,21 @@ function EndpointSection({
   const [protocol, setProtocol] = useState<ApiIntegrationProtocol>("fluxmedia");
   const selectedContent: ApiIntegrationEndpointContent =
     endpoint.protocols?.[protocol] ?? endpoint;
+  const protocolOptions = VIDEO_PROTOCOL_ORDER.filter(
+    (value) => value === "fluxmedia" || endpoint.protocols?.[value]
+  );
 
   return (
     <section className="scroll-mt-32" id={endpoint.id}>
       <Card className="overflow-hidden rounded-lg">
-        {endpoint.operation === "video" && endpoint.protocols?.gemini ? (
+        {endpoint.operation === "video" && protocolOptions.length > 1 ? (
           <div className="border-b border-border px-5 py-3 md:px-6">
             <div
               aria-label={content.protocolTabs.ariaLabel}
               className="inline-flex rounded-md border border-border bg-muted/30 p-1"
               role="tablist"
             >
-              {(["fluxmedia", "gemini"] as const).map((value) => (
+              {protocolOptions.map((value) => (
                 <button
                   aria-selected={protocol === value}
                   className={cn(

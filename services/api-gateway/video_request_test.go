@@ -141,3 +141,27 @@ func TestNativeVideoInputSummaryDoesNotExposeStorageIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeSeedanceModelsRejectPromptParameters(t *testing.T) {
+	config := func(model string) goVideoModelConfig {
+		capability := goVideoCapabilities[model]
+		return goVideoModelConfig{Enabled: true, SupportedResolutions: capability.Resolutions, Capability: capability}
+	}
+	input := func(model, prompt string) nativeVideoInput {
+		audio := false
+		return nativeVideoInput{Model: model, Prompt: prompt, Duration: 8, AspectRatio: "16:9", Resolution: "720p", GenerateAudio: &audio}
+	}
+	for _, prompt := range []string{"a boat --dur 10", "a boat --rs 1080p at dawn", "--seed 7 a boat"} {
+		if err := validateNativeVideoCapability(input("seedance2", prompt), config("seedance2")); err == nil {
+			t.Fatalf("Seedance accepted prompt parameters %q", prompt)
+		}
+	}
+	for _, prompt := range []string{"a boat --style anime", "a boat--dur 10", "a boat -- dur 10"} {
+		if err := validateNativeVideoCapability(input("seedance2-fast", prompt), config("seedance2-fast")); err != nil {
+			t.Fatalf("Seedance rejected plain prompt %q: %v", prompt, err)
+		}
+	}
+	if err := validateNativeVideoCapability(input("veo31", "a boat --dur 10"), config("veo31")); err != nil {
+		t.Fatalf("non-Seedance model rejected prompt text: %v", err)
+	}
+}

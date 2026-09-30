@@ -65,16 +65,9 @@ func parseGeminiNativeVideoRequest(r *http.Request, scope string, body map[strin
 	if (instance.ReferenceVideos != nil && len(instance.ReferenceVideos) == 0) || (instance.ReferenceAudios != nil && len(instance.ReferenceAudios) == 0) {
 		return nil, invalid("Gemini media reference arrays cannot be empty")
 	}
-	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if idempotencyKey != "" && requestID != "" && idempotencyKey != requestID {
-		return nil, invalid("Idempotency-Key and x-request-id must match")
-	}
-	if idempotencyKey == "" {
-		idempotencyKey = requestID
-	}
-	if idempotencyKey == "" {
-		idempotencyKey = newRequestID()
+	idempotencyKey, err := externalVideoIdempotencyKey(r)
+	if err != nil {
+		return nil, err
 	}
 	platformModel := map[string]string{"seedance2.0": "seedance2", "veo-3.1-generate-preview": "veo31", "veo-3.1-fast-generate-preview": "veo31-fast"}[model]
 	if platformModel == "" {

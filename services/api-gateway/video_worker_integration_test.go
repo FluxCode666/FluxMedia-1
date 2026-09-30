@@ -442,7 +442,7 @@ func TestVideoWorkerNativeProtocolsEncodeStagedFramesAndPollOriginalIdentity(t *
 						}
 						image, _ := content[1].(map[string]any)
 						source, _ := image["image_url"].(map[string]any)
-						if source["url"] != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(frame) || body["ratio"] != "16:9" || body["generate_audio"] != true || body["model"] != "upstream-model" {
+						if source["url"] != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(frame) || image["role"] != "first_frame" || body["first_frame"] != nil || body["ratio"] != "16:9" || body["generate_audio"] != true || body["model"] != "upstream-model" {
 							t.Errorf("Seedance body mismatch %#v", body)
 						}
 						_, _ = io.WriteString(w, `{"id":"native-job","status":"running"}`)

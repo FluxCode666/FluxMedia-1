@@ -103,6 +103,10 @@ func (b *backend) prepareVideoProviderInput(ctx context.Context, cfg providerCon
 		body["negative_prompt"] = value
 	}
 	mode := extractString(cfg.adapter, "videoProtocolMode")
+	// 任意平台模型都可能被路由到方舟上游；提示词中的弱校验参数会覆盖已计费的规格，只能终止任务并退款。
+	if mode == "seedance" && seedanceKnownFlag.MatchString(prompt) {
+		return nil, &videoProviderError{code: "invalid_request", terminal: true}
+	}
 	named, err := namedVideoReferences(manifest)
 	if err != nil {
 		return nil, err
@@ -181,29 +185,49 @@ func (b *backend) prepareVideoProviderInput(ctx context.Context, cfg providerCon
 		return map[string]any{"instances": []any{instance}, "parameters": map[string]any{"aspectRatio": ratio, "resolution": resolution, "durationSeconds": fmt.Sprint(duration)}}, nil
 	}
 	if mode == "seedance" {
-		content := []any{map[string]any{"type": "text", "text": prompt}}
-		for _, field := range []string{"firstFrame", "lastFrame", "referenceImages"} {
-			values := []any{}
-			if list, ok := resolved[field].([]any); ok {
-				values = list
-			} else if resolved[field] != nil {
-				values = append(values, resolved[field])
-			}
-			for _, value := range values {
-				content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": value}})
-			}
-		}
-		body = map[string]any{"model": imageUpstreamModel(cfg, model), "content": content, "ratio": ratio, "duration": duration, "resolution": resolution, "watermark": false}
-		if metadata["generateAudio"] == true {
-			body["generate_audio"] = true
-		}
+		return seedanceProviderBody(imageUpstreamModel(cfg, model), goVideoCapabilities[model].Audio, prompt, ratio, resolution, duration, metadata["generateAudio"] == true, resolved), nil
 	}
 	for field, target := range map[string]string{"firstFrame": "first_frame", "lastFrame": "last_frame", "referenceImages": "reference_images", "referenceVideos": "reference_videos", "referenceAudios": "reference_audios"} {
-		if value := resolved[field]; value != nil && (mode != "seedance" || field == "referenceVideos" || field == "referenceAudios") {
+		if value := resolved[field]; value != nil {
 			body[target] = value
 		}
 	}
 	return body, nil
+}
+
+// seedanceProviderBody 组装方舟创建任务请求体。方舟对 Seedance 2.0 默认生成音频，模型支持音频时
+// 必须显式传递任务快照中的取值；不支持音频的上游模型可能拒绝该字段，只在需要生成音频时发送。
+func seedanceProviderBody(upstreamModel string, audioCapable bool, prompt, ratio, resolution string, duration int, generateAudio bool, resolved map[string]any) map[string]any {
+	body := map[string]any{"model": upstreamModel, "content": seedanceProviderContent(prompt, resolved), "ratio": ratio, "duration": duration, "resolution": resolution, "watermark": false}
+	if audioCapable || generateAudio {
+		body["generate_audio"] = generateAudio
+	}
+	return body
+}
+
+// seedanceProviderContentRoles 按方舟 content 协议给每类暂存媒体指定条目类型与 role。
+var seedanceProviderContentRoles = []struct{ field, kind, role string }{
+	{"firstFrame", "image_url", "first_frame"},
+	{"lastFrame", "image_url", "last_frame"},
+	{"referenceImages", "image_url", "reference_image"},
+	{"referenceVideos", "video_url", "reference_video"},
+	{"referenceAudios", "audio_url", "reference_audio"},
+}
+
+// seedanceProviderContent 把提示词和已解析媒体组装为方舟 content 数组；媒体一律显式声明 role，
+// 防止上游把参考图按首帧处理或忽略顶层参考视频、音频字段。
+func seedanceProviderContent(prompt string, resolved map[string]any) []any {
+	content := []any{map[string]any{"type": "text", "text": prompt}}
+	for _, entry := range seedanceProviderContentRoles {
+		values, ok := resolved[entry.field].([]any)
+		if !ok && resolved[entry.field] != nil {
+			values = []any{resolved[entry.field]}
+		}
+		for _, value := range values {
+			content = append(content, map[string]any{"type": entry.kind, entry.kind: map[string]any{"url": value}, "role": entry.role})
+		}
+	}
+	return content
 }
 
 func tokenizeVideoBody(value any, media map[string]*videoProviderMedia, files map[string]*imageProviderFile) any {
@@ -569,7 +593,8 @@ func inspectVideoProviderResult(cfg providerConfig, output map[string]any, expec
 	if id == "" {
 		id = expectedID
 	}
-	if status == "failed" || status == "error" || status == "rejected" || status == "cancelled" || status == "canceled" {
+	// expired 是方舟任务超出执行时限后的终态，与失败一样不会再产出视频。
+	if status == "failed" || status == "error" || status == "rejected" || status == "cancelled" || status == "canceled" || status == "expired" {
 		detail, _ := record["error"].(map[string]any)
 		category := extractString(detail, "category")
 		e := &videoProviderError{code: "unknown_submission_failure", terminal: true}

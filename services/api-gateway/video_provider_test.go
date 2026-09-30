@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -154,6 +156,63 @@ func TestVideoProviderNativeURLsAndAcceptedIdentity(t *testing.T) {
 	}
 	if _, _, err := inspectVideoProviderResult(providerConfig{baseURL: "https://provider.test"}, map[string]any{"status": "processing", "taskId": "other"}, "expected"); err == nil {
 		t.Fatal("poll changed accepted job ID")
+	}
+}
+
+func TestSeedanceProviderContentDeclaresEveryMediaRole(t *testing.T) {
+	first, last := &videoProviderMedia{value: "data:image/png;base64,Zmlyc3Q="}, &videoProviderMedia{value: "data:image/png;base64,bGFzdA=="}
+	image, video, audio := &videoProviderMedia{value: "data:image/png;base64,cmVm"}, &videoProviderMedia{value: "https://cdn.test/clip.mp4"}, &videoProviderMedia{value: "https://cdn.test/voice.mp3"}
+	got := seedanceProviderContent("a boat", map[string]any{"firstFrame": first, "lastFrame": last, "referenceImages": []any{image}, "referenceVideos": []any{video}, "referenceAudios": []any{audio}})
+	want := []any{
+		map[string]any{"type": "text", "text": "a boat"},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": first}, "role": "first_frame"},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": last}, "role": "last_frame"},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": image}, "role": "reference_image"},
+		map[string]any{"type": "video_url", "video_url": map[string]any{"url": video}, "role": "reference_video"},
+		map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": audio}, "role": "reference_audio"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Seedance content %v", got)
+	}
+	if got := seedanceProviderContent("text only", map[string]any{}); len(got) != 1 {
+		t.Fatalf("text-only content %v", got)
+	}
+}
+
+func TestSeedanceProviderBodySendsExplicitAudioChoice(t *testing.T) {
+	for _, test := range []struct {
+		audioCapable, generateAudio bool
+		want                        any
+	}{
+		{true, false, false},
+		{true, true, true},
+		{false, false, nil},
+		{false, true, true},
+	} {
+		body := seedanceProviderBody("doubao-seedance-2-0-260128", test.audioCapable, "a boat", "16:9", "720p", 5, test.generateAudio, map[string]any{})
+		if body["generate_audio"] != test.want || body["model"] != "doubao-seedance-2-0-260128" || body["watermark"] != false || body["duration"] != 5 || body["first_frame"] != nil || body["reference_videos"] != nil {
+			t.Fatalf("Seedance body for %+v: %v", test, body)
+		}
+		if _, exists := body["generate_audio"]; exists != (test.want != nil) {
+			t.Fatalf("generate_audio presence for %+v: %v", test, body)
+		}
+	}
+}
+
+func TestSeedanceProviderRejectsPromptParametersBeforeReadingMedia(t *testing.T) {
+	cfg := providerConfig{baseURL: "https://provider.test", adapter: map[string]any{"videoProtocolMode": "seedance"}}
+	_, err := (&backend{}).prepareVideoProviderInput(context.Background(), cfg, "video_1", "user", "veo31", "a boat --dur 10", "16:9", "720p", 8, map[string]any{}, map[string]any{})
+	var failure *videoProviderError
+	if !errors.As(err, &failure) || !failure.terminal || failure.code != "invalid_request" {
+		t.Fatalf("Seedance prompt parameters returned %v", err)
+	}
+}
+
+func TestVideoProviderExpiredTaskIsTerminal(t *testing.T) {
+	_, id, err := inspectVideoProviderResult(providerConfig{baseURL: "https://provider.test"}, map[string]any{"id": "cgt-1", "status": "expired"}, "cgt-1")
+	var failure *videoProviderError
+	if !errors.As(err, &failure) || !failure.terminal || failure.transient || failure.code != "unknown_submission_failure" || id != "cgt-1" {
+		t.Fatalf("expired task returned %v %q", err, id)
 	}
 }
 

@@ -37,7 +37,7 @@ export type ApiIntegrationEndpointGroup = {
   endpointIds: readonly string[];
 };
 
-export type ApiIntegrationProtocol = "fluxmedia" | "gemini";
+export type ApiIntegrationProtocol = "fluxmedia" | "gemini" | "seedance";
 
 export type ApiIntegrationEndpointContent = {
   title: string;
@@ -81,6 +81,7 @@ export type ApiIntegrationDocsContent = {
     ariaLabel: string;
     fluxmedia: string;
     gemini: string;
+    seedance: string;
   };
   parameterHeaders: readonly [string, string, string, string];
   responseHeaders: readonly [string, string];
@@ -516,6 +517,417 @@ function getGeminiVideoProtocolVariants(
   };
 }
 
+/** 火山方舟 Seedance 视频兼容端点的公开文档变体；不暴露上游账号、任务 ID 或供应商配置。 */
+function getSeedanceVideoProtocolVariants(
+  locale: "zh" | "en"
+): Record<
+  "video-generations" | "video-capabilities" | "video-task",
+  ApiIntegrationEndpointContent
+> {
+  const requestExample = `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/v3/contents/generations/tasks \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: seedance-video-request-001" \\
+  -d '{
+    "model": "doubao-seedance-2-0-260128",
+    "content": [
+      {
+        "type": "text",
+        "text": "A paper boat drifting on a quiet lake at dawn"
+      },
+      {
+        "type": "image_url",
+        "image_url": { "url": "data:image/png;base64,<BASE64_FIRST_FRAME_IMAGE>" },
+        "role": "first_frame"
+      }
+    ],
+    "ratio": "16:9",
+    "resolution": "720p",
+    "duration": 5
+  }'`;
+  const createResponseExample = `{
+  "id": "video_0123456789abcdef0123456789abcdef01234567"
+}`;
+  const taskRequestExample = `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/v3/contents/generations/tasks/video_0123456789abcdef0123456789abcdef01234567 \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`;
+  const taskResponseExample = `{
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "model": "doubao-seedance-2-0-260128",
+  "status": "succeeded",
+  "content": {
+    "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."
+  },
+  "error": null,
+  "created_at": 1790000000,
+  "updated_at": 1790000090,
+  "duration": 5,
+  "ratio": "16:9",
+  "resolution": "720p",
+  "generate_audio": true,
+  "service_tier": "default"
+}`;
+
+  if (locale === "zh") {
+    return {
+      "video-generations": {
+        title: "Seedance 创建视频任务",
+        method: "POST",
+        path: "/api/v3/contents/generations/tasks",
+        contentType: "application/json",
+        description:
+          "按火山方舟内容生成任务协议（Seedance 视频生成）创建视频任务，只返回任务 ID。请求体遵循方舟格式，鉴权使用 FluxMedia API Key。",
+        requestExample,
+        responseExample: createResponseExample,
+        parameters: [
+          {
+            name: "model",
+            requirement: "必填",
+            description:
+              "方舟模型 ID：doubao-seedance-2-0-260128、dreamina-seedance-2-0-260128 对应 seedance2；doubao-seedance-2-0-fast-260128、dreamina-seedance-2-0-fast-260128 对应 seedance2-fast。也可以直接传平台模型 ID。",
+          },
+          {
+            name: "content",
+            requirement: "必填",
+            description:
+              "输入内容数组，最多 64 项；必须且只能包含一个非空 text 项。",
+          },
+          {
+            name: "content[].image_url + role",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "role 为 first_frame、last_frame 或 reference_image；只有一张图片且没有视频、音频时可省略 role 并按首帧处理。last_frame 必须同时提供 first_frame，首尾帧不能与参考媒体混用。",
+          },
+          {
+            name: "content[].video_url",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "role 省略或为 reference_video；最多 3 个，单条 4-10 秒，全部合计不超过 15 秒。",
+          },
+          {
+            name: "content[].audio_url",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "role 省略或为 reference_audio；最多 1 个，不超过 15 秒，并且必须同时提供参考图或参考视频。",
+          },
+          {
+            name: "媒体 url",
+            requirement: "条件必填",
+            description:
+              "Base64 data URL，或路径以 .png/.jpg/.jpeg/.webp/.mp4/.mov/.mp3/.wav 结尾的公网 HTTP(S) 地址；不支持 asset:// 素材 ID。",
+          },
+          {
+            name: "ratio",
+            requirement: "可选",
+            defaultValue: "16:9",
+            description: "视频宽高比；不支持 adaptive。",
+          },
+          {
+            name: "resolution",
+            requirement: "可选",
+            defaultValue: "720p",
+            description: "视频输出分辨率，取值以模型能力为准。",
+          },
+          {
+            name: "duration",
+            requirement: "可选",
+            defaultValue: "5",
+            description: "整数秒视频时长；不支持 -1。",
+          },
+          {
+            name: "generate_audio",
+            requirement: "可选",
+            defaultValue: "模型支持音频时为 true",
+            description: "是否生成同步音频。",
+          },
+          {
+            name: "callback_url",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "任务成功或失败后以查询响应结构 POST 回调，附带 Idempotency-Key header。",
+          },
+          {
+            name: "safety_identifier",
+            requirement: "可选",
+            defaultValue: "无",
+            description: "最长 64 个字符，平台接受但不使用。",
+          },
+          {
+            name: "Idempotency-Key / X-Request-ID",
+            requirement: "可选 header",
+            defaultValue: "服务端生成",
+            description:
+              "幂等请求标识；两个 header 同时提供时必须一致，最长 128 个字符。未提供时每次请求都会创建新任务。",
+          },
+        ],
+        responses: [
+          {
+            name: "id",
+            description:
+              "任务 ID，用于查询任务；相同幂等键和请求体的重试返回同一 ID。",
+          },
+          {
+            name: "error",
+            description:
+              "失败时返回 {code, message, type}；参数错误为 MissingParameter、InvalidParameter 或 InvalidParameter.UnsupportedParameter。",
+          },
+        ],
+        notes: [
+          "watermark、seed、camera_fixed、return_last_frame、draft、service_tier、output_format、omni_reference_task_type 和 priority 只接受方舟默认值；frames、execution_expires_after、tools、draft_task 与未知字段返回 InvalidParameter.UnsupportedParameter。",
+          "文本末尾的 --rs、--rt、--dur、--seed、--cf、--wm 等弱校验参数会被解析并从提示词中移除，不能与请求体中的同名参数取值冲突。",
+          "积分不足、并发超限、幂等冲突等平台特有错误保留 FluxMedia 错误码。",
+        ],
+      },
+      "video-capabilities": {
+        title: "Seedance 能力发现",
+        method: "GET",
+        path: "不适用",
+        contentType: "无请求体",
+        description:
+          "方舟内容生成任务协议没有与 FluxMedia /v1/videos/capabilities 等价的独立能力接口；可用时长、比例和分辨率以平台模型 seedance2、seedance2-fast 的能力为准。",
+        requestExample:
+          "# 方舟协议没有对应的能力发现请求\n# 可切换到 FluxMedia 接口规范查询 seedance2 等平台模型能力",
+        responseExample: "// 方舟协议没有对应的能力发现响应",
+        parameters: [],
+        responses: [],
+        notes: [
+          "本卡片仅用于说明协议差异，不对应 FluxMedia 已提供的可调用路由。",
+          "创建请求中的 model、ratio、resolution 和 duration 仍会由服务端按模型能力校验。",
+        ],
+      },
+      "video-task": {
+        title: "查询 Seedance 视频任务",
+        method: "GET",
+        path: "/api/v3/contents/generations/tasks/{id}",
+        contentType: "无请求体",
+        description: "按方舟查询任务响应结构返回视频生成状态和结果。",
+        requestExample: taskRequestExample,
+        responseExample: taskResponseExample,
+        parameters: [
+          {
+            name: "id",
+            requirement: "必填路径参数",
+            description: "创建接口返回的任务 ID。",
+          },
+        ],
+        responses: [
+          { name: "id", description: "任务 ID。" },
+          { name: "model", description: "创建请求中的模型名称，原样返回。" },
+          {
+            name: "status",
+            description: "queued、running、succeeded 或 failed。",
+          },
+          {
+            name: "content.video_url",
+            description: "成功后返回的视频 URL，由平台重新托管。",
+          },
+          {
+            name: "error",
+            description:
+              "失败时为 {code: VideoGenerationFailed, message}；其他状态为 null。",
+          },
+          {
+            name: "created_at / updated_at",
+            description: "Unix 秒级时间戳。",
+          },
+          {
+            name: "duration / ratio / resolution / generate_audio",
+            description: "任务实际使用的视频参数。",
+          },
+        ],
+        notes: [
+          "任务只能由创建它的 API Key 查询；经 FluxMedia 原生接口或 Gemini 兼容接口创建的任务返回 404。",
+          "平台不会产生 cancelled 或 expired 状态，也不提供任务列表、取消和删除接口。",
+        ],
+      },
+    };
+  }
+
+  return {
+    "video-generations": {
+      title: "Create Seedance video task",
+      method: "POST",
+      path: "/api/v3/contents/generations/tasks",
+      contentType: "application/json",
+      description:
+        "Create a video task with the Volcengine Ark content generation task protocol (Seedance video) and return only the task ID. The body follows the Ark shape while authorization uses a FluxMedia API Key.",
+      requestExample,
+      responseExample: createResponseExample,
+      parameters: [
+        {
+          name: "model",
+          requirement: "Required",
+          description:
+            "Ark model ID: doubao-seedance-2-0-260128 and dreamina-seedance-2-0-260128 map to seedance2; doubao-seedance-2-0-fast-260128 and dreamina-seedance-2-0-fast-260128 map to seedance2-fast. Platform model IDs are also accepted.",
+        },
+        {
+          name: "content",
+          requirement: "Required",
+          description:
+            "Input items, up to 64; exactly one non-empty text item is required.",
+        },
+        {
+          name: "content[].image_url + role",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "role is first_frame, last_frame, or reference_image. A single image without video or audio may omit role and is used as the first frame. last_frame requires first_frame, and frames cannot be mixed with reference media.",
+        },
+        {
+          name: "content[].video_url",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "role is omitted or reference_video; up to three clips, 4-10 seconds each and 15 seconds in total.",
+        },
+        {
+          name: "content[].audio_url",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "role is omitted or reference_audio; at most one clip up to 15 seconds, and it requires a reference image or video.",
+        },
+        {
+          name: "Media url",
+          requirement: "Conditionally required",
+          description:
+            "A Base64 data URL, or a public HTTP(S) URL whose path ends in .png/.jpg/.jpeg/.webp/.mp4/.mov/.mp3/.wav. asset:// asset IDs are not supported.",
+        },
+        {
+          name: "ratio",
+          requirement: "Optional",
+          defaultValue: "16:9",
+          description: "Video aspect ratio; adaptive is not supported.",
+        },
+        {
+          name: "resolution",
+          requirement: "Optional",
+          defaultValue: "720p",
+          description: "Video output resolution, limited by model capability.",
+        },
+        {
+          name: "duration",
+          requirement: "Optional",
+          defaultValue: "5",
+          description: "Video duration in whole seconds; -1 is not supported.",
+        },
+        {
+          name: "generate_audio",
+          requirement: "Optional",
+          defaultValue: "true when the model supports audio",
+          description: "Whether to generate synchronized audio.",
+        },
+        {
+          name: "callback_url",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "Receives a POST with the task query response shape after success or failure, including an Idempotency-Key header.",
+        },
+        {
+          name: "safety_identifier",
+          requirement: "Optional",
+          defaultValue: "None",
+          description: "Up to 64 characters; accepted but not used.",
+        },
+        {
+          name: "Idempotency-Key / X-Request-ID",
+          requirement: "Optional header",
+          defaultValue: "Generated by the server",
+          description:
+            "Idempotency request identifier. If both headers are sent they must match; maximum 128 characters. Without either header every request creates a new task.",
+        },
+      ],
+      responses: [
+        {
+          name: "id",
+          description:
+            "Task ID used for polling; retries with the same idempotency key and body return the same ID.",
+        },
+        {
+          name: "error",
+          description:
+            "{code, message, type} on failure; parameter errors use MissingParameter, InvalidParameter, or InvalidParameter.UnsupportedParameter.",
+        },
+      ],
+      notes: [
+        "watermark, seed, camera_fixed, return_last_frame, draft, service_tier, output_format, omni_reference_task_type, and priority only accept the Ark defaults; frames, execution_expires_after, tools, draft_task, and unknown fields return InvalidParameter.UnsupportedParameter.",
+        "Trailing prompt options such as --rs, --rt, --dur, --seed, --cf, and --wm are parsed and removed from the prompt; they must not conflict with the same body parameters.",
+        "Platform-specific errors such as insufficient credits, concurrency limits, and idempotency conflicts keep their FluxMedia error codes.",
+      ],
+    },
+    "video-capabilities": {
+      title: "Seedance capability discovery",
+      method: "GET",
+      path: "Not applicable",
+      contentType: "No request body",
+      description:
+        "The Ark content generation task protocol has no standalone capability endpoint equivalent to FluxMedia /v1/videos/capabilities. Durations, ratios, and resolutions follow the seedance2 and seedance2-fast platform model capabilities.",
+      requestExample:
+        "# Ark has no equivalent capability request\n# Switch to the FluxMedia specification to query seedance2 capabilities",
+      responseExample: "// Ark has no equivalent capability response",
+      parameters: [],
+      responses: [],
+      notes: [
+        "This tab documents a protocol difference; it is not a callable FluxMedia route.",
+        "The create request still validates model, ratio, resolution, and duration against model capability.",
+      ],
+    },
+    "video-task": {
+      title: "Get Seedance video task",
+      method: "GET",
+      path: "/api/v3/contents/generations/tasks/{id}",
+      contentType: "No request body",
+      description:
+        "Get video generation status and results in the Ark task query response shape.",
+      requestExample: taskRequestExample,
+      responseExample: taskResponseExample,
+      parameters: [
+        {
+          name: "id",
+          requirement: "Required path parameter",
+          description: "The task ID returned by the create endpoint.",
+        },
+      ],
+      responses: [
+        { name: "id", description: "Task ID." },
+        {
+          name: "model",
+          description: "The model name from the create request, echoed as-is.",
+        },
+        {
+          name: "status",
+          description: "queued, running, succeeded, or failed.",
+        },
+        {
+          name: "content.video_url",
+          description: "Platform-hosted video URL after success.",
+        },
+        {
+          name: "error",
+          description:
+            "{code: VideoGenerationFailed, message} on failure; null otherwise.",
+        },
+        {
+          name: "created_at / updated_at",
+          description: "Unix timestamps in seconds.",
+        },
+        {
+          name: "duration / ratio / resolution / generate_audio",
+          description: "Video parameters used by the task.",
+        },
+      ],
+      notes: [
+        "Only the API Key that created the task can query it; tasks created through the FluxMedia native or Gemini-compatible endpoints return 404.",
+        "The platform never reports cancelled or expired, and provides no task list, cancel, or delete endpoints.",
+      ],
+    },
+  };
+}
+
 const zhContent = {
   eyebrow: "FluxMedia External API",
   title: "API 接入文档",
@@ -537,6 +949,7 @@ const zhContent = {
     ariaLabel: "视频接口规范",
     fluxmedia: "FluxMedia 接口规范",
     gemini: "Gemini 接口规范",
+    seedance: "火山方舟 Seedance 接口规范",
   },
   parameterHeaders: ["参数", "要求", "默认值", "说明"],
   responseHeaders: ["字段", "说明"],
@@ -1067,7 +1480,8 @@ const zhContent = {
         {
           name: "prompt",
           requirement: "必填",
-          description: "视频提示词，最多 32000 字符。",
+          description:
+            "视频提示词，最多 32000 字符。seedance2、seedance2-fast 的提示词不能包含 --dur、--rs、--rt、--seed、--cf、--wm、--frames 等方舟参数，请改用请求体字段。",
         },
         {
           name: "model",
@@ -1172,6 +1586,7 @@ const zhContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("zh")["video-generations"],
+        seedance: getSeedanceVideoProtocolVariants("zh")["video-generations"],
       },
     },
     {
@@ -1282,6 +1697,7 @@ const zhContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("zh")["video-capabilities"],
+        seedance: getSeedanceVideoProtocolVariants("zh")["video-capabilities"],
       },
     },
     {
@@ -1437,6 +1853,7 @@ const zhContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("zh")["video-task"],
+        seedance: getSeedanceVideoProtocolVariants("zh")["video-task"],
       },
     },
   ],
@@ -1477,6 +1894,7 @@ const enContent = {
     ariaLabel: "Video interface specification",
     fluxmedia: "FluxMedia specification",
     gemini: "Gemini specification",
+    seedance: "Volcengine Ark Seedance specification",
   },
   parameterHeaders: ["Parameter", "Requirement", "Default", "Description"],
   responseHeaders: ["Field", "Description"],
@@ -1877,7 +2295,8 @@ const enContent = {
         {
           name: "prompt",
           requirement: "Required",
-          description: "Video prompt, up to 32,000 characters.",
+          description:
+            "Video prompt, up to 32,000 characters. Prompts for seedance2 and seedance2-fast must not contain Ark options such as --dur, --rs, --rt, --seed, --cf, --wm, or --frames; use the request body fields instead.",
         },
         {
           name: "model",
@@ -1976,6 +2395,7 @@ const enContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("en")["video-generations"],
+        seedance: getSeedanceVideoProtocolVariants("en")["video-generations"],
       },
     },
     {
@@ -2045,6 +2465,7 @@ const enContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("en")["video-capabilities"],
+        seedance: getSeedanceVideoProtocolVariants("en")["video-capabilities"],
       },
     },
     {
@@ -2153,6 +2574,7 @@ const enContent = {
       ],
       protocols: {
         gemini: getGeminiVideoProtocolVariants("en")["video-task"],
+        seedance: getSeedanceVideoProtocolVariants("en")["video-task"],
       },
     },
   ],

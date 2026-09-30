@@ -318,18 +318,71 @@ describe("API integration docs data", () => {
     );
   });
 
-  it("绑定当前域名时同步替换 Gemini 变体示例", () => {
+  it.each([
+    "zh",
+    "en",
+  ])("%s 为每个视频接口提供火山方舟 Seedance 协议变体", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const videoEndpoints = content.endpoints.filter(
+      (endpoint) => endpoint.operation === "video"
+    );
+
+    expect(content.protocolTabs.seedance).toMatch(/Seedance/u);
+    for (const endpoint of videoEndpoints) {
+      const seedance = endpoint.protocols?.seedance;
+      expect(seedance, `${locale}:${endpoint.id}`).toBeDefined();
+      expect(seedance?.requestExample).toBeTruthy();
+      expect(seedance?.responseExample).toBeTruthy();
+      expect(seedance?.parameters).toBeDefined();
+      expect(seedance?.responses).toBeDefined();
+      expect(seedance?.notes).toBeDefined();
+    }
+
+    const generation = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-generations"
+    )?.protocols?.seedance;
+    const task = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-task"
+    )?.protocols?.seedance;
+    expect(generation?.method).toBe("POST");
+    expect(generation?.path).toBe("/api/v3/contents/generations/tasks");
+    expect(generation?.requestExample).toContain(
+      '"model": "doubao-seedance-2-0-260128"'
+    );
+    expect(generation?.requestExample).toContain('"content"');
+    expect(generation?.requestExample).toContain('"role": "first_frame"');
+    expect(generation?.requestExample).not.toContain('"client_request_id"');
+    expect(JSON.parse(generation?.responseExample ?? "")).toEqual({
+      id: "video_0123456789abcdef0123456789abcdef01234567",
+    });
+    expect(task?.method).toBe("GET");
+    expect(task?.path).toBe("/api/v3/contents/generations/tasks/{id}");
+    expect(task?.responseExample).toContain('"status": "succeeded"');
+    expect(task?.responseExample).toContain('"video_url"');
+  });
+
+  it("绑定当前域名时同步替换兼容协议变体示例", () => {
     const content = getApiIntegrationDocs("zh", "https://tenant.example.test");
     const videoEndpoints = content.endpoints.filter(
       (endpoint) => endpoint.operation === "video"
     );
 
     for (const endpoint of videoEndpoints) {
-      const gemini = endpoint.protocols?.gemini;
-      if (gemini?.path !== "不适用" && gemini?.path !== "Not applicable") {
-        expect(gemini?.requestExample).toContain("https://tenant.example.test");
+      for (const variant of [
+        endpoint.protocols?.gemini,
+        endpoint.protocols?.seedance,
+      ]) {
+        expect(variant).toBeDefined();
+        if (variant?.path !== "不适用" && variant?.path !== "Not applicable") {
+          expect(variant?.requestExample).toContain(
+            "https://tenant.example.test"
+          );
+        }
+        expect(variant?.requestExample).not.toContain("{{FLUXMEDIA_BASE_URL}}");
+        expect(variant?.responseExample).not.toContain(
+          "{{FLUXMEDIA_BASE_URL}}"
+        );
       }
-      expect(gemini?.responseExample).not.toContain("{{FLUXMEDIA_BASE_URL}}");
     }
   });
 

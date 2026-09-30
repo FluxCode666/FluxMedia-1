@@ -83,6 +83,11 @@ func (b *backend) registerMigratedRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET "+prefix+"/models/{model}/operations/{operationId}", b.geminiEndpoint(b.handleGeminiStatus))
 		mux.HandleFunc("OPTIONS "+prefix+"/models/{model}/operations/{operationId}", b.geminiEndpoint(b.handleGeminiStatus))
 	}
+	// 火山方舟 Seedance 兼容入口与方舟保持同一路径，客户端只需替换 Base URL 和 API Key。
+	mux.HandleFunc("POST /api/v3/contents/generations/tasks", b.seedanceEndpoint(b.handleSeedanceCreate))
+	mux.HandleFunc("OPTIONS /api/v3/contents/generations/tasks", b.seedanceEndpoint(b.handleSeedanceCreate))
+	mux.HandleFunc("GET /api/v3/contents/generations/tasks/{id}", b.seedanceEndpoint(b.handleSeedanceStatus))
+	mux.HandleFunc("OPTIONS /api/v3/contents/generations/tasks/{id}", b.seedanceEndpoint(b.handleSeedanceStatus))
 	// First-party routes use the Better Auth cookie. They share the same task
 	// persistence, so browser and API clients observe one state machine.
 	mux.HandleFunc("POST /api/images/generate", b.endpoint(b.handleImageCreateSession))
@@ -631,8 +636,8 @@ func (b *backend) handleVideoCreate(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	if rawString(body, "geminiModel", "gemini_model", "geminiOperationId", "gemini_operation_id") != "" {
-		return invalid("Gemini identity fields are not accepted by this endpoint")
+	if rawString(body, "geminiModel", "gemini_model", "geminiOperationId", "gemini_operation_id", "seedanceModel", "seedance_model") != "" {
+		return invalid("Protocol identity fields are not accepted by this endpoint")
 	}
 	task, err := b.createVideoTask(r, p, body)
 	if err != nil {

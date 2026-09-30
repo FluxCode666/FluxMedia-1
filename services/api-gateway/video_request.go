@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -29,6 +30,7 @@ type nativeVideoInput struct {
 	QuoteToken        string           `json:"quoteToken,omitempty"`
 	GeminiModel       string           `json:"geminiModel,omitempty"`
 	GeminiOperationID string           `json:"geminiOperationId,omitempty"`
+	SeedanceModel     string           `json:"seedanceModel,omitempty"`
 	CallbackURL       string           `json:"callbackUrl,omitempty"`
 	FirstFrame        map[string]any   `json:"firstFrame,omitempty"`
 	LastFrame         map[string]any   `json:"lastFrame,omitempty"`
@@ -44,7 +46,7 @@ var videoRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "21:9"}
 // Normalize transport aliases before validation, rejecting conflicting values.
 func parseNativeVideoInput(body map[string]json.RawMessage) (nativeVideoInput, error) {
 	var input nativeVideoInput
-	aliases := map[string]string{"client_request_id": "clientRequestId", "duration_seconds": "duration", "seconds": "duration", "aspect_ratio": "aspectRatio", "generate_audio": "generateAudio", "negative_prompt": "negativePrompt", "backend_group_id": "backendGroupId", "quote_token": "quoteToken", "first_frame": "firstFrame", "last_frame": "lastFrame", "reference_images": "referenceImages", "reference_videos": "referenceVideos", "reference_audios": "referenceAudios", "callback_url": "callbackUrl", "gemini_model": "geminiModel", "gemini_operation_id": "geminiOperationId"}
+	aliases := map[string]string{"client_request_id": "clientRequestId", "duration_seconds": "duration", "seconds": "duration", "aspect_ratio": "aspectRatio", "generate_audio": "generateAudio", "negative_prompt": "negativePrompt", "backend_group_id": "backendGroupId", "quote_token": "quoteToken", "first_frame": "firstFrame", "last_frame": "lastFrame", "reference_images": "referenceImages", "reference_videos": "referenceVideos", "reference_audios": "referenceAudios", "callback_url": "callbackUrl", "gemini_model": "geminiModel", "gemini_operation_id": "geminiOperationId", "seedance_model": "seedanceModel"}
 	normalized := map[string]json.RawMessage{}
 	for key, value := range body {
 		if key == "async" {
@@ -174,6 +176,12 @@ func parseNativeVideoInput(body map[string]json.RawMessage) (nativeVideoInput, e
 	if input.GeminiOperationID != "" && !videoOperationID.MatchString(input.GeminiOperationID) {
 		return input, invalid("Invalid Gemini operation ID")
 	}
+	if input.SeedanceModel != "" && (!videoSafeLabel.MatchString(input.SeedanceModel) || len(input.SeedanceModel) > 120) {
+		return input, invalid("Invalid Seedance model")
+	}
+	if input.SeedanceModel != "" && input.GeminiModel != "" {
+		return input, invalid("Gemini and Seedance protocol identities are mutually exclusive")
+	}
 	if input.CallbackURL != "" {
 		u, err := url.Parse(input.CallbackURL)
 		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") || len(input.CallbackURL) > 2048 {
@@ -223,6 +231,23 @@ func (input nativeVideoInput) fingerprint() string {
 	return hex.EncodeToString(digest[:])
 }
 
+// externalVideoIdempotencyKey 读取兼容协议网关的幂等键。Idempotency-Key 与客户端
+// X-Request-ID 同时提供时必须一致；两者都未提供时生成一次性键，此时重试不会回放原任务。
+func externalVideoIdempotencyKey(r *http.Request) (string, error) {
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	requestID := clientRequestID(r)
+	if idempotencyKey != "" && requestID != "" && idempotencyKey != requestID {
+		return "", invalid("Idempotency-Key and x-request-id must match")
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = requestID
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = newRequestID()
+	}
+	return idempotencyKey, nil
+}
+
 func nativeVideoTaskID(scope, clientID string) string {
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%d:%s", len(scope), scope, len(clientID), clientID)))
 	return "video_" + hex.EncodeToString(digest[:])[:40]
@@ -262,6 +287,10 @@ func validateNativeVideoCapability(input nativeVideoInput, cfg goVideoModelConfi
 	}
 	if input.GeminiModel != "" && input.GenerateAudio != nil && !*input.GenerateAudio {
 		return invalid("Gemini Veo cannot disable generated audio")
+	}
+	// 方舟会解析提示词中的 --dur 等参数并覆盖请求体，扣费前拒绝，避免按请求体计费却按提示词生成。
+	if seedancePlatformModel(input.Model) && seedanceKnownFlag.MatchString(input.Prompt) {
+		return invalid("Seedance prompts cannot contain parameters such as --dur; use request fields instead")
 	}
 	return nil
 }
